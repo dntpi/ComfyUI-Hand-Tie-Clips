@@ -284,7 +284,24 @@ the model picks one. Earn the framing on the move (`push_in`, `pull_back`,
 **`push_in` + `wide`, or `pull_back` + `close`.** The move points the opposite way
 from the destination. Physically contradictory at any join value.
 
-Both are warnings, not errors — they are legitimate things to want. They just
+**`tail: settle` or `tail: hold`, followed by a beat that opens mid-action.**
+This is the over-delivery defect of law 3, caught mechanically. `settle` brings
+the subject to rest and `hold` freezes the frame — so a next beat that opens
+with *"She continues…"*, *"Walking to the window…"*, *"Mid-sentence…"* is asking
+the model to carry on something the hop before it was told to stop. One of the
+two instructions loses, and which one is a coin flip.
+
+This is the class of defect that produced the single hard cut in the
+114-second reference chain. Both shots were individually well-formed; every
+other check passed. Only the join between them was wrong. Fix it at either end:
+set the previous shot's `tail` to `ongoing`, or rewrite the opening so it also
+reads from a standstill.
+
+The check only catches beats that *say* they are continuing. A beat can open
+mid-action without any of those words and it will not fire — the rule in your
+head still has to be the real one.
+
+All three are warnings, not errors — they are legitimate things to want. They just
 rarely read the way you meant.
 
 > When `join: continuous` and the camera *is* moving, the framing sentence
@@ -470,6 +487,32 @@ A shot may override the chain with `"duration": "7 s"`, using the same labels.
 
 ---
 
+## Read it before you render it
+
+Set `dry_run=on` and queue. Every hop's prompt compiles and the node stops —
+no model, no sampler, a few seconds. The text comes out on `info`, and the same
+thing comes out on `contact_sheet` as one readable page.
+
+Do this before any long chain. What you wrote in a beat is not what the encoder
+receives: the directive layer, the continuation scaffolding, the identity lock
+and the `<Picture N>` citations are all assembled at render time. A dry run is
+the only way to read the real thing before paying for it, and it is where the
+warnings above show up too — the whole plan is checked on the way through.
+
+Two related dials:
+
+- **`render_through=N`** stops after N hops. With `cache_hops=on`, 3 → 5 → 8
+  builds a chain up in stages and only ever renders the new hops. The plan is
+  not truncated; shot 4 still keys exactly as it will in the full run.
+- **`quality=draft`** forces 0.3 MP and 6 steps. Enough to read blocking,
+  camera and whether a join lands. Both values are in the cache key, so a draft
+  never overwrites the final it stands in for.
+
+And after the render, `contact_sheet=on` gives you one row per hop — first and
+last delivered frame, beat, directives, seed, cache hit, what the tone
+correction did. On an eight-hop chain it is the fastest way to find the hop
+that broke.
+
 ## Re-rolling one hop
 
 Eight hops in, hop 6 is wrong and the other seven are fine. `cache_hops` is how
@@ -550,6 +593,9 @@ continuations of it, and if you edited them they still change.
 | She keeps talking after you asked for quiet | You named the ending (`stops talking`) — law 2 | Pose plus a sound |
 | Dialogue continues into hops that have none written | The hop before ended on speech, and the audio pin carried it | Land the line early; leave a non-verbal action running into the seam; give every quiet hop its own sound bed |
 | A character walks between two rooms and one morphs into the other | `join: continuous` across a real location change | `match_cut` |
+| The film gets steadily dimmer over a long chain, but no single join looks wrong | Each hop darkens across its own frames and hands the darker tail on; seam correction cannot see this | `tone_compensate=anchor`. Measure it first with **H3 Seam Report** — a large one-signed *sum of steps* is the signature |
+| A hop ignores what you told it and carries on the previous action | The previous shot's `tail` promised a stop your beat then overrode | Over-delivery: change the `tail`, or rewrite the opening |
+| A deliberately dark scene keeps getting brightened back up | `tone_compensate=anchor` cannot tell intent from drift | `"tone": "rebase"` on the first shot of the darker scene |
 | Silence renders as speech | Silence written as an absence | Name room tone, a fridge, a distant car |
 | Ambience is a five-second hiss | Broadband wording | Narrowband, or a single discrete event |
 | Two characters' faces merge | Both declared as the same `subject` | One subject number per person |

@@ -35,7 +35,34 @@ from __future__ import annotations
 import torch
 
 TAG = "HTCTone"
-MODES = ["off", "frame_shift", "gain_bias", "lut"]
+MODES = ["off", "frame_shift", "gain_bias", "lut", "anchor"]
+
+# --- anchor mode ------------------------------------------------------------
+# The other three modes are seam-LOCAL: they measure the denoiser's tone bias on
+# the overlap and cancel it, which makes each join exact. They do not touch the
+# exposure falloff that happens *inside* a hop, and that part still compounds --
+# hop 2 starts where hop 1 ended, darkens across its own 362 frames, hands that
+# darker tail to hop 3, and so on. The 8x15s chain measured a luma slide of
+# 46 -> 11 across hops 2-6 with the seam step already corrected.
+#
+# `anchor` is frame_shift plus a second stage that pulls each hop's overall
+# level back toward HOP 1's, which is the only tone in the chain nobody drifted
+# into. Two properties make it safe to stack on top of the seam correction:
+#
+#   * The pull is RAMPED from zero over the first `ANCHOR_RAMP` frames, so the
+#     seam itself is untouched -- frame 0 of a hop still matches the previous
+#     hop's last frame exactly. Without the ramp, a per-hop constant offset
+#     would re-introduce precisely the step frame_shift just removed.
+#   * It is CAPPED per hop (`ANCHOR_MAX_SHIFT`) and scaled by `strength`, so it
+#     corrects a slide over several hops rather than snapping one hop back and
+#     visibly pumping the exposure.
+#
+# A scene that is *meant* to get darker looks identical to drift from here, so
+# a shot can opt out (`"tone": "free"`) or move the anchor to itself
+# (`"tone": "rebase"`). See plan.py's `tone` field.
+ANCHOR_STRENGTH = 0.35   # fraction of the measured gap closed per hop
+ANCHOR_MAX_SHIFT = 0.06  # hard cap per hop, in 0..1 units (~15/255)
+ANCHOR_RAMP = 48         # frames to reach full correction (2 s at 24 fps)
 
 _TABLE = 4096  # dense LUT resolution used when applying the lut mode
 
@@ -142,6 +169,66 @@ def _apply_lut(x, xs, ys, table=_TABLE):
     return dense[idx]
 
 
+
+def anchor_stats(imgs):
+    """The tone reference for `anchor` mode: per-channel mean over a hop.
+
+    A mean, not a per-frame curve: the thing being corrected is the hop's
+    overall level, and anything finer would start fighting the content.
+    Returns a [C] float32 tensor, or None for an empty input.
+    """
+    if imgs is None or int(imgs.shape[0]) == 0:
+        return None
+    return imgs.float().mean(dim=(0, 1, 2)).detach().clone()
+
+
+def anchor_pull(target, ref_mean, strength=ANCHOR_STRENGTH,
+                max_shift=ANCHOR_MAX_SHIFT, ramp=ANCHOR_RAMP):
+    """Ease `target`'s overall level back toward `ref_mean`. -> (images, note).
+
+    Applied AFTER the seam correction, so `target` is already continuous with
+    the previous hop. The correction ramps in from zero across the first `ramp`
+    frames and holds after that, which is what keeps the seam exact: frame 0 is
+    returned unchanged, and by the hop's tail the full (capped) shift is in
+    effect. The next hop's seam correction then matches that corrected tail, so
+    the offset carries forward on its own and never has to be tracked.
+
+    Returns `(target, "")` unchanged when there is nothing worth doing, so the
+    caller needs no branch.
+    """
+    if target is None or ref_mean is None:
+        return target, ""
+    strength = float(strength)
+    if strength <= 0.0:
+        return target, ""
+
+    tgt = target.float()
+    n = int(tgt.shape[0])
+    if n == 0:
+        return target, ""
+
+    cur = tgt.mean(dim=(0, 1, 2))
+    want = (ref_mean.to(device=tgt.device, dtype=tgt.dtype) - cur) * strength
+    cap = abs(float(max_shift))
+    want = want.clamp(-cap, cap)
+    # Below ~0.25/255 the correction is not visible and not worth the copy.
+    if float(want.abs().max()) < 1e-3:
+        return target, ""
+
+    w = torch.ones(n, dtype=tgt.dtype, device=tgt.device)
+    r = max(2, min(int(ramp), n))
+    if n > 1:
+        w[:r] = torch.linspace(0.0, 1.0, r, dtype=tgt.dtype, device=tgt.device)
+    out = tgt + want.view(1, 1, 1, -1) * w.view(-1, 1, 1, 1)
+    out = out.clamp_(0.0, 1.0).to(target.dtype)
+
+    d = want.reshape(-1).tolist()
+    gap = float((ref_mean.to(cur.device) - cur).mean())
+    note = ("anchor " + " ".join(f"{c}{v:+.4f}" for c, v in zip("rgb", d))
+            + f" (gap {gap * 255:+.1f}/255, ramp {r}f)")
+    return out, note
+
+
 def compensate(source, target, mode, overlap=DEFAULT_OVERLAP, lut_bins=64):
     """Correct `target`'s tone to match `source`. -> (images, note).
 
@@ -169,6 +256,11 @@ def compensate(source, target, mode, overlap=DEFAULT_OVERLAP, lut_bins=64):
     fit_tgt = tgt[:n]
 
     mode = str(mode)
+    if mode == "anchor":
+        # The seam half of `anchor` IS frame_shift. The chain-wide half lives in
+        # `anchor_pull`, which the caller stages separately because it needs
+        # hop 1's statistics -- state this function has never carried.
+        mode = "frame_shift"
     if mode == "frame_shift":
         # Per-frame per-channel drift (mean target - mean source), applied
         # per-frame on the overlap and as the last overlap frame's value on the
@@ -224,7 +316,9 @@ class HTCToneCompensate:
                     "tooltip": (
                         "frame_shift: per-frame additive shift; best when the target is "
                         "regenerated content, which it is here. gain_bias: global affine, "
-                        "robust. lut: tone curve, captures nonlinear drift but overfits."
+                        "robust. lut: tone curve, captures nonlinear drift but overfits. "
+                        "anchor behaves as frame_shift HERE -- its chain-wide half needs "
+                        "hop 1's statistics, which only HandTieClips carries."
                     ),
                 }),
                 "overlap": ("INT", {

@@ -13,11 +13,11 @@ comes back.
 | hop | id | references active |
 |---|---|---|
 | 1 | s1 | @hero_face, @hero_outfit, @kitchen |
-| 2 | s2 | @kitchen |
-| 3 | s3 | @kitchen |
+| 2 | s2 | @hero_face, @kitchen |
+| 3 | s3 | @hero_face, @kitchen |
 | 4 | s4 | @hero_face |
-| 5 | s5 | **none** |
-| 6 | s6 | @kitchen |
+| 5 | s5 | @hero_face |
+| 6 | s6 | @hero_face, @kitchen |
 
 Three things in that table are the whole point:
 
@@ -40,7 +40,7 @@ the one with no pictures — and that both use single quotes.
   "shots": [
     {
       "id": "s1",
-      "beat": "@hero_face stands at the counter in @kitchen, an apron over a grey t-shirt. She looks up from the chopping board and says, 'You are early. I have barely started.' She turns back to the board and goes on slicing, the knife tapping steadily against the wood.",
+      "beat": "@hero_face stands at the counter in @kitchen, a grey apron over a grey t-shirt. She looks up from the chopping board and says, 'You are early. I have barely started.' She turns back to the board and goes on slicing, the knife tapping steadily against the wood.",
       "directives": {
         "camera": "hold",
         "framing": "medium",
@@ -72,7 +72,7 @@ the one with no pictures — and that both use single quotes.
     },
     {
       "id": "s4",
-      "beat": "@hero_face walks down a narrow hallway hung with coats, one hand trailing along the wall, her footsteps muffled on the runner. None of the kitchen is visible.",
+      "beat": "@hero_face walks down a narrow hallway hung with coats, one hand trailing along the wall, her footsteps muffled on the runner. The hallway walls stand close on either side of her and the coats brush past her shoulder.",
       "directives": {
         "join": "continuous",
         "camera": "handheld",
@@ -83,7 +83,7 @@ the one with no pictures — and that both use single quotes.
     },
     {
       "id": "s5",
-      "beat": "She stops at the window at the end of the hall, half turns back over her shoulder and says, 'It is still raining. We will have to do it inside.' She looks back out at the glass with her lips closed, and the rain taps steadily on the pane.",
+      "beat": "She reaches the window at the end of the hall and rests one hand on the frame, then half turns back over her shoulder and says, 'It is still raining. We will have to do it inside.' She looks back out at the glass with her lips closed, and the rain taps steadily on the pane.",
       "directives": {
         "join": "continuous",
         "camera": "push_in",
@@ -119,7 +119,11 @@ the one with no pictures — and that both use single quotes.
       "retention": "fully_preserved",
       "shots": [
         1,
-        4
+        2,
+        3,
+        4,
+        5,
+        6
       ],
       "desc": "head-and-shoulders photograph of the cook, even light"
     },
@@ -131,7 +135,7 @@ the one with no pictures — and that both use single quotes.
       "shots": [
         1
       ],
-      "desc": "full-length photograph of the same cook, apron over a grey t-shirt"
+      "desc": "full-length photograph of the same cook, grey apron over a grey t-shirt"
     },
     {
       "tag": "kitchen",
@@ -150,7 +154,7 @@ the one with no pictures — and that both use single quotes.
     "1": {
       "name": "the cook",
       "locked": "the same face, the same short dark hair, the same silver stud earrings",
-      "context": "the apron stays tied over the grey t-shirt"
+      "context": "the grey apron stays tied over the grey t-shirt"
     }
   }
 }

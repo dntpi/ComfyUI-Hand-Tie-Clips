@@ -25,7 +25,7 @@ from h3p import plan as PL     # noqa: E402
 from h3p import h3_ref_chain as H3   # noqa: E402
 
 CORE = {"UNETLoader", "CLIPLoader", "VAELoader", "CreateVideo", "SaveVideo",
-        "Note", "MarkdownNote"}
+        "SaveImage", "Note", "MarkdownNote"}
 OURS = {"HandTieClips", "HTCChainPreview"}
 # Declared dependencies, not accidents: the turbo stack this node is actually
 # run with. Anything outside these three sets is a pack the reader never asked

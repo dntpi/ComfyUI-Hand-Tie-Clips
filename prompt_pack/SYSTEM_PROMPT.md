@@ -132,8 +132,17 @@ One shot per hop. **The number of shots is the number of hops.**
 ```
 
 Valid shot fields, and no others: `id`, `beat`, `directives`, `prose`, `seed`,
-`steps`, `duration`, `locked`. Only `beat` is required. An unknown field is a
-hard error.
+`steps`, `duration`, `locked`, `tone`. Only `beat` is required. An unknown field
+is a hard error.
+
+`tone` is `"free"` or `"rebase"`, and you will almost never set it. The node can
+correct the brightness slide that builds up across a long chain by easing every
+hop back toward hop 1's exposure. That correction cannot tell drift from
+intent -- so on the first shot of a scene that is **deliberately** darker or
+brighter and stays that way (walking into a cellar, stepping out into
+daylight), set `"tone": "rebase"` and the correction holds the new level
+instead of fighting it. Use `"free"` for a single hop that dips and comes back.
+Omit it everywhere else.
 
 Directive axes, and no others. Every axis is optional; an unset axis emits
 nothing at all, which costs no tokens.

@@ -25,7 +25,7 @@ GREEN = ("#232", "#353")      # ComfyUI's green -- card 1 only, so the entry
 GROUP = {
     "id": 1,
     "title": "READ ME -- writing for this node",
-    "bounding": [-990, -465, 980, 2560],
+    "bounding": [-990, -465, 980, 2905],
     "color": "#3f789e",
     "font_size": 24,
 }
@@ -234,6 +234,42 @@ Per-shot `duration` overrides the chain, using exactly these labels:
 """
 
 
+CHECK = """## Check before you render
+
+A chain is minutes to hours. These three dials cost seconds and catch almost
+everything.
+
+### `dry_run = on`
+
+Compiles every hop's prompt and stops. No model, no sampler. Read the result
+on **`info`**, or as a page on **`contact_sheet`**.
+
+What you wrote is not what the encoder gets -- directives, continuation
+scaffolding, the identity lock and the `<Picture N>` citations are all
+assembled at render time. This is the only way to see the real thing first.
+Every plan warning prints on the way through, too.
+
+### `render_through = N`
+
+Stop after N hops. With `cache_hops=on`, 3 then 5 then 8 builds the chain up
+and only ever renders the new hops. The plan is **not** truncated -- shot 4
+still keys exactly as it will in the full run.
+
+### `quality = draft`
+
+0.3 MP, 6 steps. Enough to read blocking, camera and whether a join lands.
+Both values are in the cache key, so a draft never overwrites its final.
+
+---
+
+Afterwards: **`contact_sheet = on`** gives one row per hop -- first and last
+delivered frame, beat, directives, seed, cache hit, tone correction. Wire it
+to a Save Image.
+
+And **H3 Seam Report** takes the chain's `images` and measures every join:
+invisible / marginal / visible, plus the chain's cumulative drift.
+"""
+
 TROUBLE = """\
 ## When it goes wrong
 
@@ -249,13 +285,15 @@ TROUBLE = """\
 | Two characters' faces merge | Both declared as the same `subject` | One subject number per person |
 | The face becomes a different person partway through | A hop scheduled with no face plate. `locked` holds a face that is still right; only a plate rebuilds one that is gone, and the drift never self-corrects | Put the face ref on **every** hop |
 | A stylised plan renders photoreal | The node's hop-1 establishing line asserts live action | Name the medium in shot 1's first sentence, or clear the `establish` widget |
-| The film gets darker every hop | Luminance drifts one way and nothing pushes back | Restate the light as a positive property in every beat |
+| The film gets darker every hop | Each hop dims across its own frames and hands the darker tail on. Seam correction cannot see it | `tone_compensate=anchor`. Also restate the light as a positive property in every beat |
 | A location introduced mid-plan drifts | It has no place plate of its own | Plate it, on the hop it arrives and every hop after |
 | A prop or garment changes colour or material | Named with no adjective, so each hop's encode is free to invent one | Repeat the adjective in every beat, and state it as a property in `context` |
 | A hard cut ~1.5 s into a hop, mid-scene | The previous hop over-delivered, so this beat instructs what its own live frame already did | One movement per hop; write the next beat so it is true from either ending |
 | A continuous join reads as a cut | Framing change with `camera: hold` | Earn it on the move, or `framing: keep` |
 | The run stops, naming a reference | That row's picture is not in `h3_refs` | Drop the file on the row, or clear its picture to run without it |
 | A reference has no effect on some hop | Its `shots` list leaves that hop out | List every hop the picture should ride |
+| A deliberately dark scene keeps being brightened | `anchor` cannot tell intent from drift | `"tone": "rebase"` on that scene's first shot |
+| You cannot tell which hop broke | 114 s is a lot to scrub | `contact_sheet=on` -- one row per hop, first and last frame |
 | A pasted plan is rejected as invalid JSON | Escaped double quotes mangled in transit | Single quotes around dialogue |
 
 Every error message names the shot or the reference it came from. Nothing
@@ -392,6 +430,7 @@ CARDS = [
     ("rules", "The rules", [-960, 600], [440, 760], YELLOW, RULES),
     ("refs", "References and @tags", [-960, 1420], [440, 640], YELLOW, REFERENCES),
     ("directives", "Directives", [-480, -400], [440, 640], YELLOW, DIRECTIVES),
-    ("trouble", "When it goes wrong", [-480, 280], [440, 760], YELLOW, TROUBLE),
-    ("author", "Let a model write it", [-480, 1080], [440, 620], YELLOW, AUTHOR),
+    ("trouble", "When it goes wrong", [-480, 280], [440, 840], YELLOW, TROUBLE),
+    ("check", "Check before you render", [-480, 1160], [440, 560], GREEN, CHECK),
+    ("author", "Let a model write it", [-480, 1760], [440, 620], YELLOW, AUTHOR),
 ]

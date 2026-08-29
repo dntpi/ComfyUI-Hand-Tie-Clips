@@ -296,6 +296,77 @@ That last one is worth knowing about. The node cannot read the settings on your 
 
 Set `locked: true` on a shot to pin it to its last render regardless. Needs `ffmpeg` on PATH.
 
+## Reading a plan before you render it
+
+`dry_run=on` compiles every hop's prompt and stops. No model, no sampler,
+seconds instead of minutes. The compiled text comes out on `info`; the same
+thing comes out on `contact_sheet` as a page you can read at a glance.
+
+This is the only way to see what the text encoder will actually receive. The
+directive layer, the continuation scaffolding, the identity lock and the
+`<Picture N>` citations are all assembled at render time, so until now the first
+sight of the real prompt was in the log of a render you had already paid for.
+
+`render_through=N` stops after N hops. With `cache_hops=on` the hops you already
+rendered stay on disk, so 3 → 5 → 8 builds a chain up in stages and only ever
+renders the new hops. The plan is not truncated: shot 4 still knows it is shot
+4, keeps its own seed, and keys the same way it will in the full run.
+
+`quality=draft` forces 0.3 MP and 6 steps — enough to read blocking, camera and
+whether a join lands, fast enough to iterate on. Resolution and steps are both
+in the cache key, so a draft never overwrites the final it stands in for; the
+two simply cost two entries.
+
+## Contact sheet
+
+`contact_sheet=on` adds an image on the fourth output: one row per hop, that
+hop's first and last **delivered** frame side by side, its beat, its directives,
+and what actually happened to it — seed, steps, whether it came from cache, what
+the tone correction did. Wire it to a Save Image.
+
+On a chain of any length this is the fastest way to find the hop that broke. The
+one hard cut in the 114-second reference chain sat in a plan that passed every
+automated check; it is obvious in one row of a contact sheet and invisible in a
+progress bar.
+
+## Brightness drift, and the two things that fix it
+
+These are different problems and they need different settings.
+
+**The step at a join** is the denoiser's tone bias on a fresh generation.
+`tone_compensate=frame_shift` measures it on the overlap the hop regenerated and
+cancels it, which is why the seams in a corrected chain read as invisible.
+
+**The slide across a whole chain** is different. Each hop also darkens across
+its *own* frames, hands that darker tail to the next hop, and the next hop
+starts from there. Seam correction cannot see this — every individual join is
+exact while the film gets steadily dimmer. The 8×15 s reference chain slid from
+luma 46 to 11 across hops 2–6 with every seam already corrected.
+
+`tone_compensate=anchor` is frame_shift plus a pull back toward **hop 1's**
+exposure — the one tone in the chain nothing drifted into. Two things keep it
+from causing the problem it is fixing:
+
+- the pull **ramps in** across the first two seconds of each hop, so frame 0
+  still matches the previous hop's last frame exactly and the seam stays as
+  clean as frame_shift left it;
+- it is **capped** per hop (`tone_anchor`, default 0.35 = about a third of the
+  gap), so a long slide is corrected over several hops instead of one hop
+  snapping back and pumping.
+
+A scene that is *meant* to get darker looks exactly like drift from the
+inside, so a shot can opt out:
+
+```json
+{ "beat": "She steps down into the cellar.", "tone": "rebase" }
+```
+
+`"tone": "free"` skips the pull for that hop only. `"tone": "rebase"` also moves
+the anchor onto that hop, which is how a scene that is genuinely darker from
+here on stops being fought for the rest of the film.
+
+Set `tone_anchor` to 0 to get plain frame_shift back.
+
 ## The MODEL wire
 
 Four ordinary nodes, in this order:
@@ -339,6 +410,9 @@ The DiT pin is the previous hop’s **sampler latent** through Motion-Context wh
 | seed per hop | on |
 | sigma shift | 12 / 3 |
 | cache budget | 20 GB |
+| tone_compensate | off (both shipped workflows set `frame_shift`) |
+| tone_anchor | 0.35, used only by `tone_compensate=anchor` |
+| quality | final |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master after the overlap is dropped.
 
@@ -360,5 +434,7 @@ Three shots at 10 s with a 0.9 s overlap is about 28 s of master after the overl
 **H3 Chain Preview** — a passthrough panel for the IMAGE (and optionally AUDIO) wire, placed **between the chain and `CreateVideo`**. Images and audio come out unchanged, so adding or removing it changes no pixels. It shows the live sample, the seam (the previous hop's last frame beside this hop's first), a chain-wide progress bar, cache hit / seed / steps per hop, **which pin mechanism each hop actually used** — a latent Motion-Context pin or the AddGuide pixel fallback — and end-of-run A/V drift. Drag the grip to resize the stats panel; double-click it to reset.
 
 **H3 Tone Compensate** — `images` out. Corrects a generated segment's tone against the previous one, estimated on the overlap they share. **For hand-built chains only.** It cannot fix `H3 Ref2VA Chain`'s output: that node joins its hops internally and drops each hop's first `overlap` frames at the seam, so the regenerated copies this needs are already gone by the time images leave it. Use the chain node's `tone_compensate` widget instead. Estimator ported from [rkfg/ComfyUI-MiniMaxH3-ToneCompensate](https://github.com/rkfg/ComfyUI-MiniMaxH3-ToneCompensate) (MIT).
+
+**H3 Seam Report** — `report` (STRING) + `chart` (IMAGE). Wire the chain's `images` into it and it measures the brightness step at every join, says whether each is invisible / marginal / visible, and totals the chain's cumulative drift. A single reading includes whatever the scene did across the cut — the frames either side are ~0.9 s apart in scene time — so treat one number as an upper bound; to isolate the seam itself, render twice from the same seed and cache changing only `tone_compensate`, and compare.
 
 **H3 Continuity State** — `continuity_state` (STRING) out. **Setting only**: `setting_locked` / `setting_context` / `setting_mutable`. Characters belong in `ref_plan`.

@@ -549,6 +549,13 @@
           "links": [
             7
           ]
+        },
+        {
+          "localized_name": "contact_sheet",
+          "name": "contact_sheet",
+          "type": "IMAGE",
+          "slot_index": 3,
+          "links": null
         }
       ],
       "properties": {
@@ -585,7 +592,12 @@
         "",
         "",
         "",
-        "Live-action, natural light, one continuous take."
+        "Live-action, natural light, one continuous take.",
+        0,
+        "final",
+        "off",
+        "off",
+        0.35
       ],
       "title": "H3 Ref2VA Chain - showcase 6x7s"
     },

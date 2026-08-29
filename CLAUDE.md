@@ -1018,3 +1018,130 @@ of seven joins, and the two exceptions are drops the beats themselves ask for.
 The real audio issue is range, not seams: peaks reach -1.2 dBFS during the fight
 while hop 8 averages -42 dBFS. There is no audio equivalent of
 `HTCToneCompensate`. Left open.
+## 20. Seven features built blind (2026-08-30)
+
+Built in one pass with no browser and no GPU render available -- the user was
+away and explicitly asked for the work anyway. Everything below is verified by
+offline execution; **nothing has been seen in ComfyUI and no chain has been
+rendered with it.** Read section 19 first for the measurements that motivated
+most of it.
+
+### What shipped
+
+| # | thing | where |
+|---|---|---|
+| 1 | `tone_compensate=anchor` + `tone_anchor` strength | `tone.py`, wired in `h3_ref_chain.py` |
+| 2 | `dry_run` -- compile every prompt, render nothing | `h3_ref_chain.py` |
+| 3 | `contact_sheet` -- a fourth IMAGE output | new `sheet.py` |
+| 4 | `render_through` -- stop after hop N | `h3_ref_chain.py` |
+| 5 | `quality=draft` -- 0.3 MP, 6 steps | `h3_ref_chain.py` |
+| 6 | **H3 Seam Report** node | new `seam.py` |
+| 7 | over-delivery lint | `plan.py` |
+
+Five new widgets, appended LAST (29 -> 34 values). One new output, appended
+LAST (3 -> 4). Both rules are in section 9; both were obeyed.
+
+### The anchor, and why it is not just another tone mode
+
+frame_shift/gain_bias/lut are **seam-local**: they cancel the denoiser's tone
+bias on the overlap, which makes each join exact. They cannot see the exposure
+falloff *inside* a hop, and that is what compounds -- hop N darkens across its
+own frames, hands the darker tail to hop N+1, and every individual seam stays
+perfect while the film dims. Section 19 measured 46 -> 11 across hops 2-6.
+
+Worth stating plainly because it is counter-intuitive: **a synthetic 8-hop
+chain showed frame_shift making the total slide WORSE** (66/255 vs 35/255 with
+correction off). That is correct behaviour, not a bug. The denoiser's per-hop
+bias happened to lift; cancelling it removed a lift that had been partly
+offsetting the falloff. Seam correction fixes seams. It was never a level
+control and should not be read as one.
+
+`anchor` = frame_shift + a second stage pulling each hop's mean back toward
+**hop 1's**. Two properties make it safe to stack:
+
+- the pull **ramps from zero** over `ANCHOR_RAMP` (48f) frames, so frame 0 of
+  a hop is returned untouched and the seam stays exactly as frame_shift left
+  it. Without the ramp a per-hop constant offset re-introduces precisely the
+  step frame_shift just removed -- this is the whole design, and the trap
+  anyone re-implementing it will fall into;
+- it is **capped** (`ANCHOR_MAX_SHIFT`, 0.06) and scaled by `tone_anchor`
+  (0.35), so a slide is corrected across several hops instead of one hop
+  snapping back.
+
+The correction needs no carry variable between hops: because it is applied
+before `prev_imgs` is taken, the next hop's seam correction matches the
+already-corrected tail and the offset propagates on its own.
+
+On the synthetic chain: slide 66 -> 18/255, worst seam step 2.22 -> 2.13/255.
+The seam did not regress, which is the property that mattered.
+
+Intent is indistinguishable from drift from the inside, hence the per-shot
+`tone` field: `"free"` skips one hop's pull, `"rebase"` moves the anchor onto
+that hop. A deliberate walk into a cellar needs `rebase` or the chain spends
+the rest of the film brightening it back.
+
+### dry_run: what it must not touch
+
+The value is that it costs seconds, so every expensive thing is guarded:
+`MiniMaxH3SigmaShift`, `KSamplerSelect`, `BasicScheduler`, `_model_fingerprint`
+(it hashes patched weights), the hop store, and -- the big one -- the master
+preallocation. `master_imgs` for 8 x 15 s at 1280x736 is 2742 float frames,
+about **31 GB**. A dry run that allocated it would be worse than useless.
+
+Hop 2+ needs *a* `prev_imgs` to compute `<Picture N>` ordinals. Content is
+irrelevant to the compiled text, so a `[overlap, 8, 8, 3]` zero tensor stands
+in and the text is byte-identical to a real run's.
+
+The smoke test (`tmp/t_dry.py`) replaces all five sampler entry points with
+objects that raise on **any** attribute access, so "did not touch the sampler"
+is asserted rather than assumed. It caught one real bug: the dry block
+referenced `pin_mech_pred` before its assignment, ~40 lines later. Which pin a
+hop gets is decided at render time from whether a sampler latent exists, so a
+dry run genuinely cannot know it -- the sheet reports the `pin_to_qwen`
+*setting* instead. Reporting AddGuide for every hop would have been a lie.
+
+### The over-delivery lint
+
+The one defect class every other check structurally misses: both shots are
+individually well-formed, the directives are individually legal, and only the
+JOIN between them is wrong. `tail=settle|hold` promises rest; a following beat
+that opens "She continues...", "Walking to...", "Mid-sentence..." asks the model
+to carry on what the hop before was told to stop.
+
+Narrow on purpose. Trailing spaces in `_MID_ACTION` are load-bearing ("keeps "
+not "keepsake", "still " not "stillness"), and `_MID_ACTION_LEAD` is only
+checked at position 0, which is what stops "Morning light..." and "Nothing
+moves..." from firing. Verified against those exact traps, and both shipped
+plans stay quiet.
+
+It will miss a beat that opens mid-action without saying so. That is accepted:
+a false positive that blocked a render would be worse than the defect.
+
+### Notes for whoever picks this up
+
+- `sheet.py` and `seam.py` catch every exception and return a 1x1 placeholder.
+  A picture must never lose a finished chain. Do not "clean up" those handlers.
+- The contact sheet stores frames through `sheet.small()` (168px tall). Two
+  full frames per hop across eight hops is 180 MB held for the whole render for
+  no reason.
+- The sheet shows `imgs[overlap_n]` for hops 2+, not `imgs[0]`: the first
+  `overlap` frames are trimmed at the join, so `imgs[0]` is a frame the master
+  never contains.
+- `tools/check_workflows.py` derives the expected widget list from the live
+  `INPUT_TYPES`, so it needed no edit for the five new widgets -- only
+  `SaveImage` added to `CORE`, for the Starter's new contact-sheet node.
+- The Starter now ships `contact_sheet=on` with a `SaveImage` wired; the
+  Showcase ships it off. Starter is the teaching graph, so the feature is on
+  the canvas where it will be found.
+
+### Unverified, in priority order
+
+1. Everything visual in ComfyUI: the five new widgets rendering in the RUN
+   panel, the fourth output socket, the Starter's new SaveImage.
+2. `tone_compensate=anchor` on a real chain. The synthetic test models drift as
+   a linear ramp; real drift is not linear and 0.35/0.06 are guesses that
+   looked right on synthetic data.
+3. Whether the contact sheet is legible at ComfyUI's default zoom.
+4. `render_through` re-extending: render 3, then 5, and confirm hops 1-3 hit
+   the cache rather than re-rendering.
+5. `quality=draft` actually being fast enough to be worth it.

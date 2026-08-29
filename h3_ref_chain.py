@@ -69,6 +69,7 @@ from . import refs as _refs
 from . import store as _store
 from . import media as _media
 from . import tone as _tone
+from . import sheet as _sheet
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -76,6 +77,12 @@ from .refs import MAX_REF_IMAGES
 
 FPS = 24
 TAG = "HandTieClips"
+
+# quality=draft. Low enough to be genuinely fast, high enough that blocking,
+# camera and whether a join lands are all still readable. Both values are in
+# the cache key already, so a draft never overwrites the matching final.
+DRAFT_RESOLUTION = "0.3 MP"
+DRAFT_STEPS = 6
 
 # H3 canvas: multiples of 32, short-edge ~768, area cap 768*1344.
 CANVAS = {
@@ -1211,14 +1218,69 @@ class HandTieClips:
                         "automatically when shot 1 already names a medium."
                     ),
                 }),
+                # Appended 2026-08-30, still obeying the append-only rule above.
+                "render_through": ("INT", {
+                    "default": 0, "min": 0, "max": 64,
+                    "tooltip": (
+                        "Stop after this many hops. 0 renders the whole plan. "
+                        "With cache_hops=on the hops you already rendered are "
+                        "kept, so 3 then 5 then 8 builds a chain up in stages "
+                        "and only ever renders the new hops. The plan is not "
+                        "changed -- shot 4 still knows it is shot 4."
+                    ),
+                }),
+                "quality": (["final", "draft"], {
+                    "default": "final",
+                    "tooltip": (
+                        "draft forces 0.3 MP and 6 steps for a fast structural "
+                        "read of the whole chain -- does the story hold, do the "
+                        "joins land. Resolution and steps are both in the cache "
+                        "key, so drafts and finals never overwrite each other; "
+                        "they simply cost two entries."
+                    ),
+                }),
+                "dry_run": (["off", "on"], {
+                    "default": "off",
+                    "tooltip": (
+                        "Compile every hop's prompt and stop -- no sampling, no "
+                        "model, seconds not minutes. Read them on `info`, or as "
+                        "a page on `contact_sheet`. This is the only way to see "
+                        "what the text encoder will actually receive before "
+                        "paying for it."
+                    ),
+                }),
+                "contact_sheet": (["off", "on"], {
+                    "default": "off",
+                    "tooltip": (
+                        "Build the `contact_sheet` output: one row per hop with "
+                        "its first and last delivered frame, its beat, its "
+                        "directives and what happened to it. Wire it to a Save "
+                        "Image. Always built during a dry run."
+                    ),
+                }),
+                "tone_anchor": ("FLOAT", {
+                    "default": _tone.ANCHOR_STRENGTH, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": (
+                        "Strength of tone_compensate=anchor's pull back toward "
+                        "hop 1's exposure. Ignored by every other mode. 0 "
+                        "disables the pull and leaves plain frame_shift; 0.35 "
+                        "closes about a third of the gap per hop, which arrests "
+                        "a long slide without visibly pumping. A shot can opt "
+                        "out with \"tone\": \"free\" or move the anchor to itself "
+                        "with \"tone\": \"rebase\"."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "AUDIO", "STRING")
-    RETURN_NAMES = ("images", "audio", "info")
+    # contact_sheet is APPENDED, never inserted: a saved workflow's links name
+    # an output by index, so putting it anywhere but last would silently rewire
+    # every graph that already uses this node.
+    RETURN_TYPES = ("IMAGE", "AUDIO", "STRING", "IMAGE")
+    RETURN_NAMES = ("images", "audio", "info", "contact_sheet")
     FUNCTION = "run"
     CATEGORY = "Hand Tie Clips"
     DESCRIPTION = (
@@ -1263,7 +1325,17 @@ class HandTieClips:
             shot_plan="", ref_plan="", cache_hops="off", cache_budget_gb=20.0,
             audio_pin_frames=24, pin_renorm="off", pin_noise=0.0,
             tone_compensate="off", establish=None,
+            render_through=0, quality="final", dry_run="off",
+            contact_sheet="off", tone_anchor=_tone.ANCHOR_STRENGTH,
             unique_id=None):
+        dry = str(dry_run) == "on"
+        draft = str(quality) == "draft"
+        want_sheet = str(contact_sheet) == "on" or dry
+        if draft:
+            # Both of these are already in the cache key, so a draft cannot
+            # collide with the final it is standing in for.
+            resolution, steps = DRAFT_RESOLUTION, min(int(steps), DRAFT_STEPS)
+            print(f"[{TAG}] draft: {DRAFT_RESOLUTION}, {steps} steps", flush=True)
         width, height = _canvas(resolution, aspect)
         length = align_frame_count(_duration_frames(duration))
         overlap_n = _overlap_frames(overlap)
@@ -1303,6 +1375,21 @@ class HandTieClips:
             blocks, unique = _expand_shots(
                 _parse_shots(prompt), int(chains), hop_script=str(hop_script))
         n = len(blocks)
+
+        # render_through truncates the RENDER, never the plan: the shots that
+        # survive keep their own indices, seeds and cache keys, so extending the
+        # stop point later re-uses every hop already on disk instead of
+        # renumbering them into fresh misses.
+        stop_at = int(render_through or 0)
+        if 0 < stop_at < n:
+            print(f"[{TAG}] render_through={stop_at}: rendering hops 1-{stop_at} "
+                  f"of {n}; the rest of the plan is untouched", flush=True)
+            blocks = blocks[:stop_at]
+            shots = shots[:stop_at]
+            n = stop_at
+        elif stop_at > n:
+            print(f"[{TAG}] render_through={stop_at} is past the end of a "
+                  f"{n}-hop plan; rendering all of it", flush=True)
 
         # Per-shot duration overrides, validated up front so a bad value fails
         # before any sampling happens rather than three hops in.
@@ -1402,12 +1489,17 @@ class HandTieClips:
 
         # Fingerprint the model as it arrives -- after whatever LoRA and
         # attention nodes are drawn upstream, before this node touches it.
-        model_fp = _model_fingerprint(model)
+        # Skipped on a dry run: it only feeds the hop cache key, and a dry run
+        # writes no cache. Hashing patched weights is not free.
+        model_fp = None if dry else _model_fingerprint(model)
 
-        model = _result(MiniMaxH3SigmaShift.execute(model, float(shift_video), float(shift_audio)))[0]
-        sampler = _result(KSamplerSelect.execute(sampler_name))[0]
-        base_sigmas = _result(BasicScheduler.execute(model, scheduler, int(steps), 1.0))[0]
-        sigma_cache = {int(steps): base_sigmas}
+        sampler = base_sigmas = None
+        sigma_cache = {}
+        if not dry:
+            model = _result(MiniMaxH3SigmaShift.execute(model, float(shift_video), float(shift_audio)))[0]
+            sampler = _result(KSamplerSelect.execute(sampler_name))[0]
+            base_sigmas = _result(BasicScheduler.execute(model, scheduler, int(steps), 1.0))[0]
+            sigma_cache = {int(steps): base_sigmas}
 
         print(
             f"[{TAG}] {n} hop(s), {length}f ({length / FPS:.1f}s) @ {width}x{height} "
@@ -1423,7 +1515,10 @@ class HandTieClips:
         # Total length is known up front, so one allocation plus slice-writes
         # removes that doubling.
         total_frames = sum(lengths) - overlap_n * (n - 1)
-        master_imgs = torch.empty(
+        # A dry run must not allocate the master. At 8 x 15 s and 1280x736 that
+        # is 2742 full float frames -- ~31 GB -- for a feature whose entire
+        # point is that it costs seconds.
+        master_imgs = None if dry else torch.empty(
             (total_frames, int(height), int(width), 3), dtype=torch.float32)
         write_pos = 0
         master_wav = None
@@ -1447,7 +1542,7 @@ class HandTieClips:
         if tone_on:
             print(f"[{TAG}] tone compensation: {tone_mode} "
                   f"(overlap {overlap_n}f)", flush=True)
-        if str(cache_hops) == "on":
+        if str(cache_hops) == "on" and not dry:
             import folder_paths
             hop_store = _store.HopStore(
                 os.path.join(folder_paths.get_temp_directory(), "h3_ref_chain_hops"),
@@ -1477,6 +1572,14 @@ class HandTieClips:
         }
         prev_key = None
         hop_keys = []
+        # tone_compensate=anchor state. `anchor_ref` is hop 1's per-channel mean
+        # -- the one tone in the chain that nothing drifted into -- and every
+        # later hop is eased back toward it. A shot with tone="rebase" moves the
+        # reference onto itself, which is how a scene that is genuinely darker
+        # from here on stops being fought.
+        anchor_on = tone_mode == "anchor" and float(tone_anchor) > 0.0
+        anchor_ref = None
+        sheet_rows = []
 
         assembled = []
         for i, block in enumerate(blocks):
@@ -1617,6 +1720,34 @@ class HandTieClips:
                       f"continuity {len(hop_continuity)} chars)", flush=True)
 
             assembled.append((i + 1, block))
+
+            # A dry run has everything it came for the moment the block is
+            # compiled: this is the text the encoder would receive. Stop here,
+            # before the key, the cache and the sampler.
+            if dry:
+                sheet_rows.append({
+                    "hop": i + 1,
+                    "first": None, "last": None,
+                    "beat": (shot.get("beat") or "").strip() or "(continues)",
+                    "directives": dict(shot.get("directives") or {}),
+                    "meta": [f"{hop_length}f ({hop_length / FPS:.1f}s)",
+                             f"{len(block)} chars compiled",
+                             f"{len(hop_active)} ref(s)" if hop_active else None,
+                             # NOT the pin mechanism: which one a hop gets is
+                             # decided at render time by whether a sampler
+                             # latent exists, and a dry run has none. Reporting
+                             # the setting is honest; reporting AddGuide for
+                             # every hop would not be.
+                             f"pin_to_qwen={pin_to_qwen}" if i > 0 else None,
+                             f"tone={shot.get('tone')}" if shot.get("tone") else None],
+                })
+                # The next hop's prompt asks how many pictures precede it, not
+                # what is in them, so a token stand-in compiles identical text
+                # for none of the memory.
+                prev_imgs = torch.zeros((max(overlap_n, 1), 8, 8, 3),
+                                        dtype=torch.float32)
+                pbar.update(1)
+                continue
 
             # Key this hop. prev_key makes the key chained, so editing shot 1
             # invalidates every hop after it -- correct, and the reason the UI
@@ -1768,6 +1899,35 @@ class HandTieClips:
                 if tone_note:
                     print(f"[{TAG}] hop {i + 1} tone: {tone_note}", flush=True)
 
+            # The chain-wide half of `anchor`, stacked on the seam correction
+            # above. It runs here for the same reason that one does: `prev_imgs`
+            # is taken below, so correcting now is what stops the drift feeding
+            # the next hop rather than merely repainting the master.
+            if anchor_on:
+                shot_tone = str(shot.get("tone") or "")
+                if i == 0:
+                    anchor_ref = _tone.anchor_stats(imgs)
+                    if anchor_ref is not None:
+                        print(f"[{TAG}] tone anchor set from hop 1: "
+                              + " ".join(f"{c}{v:.4f}" for c, v
+                                         in zip("rgb", anchor_ref.tolist())),
+                              flush=True)
+                elif shot_tone == "rebase":
+                    anchor_ref = _tone.anchor_stats(imgs)
+                    print(f"[{TAG}] hop {i + 1}: tone=rebase, anchor moved to "
+                          f"this hop; later hops hold ITS level", flush=True)
+                elif shot_tone == "free":
+                    print(f"[{TAG}] hop {i + 1}: tone=free, anchor pull skipped",
+                          flush=True)
+                else:
+                    imgs, anchor_note = _tone.anchor_pull(
+                        imgs, anchor_ref, strength=float(tone_anchor))
+                    if anchor_note:
+                        tone_note = (tone_note + " + " + anchor_note
+                                     if tone_note else anchor_note)
+                        print(f"[{TAG}] hop {i + 1} tone: {anchor_note}",
+                              flush=True)
+
             if i == 0:
                 master_imgs[0:imgs.shape[0]] = imgs
                 write_pos = int(imgs.shape[0])
@@ -1794,6 +1954,31 @@ class HandTieClips:
                 )
                 del trimmed
 
+            if want_sheet:
+                # The frames this hop actually CONTRIBUTES: hop 1 gives all of
+                # them, every later hop gives what survives the overlap trim.
+                # Showing imgs[0] on a continuation would show a frame the
+                # master never contains.
+                _f0 = imgs[0] if i == 0 else imgs[overlap_n]
+                _row_seed = (int(shot["seed"]) if shot.get("seed") is not None
+                             else ((int(seed) + i) if seed_per_shot else int(seed)))
+                sheet_rows.append({
+                    "hop": i + 1,
+                    "first": _sheet.small(_f0),
+                    "last": _sheet.small(imgs[-1]),
+                    "beat": (shot.get("beat") or "").strip() or "(continues)",
+                    "directives": dict(shot.get("directives") or {}),
+                    "note": ("tone: " + tone_note) if tone_note else None,
+                    "meta": [
+                        f"{int(imgs.shape[0])}f",
+                        f"seed {_row_seed}",
+                        f"{int(shot.get('steps') or steps)} steps",
+                        "cached" if cached is not None else None,
+                        f"pin {pin_mech_used}" if i > 0 else None,
+                        f"tone={shot.get('tone')}" if shot.get("tone") else None,
+                    ],
+                })
+
             # The join, as two pictures: the previous hop's last delivered frame
             # and this hop's first. Sent together so the panel can show the
             # actual seam rather than one frame per hop.
@@ -1819,6 +2004,33 @@ class HandTieClips:
                       "tone": tone_note or None})
             del imgs, wav, audio
             pbar.update(1)
+
+        if dry:
+            _span = (str(lengths[0]) if len(set(lengths)) == 1
+                     else "/".join(str(v) for v in lengths))
+            head = (f"DRY RUN - {n} hop(s) compiled, nothing rendered. "
+                    f"{_span}f each, overlap {overlap_n}, "
+                    f"would deliver {total_frames} frames "
+                    f"({total_frames / FPS:.1f}s) at {int(width)}x{int(height)}.")
+            print(f"[{TAG}] {head}", flush=True)
+            _sep = chr(10) * 2
+            info = head + _sep + _sep.join(
+                ("===== hop %d prompt =====" + chr(10) + "%s") % (k, t)
+                for k, t in assembled)
+            sheet = _sheet.build(
+                sheet_rows,
+                title=f"DRY RUN - {n} hop(s), {total_frames} frames "
+                      f"({total_frames / FPS:.1f}s) - nothing rendered")
+            _push_preview(unique_id, f"dry run - {n} hop(s) compiled",
+                          hop=n, total=n, frac=1.0,
+                          meta={"dry_run": True, "hops": int(n),
+                                "would_be_frames": int(total_frames),
+                                "done": True})
+            return (_sheet.placeholder(),
+                    {"waveform": torch.zeros((1, 2, 1024), dtype=torch.float32),
+                     "sample_rate": 44100},
+                    info,
+                    sheet)
 
         if write_pos != total_frames:
             print(f"[{TAG}] note: wrote {write_pos} of {total_frames} planned "
@@ -1853,7 +2065,17 @@ class HandTieClips:
                   "hops": int(n), "frames": int(master_imgs.shape[0]),
                   "done": True})
         master_audio = {"waveform": master_wav, "sample_rate": sr}
-        return (master_imgs, master_audio, info)
+        sheet = _sheet.placeholder()
+        if want_sheet:
+            sheet = _sheet.build(
+                sheet_rows,
+                title=(f"Hand Tie Clips - {n} hop(s), "
+                       f"{int(master_imgs.shape[0])} frames ({_v_secs:.1f}s) "
+                       f"@ {int(master_imgs.shape[2])}x{int(master_imgs.shape[1])}"
+                       + (" - DRAFT" if draft else "")))
+            print(f"[{TAG}] contact sheet: {int(sheet.shape[2])}x"
+                  f"{int(sheet.shape[1])}", flush=True)
+        return (master_imgs, master_audio, info, sheet)
 
 
 class HTCContinuityState:

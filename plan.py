@@ -17,6 +17,10 @@ Shot fields (all optional except `beat`):
     steps       int override
     duration    str override, e.g. "8 s"
     locked      bool -- reuse this hop's cached render (hop store, step 4)
+    tone        "" | "free" | "rebase" -- opt out of tone_compensate=anchor's
+                chain-wide pull for this hop. "free" skips the pull once;
+                "rebase" also moves the anchor to this hop, for a scene that is
+                deliberately darker (or brighter) from here on.
     id          stable identifier, generated if absent
 """
 
@@ -32,7 +36,23 @@ TAG = "HandTieClips"
 # hand-authored shot_plan lost it the first time anyone touched a card. Leaving
 # it out means _norm_shot's unknown-field error names it and points at `shots`.
 _SHOT_KEYS = {"id", "beat", "directives", "prose",
-              "seed", "steps", "duration", "locked"}
+              "seed", "steps", "duration", "locked", "tone"}
+
+
+TONE_VALUES = ("", "free", "rebase")
+
+
+def _tone_field(v, where):
+    """Validate a shot's `tone` opt-out. -> "" | "free" | "rebase"."""
+    if v in (None, "", False):
+        return ""
+    v = str(v).strip().lower()
+    if v not in TONE_VALUES:
+        raise ValueError(
+            f"{TAG}: {where}tone must be one of {[x for x in TONE_VALUES if x]} "
+            f"(or omitted), got {v!r}"
+        )
+    return v
 
 
 def _norm_shot(raw, i):
@@ -79,6 +99,7 @@ def _norm_shot(raw, i):
         "steps": _int("steps"),
         "duration": (str(raw["duration"]).strip() or None) if raw.get("duration") else None,
         "locked": bool(raw.get("locked")),
+        "tone": _tone_field(raw.get("tone"), where),
     }
 
 
@@ -263,11 +284,102 @@ def check_place_handoff(shots, ref_plan=None):
     return warnings
 
 
+
+# ---------------------------------------------------------------------------
+# Over-delivery: the defect class that survives every other check.
+#
+# A beat has to be true from ANY plausible ending of the previous hop, because
+# the model decides where that hop actually lands. `tail=settle` and
+# `tail=hold` are the two directives that promise the opposite of motion --
+# settle brings the subject to rest, hold freezes the frame -- so a following
+# beat that opens as though the action never stopped is asking hop N+1 to
+# continue something hop N was told to end.
+#
+# This is what produced the one hard cut in the 8x15s chain (a 7.1-sigma jump
+# at f1098) from a plan that passed coherence, place-handoff and every template
+# check. Nothing structural distinguishes it: both shots are individually
+# well-formed and the directives are individually legal. Only the JOIN between
+# them is wrong, which is why it needs its own pass.
+#
+# Heuristic, and deliberately narrow. The vocabularies below are words that
+# explicitly assert continuation; a beat can open mid-action without using any
+# of them and this will miss it. It warns, like its neighbours -- there are
+# legitimate reasons to write "she continues" after a settle, and a false
+# positive that blocked a render would be worse than the defect.
+# ---------------------------------------------------------------------------
+
+# Phrases that assert the previous action is STILL RUNNING. Trailing spaces are
+# load-bearing: "keeps " must not fire on "keepsake", "still " not on "stillness".
+_MID_ACTION = (
+    "continues", "continuing", "carries on", "carrying on",
+    "keeps ", "keeping ", "still ", "goes on ", "going on ",
+    "resumes", "resuming", "finishes", "finishing",
+    "without stopping", "without pausing", "without breaking",
+    "without looking up", "mid-sentence", "mid sentence",
+    "mid-step", "mid-stride", "mid-turn", "mid-word", "mid-gesture",
+)
+
+# A beat OPENING on one of these reads as an action already in progress. Only
+# checked at the very start of the beat, where a gerund is the subject of the
+# sentence rather than a description of something else in the room -- which is
+# why "morning", "evening" and "nothing" cannot trip it.
+_MID_ACTION_LEAD = (
+    "walking", "turning", "holding", "speaking", "talking", "moving",
+    "reaching", "stepping", "running", "pouring", "writing", "carrying",
+    "leaning", "pulling", "pushing", "climbing", "crossing", "gesturing",
+    "nodding", "shaking", "waving", "pacing", "wiping", "stirring",
+)
+
+# How much of the beat counts as "the opening".
+_OPEN_WINDOW = 110
+
+
+def check_over_delivery(shots):
+    """Warn when a beat opens mid-action after a hop told to come to rest.
+
+    Returns a list of warning strings; never raises.
+    """
+    warnings = []
+    for i in range(1, len(shots)):
+        prev = shots[i - 1] or {}
+        cur = shots[i] or {}
+        tail = ((prev.get("directives") or {}).get("tail") or "").strip()
+        if tail not in ("settle", "hold"):
+            continue
+        beat = (cur.get("beat") or "").strip()
+        if not beat:
+            continue
+        head = beat[:_OPEN_WINDOW].lower()
+        first = head.split()[0].strip(",.;:!?") if head.split() else ""
+
+        hit = None
+        if first in _MID_ACTION_LEAD:
+            hit = f"opens on '{first}'"
+        else:
+            for phrase in _MID_ACTION:
+                if phrase in head:
+                    hit = f"opens with '{phrase.strip()}'"
+                    break
+        if not hit:
+            continue
+
+        warnings.append(
+            f"shot {i + 1}: shot {i} ends on tail={tail}, which delivers a "
+            f"subject at rest -- but shot {i + 1} {hit}, as if the action never "
+            f"stopped. A beat has to be true from ANY ending the model picks "
+            f"for the hop before it. Either set shot {i}'s tail to `ongoing`, "
+            f"or rewrite this opening so it also reads from a standstill."
+        )
+    return warnings
+
+
 def compile_blocks(shots, establish=None, ref_plan=None):
     """Compile a plan into one body string per hop, ready for the chain loop."""
     for w in check_coherence(shots):
         print(f"[{TAG}] note: {w}", flush=True)
     for w in check_place_handoff(shots, ref_plan):
+        print(f"[{TAG}] note: {w}", flush=True)
+    for w in check_over_delivery(shots):
         print(f"[{TAG}] note: {w}", flush=True)
     return [_d.compile_shot(s, i, establish) for i, s in enumerate(shots)]
 
@@ -286,6 +398,8 @@ def describe(shots):
             extra.append(f"duration={s['duration']}")
         if s["locked"]:
             extra.append("locked")
+        if s.get("tone"):
+            extra.append(f"tone={s['tone']}")
         beat = (s["beat"] or "").replace(chr(10), " ")
         if len(beat) > 60:
             beat = beat[:57] + "..."

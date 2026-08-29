@@ -109,6 +109,14 @@
               "locked": {
                 "type": "boolean",
                 "description": "Reuse this hop's cached render even when its inputs changed. Needs cache_hops=on."
+              },
+              "tone": {
+                "type": "string",
+                "enum": [
+                  "free",
+                  "rebase"
+                ],
+                "description": "Opt out of tone_compensate=anchor's pull toward hop 1's exposure. 'free' skips it for this hop; 'rebase' also moves the anchor onto this hop, for a scene that is deliberately darker or brighter from here on. Omit it unless that is the case."
               }
             }
           },

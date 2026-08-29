@@ -1,0 +1,19 @@
+[project]
+name = "comfyui-hand-tie-clips"
+version = "0.3.3"
+description = "Native MiniMax H3 Ref2VA chain: persistent references, previous-segment clip+audio pin, one queue."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"
+
+# `comfy node publish` needs PublisherId as well as the Repository above.
+# PublisherId comes from a registry.comfy.org account and is the last field
+# outstanding. Neither is needed to install the pack by hand or from a zip.
+[tool.comfy]
+PublisherId = ""
+DisplayName = "Hand Tie Clips"
+Icon = ""

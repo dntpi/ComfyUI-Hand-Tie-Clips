@@ -1,0 +1,1213 @@
+{
+  "id": "h3-ref2va-chain",
+  "revision": 1,
+  "last_node_id": 34,
+  "last_link_id": 18,
+  "nodes": [
+    {
+      "id": 2,
+      "type": "UNETLoader",
+      "pos": [
+        0,
+        340
+      ],
+      "size": [
+        420,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "unet_name",
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "weight_dtype",
+          "name": "weight_dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "weight_dtype"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "MODEL",
+          "name": "MODEL",
+          "type": "MODEL",
+          "slot_index": 0,
+          "links": [
+            11
+          ]
+        }
+      ],
+      "title": "DiT (ref2va)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_hybrid_fl2va_ref2va_b30-49-int8.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "CLIPLoader",
+      "pos": [
+        0,
+        460
+      ],
+      "size": [
+        420,
+        106
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "clip_name",
+          "name": "clip_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "clip_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "type",
+          "name": "type",
+          "type": "COMBO",
+          "widget": {
+            "name": "type"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "CLIP",
+          "name": "CLIP",
+          "type": "CLIP",
+          "slot_index": 0,
+          "links": [
+            12
+          ]
+        }
+      ],
+      "title": "Text encoder",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "minimax",
+        "default"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "VAELoader",
+      "pos": [
+        0,
+        600
+      ],
+      "size": [
+        420,
+        82
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae_name",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "slot_index": 0,
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "Video VAE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax_h3_video_vae_int8_convrot.safetensors"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "VAELoader",
+      "pos": [
+        0,
+        720
+      ],
+      "size": [
+        420,
+        82
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae_name",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "slot_index": 0,
+          "links": [
+            4
+          ]
+        }
+      ],
+      "title": "Audio VAE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax_h3_audio_vae_fp32.safetensors"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "HandTieClips",
+      "pos": [
+        994,
+        427
+      ],
+      "size": [
+        968.3162169696975,
+        1426.2006199999998
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 17
+        },
+        {
+          "localized_name": "clip",
+          "name": "clip",
+          "type": "CLIP",
+          "link": 18
+        },
+        {
+          "localized_name": "vae",
+          "name": "vae",
+          "type": "VAE",
+          "link": 3
+        },
+        {
+          "localized_name": "audio_vae",
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 4
+        },
+        {
+          "localized_name": "continuity_state",
+          "name": "continuity_state",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "localized_name": "prompt",
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "chains",
+          "name": "chains",
+          "type": "COMBO",
+          "widget": {
+            "name": "chains"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "resolution",
+          "name": "resolution",
+          "type": "COMBO",
+          "widget": {
+            "name": "resolution"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "aspect",
+          "name": "aspect",
+          "type": "COMBO",
+          "widget": {
+            "name": "aspect"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "duration",
+          "name": "duration",
+          "type": "COMBO",
+          "widget": {
+            "name": "duration"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "overlap",
+          "name": "overlap",
+          "type": "COMBO",
+          "widget": {
+            "name": "overlap"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed_per_shot",
+          "name": "seed_per_shot",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "seed_per_shot"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "steps",
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sampler_name",
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "scheduler",
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": {
+            "name": "scheduler"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shift_video",
+          "name": "shift_video",
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_video"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shift_audio",
+          "name": "shift_audio",
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_audio"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ref_image_size",
+          "name": "ref_image_size",
+          "type": "COMBO",
+          "widget": {
+            "name": "ref_image_size"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "hop_script",
+          "name": "hop_script",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "hop_script"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "pin_to_qwen",
+          "name": "pin_to_qwen",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "pin_to_qwen"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shot_plan",
+          "name": "shot_plan",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "shot_plan"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ref_plan",
+          "name": "ref_plan",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "ref_plan"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cache_hops",
+          "name": "cache_hops",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "cache_hops"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cache_budget_gb",
+          "name": "cache_budget_gb",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "cache_budget_gb"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audio_pin_frames",
+          "name": "audio_pin_frames",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "audio_pin_frames"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "pin_renorm",
+          "name": "pin_renorm",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "pin_renorm"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "pin_noise",
+          "name": "pin_noise",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "pin_noise"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tone_compensate",
+          "name": "tone_compensate",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "tone_compensate"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "start_image_file",
+          "name": "start_image_file",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "start_image_file"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "reference_video_file",
+          "name": "reference_video_file",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "reference_video_file"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "voice_file",
+          "name": "voice_file",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "voice_file"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            5
+          ]
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "slot_index": 1,
+          "links": [
+            6
+          ]
+        },
+        {
+          "localized_name": "info",
+          "name": "info",
+          "type": "STRING",
+          "slot_index": 2,
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "H3RefChain",
+        "h3_plan_backup": "{\n  \"shots\": [\n    {\n      \"id\": \"s1\",\n      \"beat\": \"Live-action, natural indoor light. The cook stands at the counter in @kitchen, looks up from the chopping board, and speaks one short line to someone off-frame.\",\n      \"directives\": {\n        \"camera\": \"hold\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s2\",\n      \"beat\": \"The cook sets the knife down, turns toward the window, and finishes her last word as she looks out.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"push_in\",\n        \"framing\": \"close\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s3\",\n      \"beat\": \"The cook leans back against the counter with her lips closed, and lets her eyes move slowly across the room. The room is still, with only the low hum of the refrigerator.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"pull_back\",\n        \"framing\": \"medium\",\n        \"pace\": \"slow\",\n        \"tail\": \"settle\"\n      }\n    }\n  ]\n}",
+        "h3_editor_mode": "shots"
+      },
+      "widgets_values": [
+        "Live-action, natural indoor light. The person looks exactly as in the reference photographs.\n\nThey sit at a table, look up, and speak one short line. Then they settle, watching the room.",
+        "6",
+        "0.3 MP",
+        "16:9 landscape",
+        "7 s",
+        "0.9 s",
+        427058607873049,
+        "fixed",
+        true,
+        7,
+        "res_multistep",
+        "simple",
+        12,
+        3,
+        "match",
+        "next",
+        "last frame",
+        "{\n  \"shots\": [\n    {\n      \"id\": \"s1\",\n      \"beat\": \"@hero_face stands at the counter in @kitchen, a grey apron over a grey t-shirt. She looks up from the chopping board and says, 'You are early. I have barely started.' She turns back to the board and goes on slicing, the knife tapping steadily against the wood.\",\n      \"directives\": {\n        \"camera\": \"hold\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s2\",\n      \"beat\": \"She sets the knife down and walks the length of the counter to the window of @kitchen, looking out at the street. Her steps are soft on the tiles and the refrigerator hums behind her.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"pan_follow\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s3\",\n      \"beat\": \"She turns from the window, crosses @kitchen and pushes through the doorway into the hallway beyond, the room falling away behind her. Her footsteps carry on the tiles.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"pan_follow\",\n        \"framing\": \"wide\",\n        \"pace\": \"brisk\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s4\",\n      \"beat\": \"@hero_face walks down a narrow hallway hung with coats, one hand trailing along the wall, her footsteps muffled on the runner. The hallway walls stand close on either side of her and the coats brush past her shoulder.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"handheld\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s5\",\n      \"beat\": \"She reaches the window at the end of the hall and rests one hand on the frame, then half turns back over her shoulder and says, 'It is still raining. We will have to do it inside.' She looks back out at the glass with her lips closed, and the rain taps steadily on the pane.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"push_in\",\n        \"framing\": \"close\",\n        \"pace\": \"slow\",\n        \"tail\": \"settle\"\n      }\n    },\n    {\n      \"id\": \"s6\",\n      \"beat\": \"She walks back along the hallway and through the doorway to the counter in @kitchen, picking the knife up again. The refrigerator hums and the knife starts on the board.\",\n      \"directives\": {\n        \"join\": \"match_cut\",\n        \"camera\": \"pull_back\",\n        \"framing\": \"wide\",\n        \"pace\": \"steady\",\n        \"tail\": \"hold\"\n      }\n    }\n  ]\n}",
+        "{\n  \"refs\": [\n    {\n      \"tag\": \"hero_face\",\n      \"file\": \"ref_face.jpg\",\n      \"subject\": 1,\n      \"retention\": \"fully_preserved\",\n      \"shots\": [\n        1,\n        2,\n        3,\n        4,\n        5,\n        6\n      ],\n      \"desc\": \"head-and-shoulders photograph of the cook, even light\"\n    },\n    {\n      \"tag\": \"hero_outfit\",\n      \"file\": \"ref_outfit.jpg\",\n      \"subject\": 1,\n      \"retention\": \"partially_copy\",\n      \"shots\": [\n        1\n      ],\n      \"desc\": \"full-length photograph of the same cook, grey apron over a grey t-shirt\"\n    },\n    {\n      \"tag\": \"kitchen\",\n      \"file\": \"ref_room.jpg\",\n      \"retention\": \"reference\",\n      \"shots\": [\n        1,\n        2,\n        3,\n        6\n      ],\n      \"desc\": \"the kitchen: counter, window, and the light coming through it\"\n    }\n  ],\n  \"subjects\": {\n    \"1\": {\n      \"name\": \"the cook\",\n      \"locked\": \"the same face, the same short dark hair, the same silver stud earrings\",\n      \"context\": \"the grey apron stays tied over the grey t-shirt\"\n    }\n  }\n}",
+        "on",
+        19,
+        24,
+        "off",
+        0,
+        "frame_shift",
+        "",
+        "",
+        "",
+        "Live-action, natural light, one continuous take."
+      ],
+      "title": "H3 Ref2VA Chain - showcase 6x7s"
+    },
+    {
+      "id": 16,
+      "type": "HTCChainPreview",
+      "pos": [
+        2258.827272727274,
+        -90.16060606060621
+      ],
+      "size": [
+        400,
+        460
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 6
+        },
+        {
+          "localized_name": "info",
+          "name": "info",
+          "shape": 7,
+          "type": "STRING",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            8
+          ]
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "slot_index": 1,
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "H3ChainPreview",
+        "h3rcPanelH": 40
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 8,
+      "type": "CreateVideo",
+      "pos": [
+        2991.7272727272743,
+        37.33939393939383
+      ],
+      "size": [
+        300,
+        130
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 8
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 9
+        },
+        {
+          "localized_name": "fps",
+          "name": "fps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bit_depth",
+          "name": "bit_depth",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "bit_depth"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "color_space",
+          "name": "color_space",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "color_space"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VIDEO",
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "slot_index": 0,
+          "links": [
+            10
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        24,
+        "auto",
+        "sRGB"
+      ]
+    },
+    {
+      "id": 9,
+      "type": "SaveVideo",
+      "pos": [
+        3032.515151515151,
+        714.542424242424
+      ],
+      "size": [
+        340,
+        106
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO",
+          "link": 10
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format.codec",
+          "name": "format.codec",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format.codec"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "codec",
+          "name": "codec",
+          "shape": 7,
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "codec"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO",
+          "links": []
+        }
+      ],
+      "title": "SAVE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/HANDTIECLIPS/chain",
+        "auto",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [
+        -137.49999999999997,
+        -359.15000000000015
+      ],
+      "size": [
+        440,
+        900
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "H3 Ref2VA Chain",
+      "properties": {},
+      "widgets_values": [
+        "Hand Tie Clips -- SHOWCASE (6 hops x 7 s = 39.2 s)\n\nA continuity stress test, and the honest demonstration of what the reference\nregister buys you.\n\nREQUIRES a turbo stack on the MODEL wire, which is how this node is actually\nrun here:\n\n    UNETLoader -> LoRA Loader Stack (turbo LoRA) -> H3 AdaLN LoRA Fix\n               -> MiniMax H3 Low VRAM Attention -> H3 SLA Attention\n               -> Model Preview Override -> this node\n\n    ComfyUI-PlagueKind-Nodes  ->  LoRA Loader Stack, AdaLN Fix, SLA Attention\n    ComfyUI-KJNodes           ->  Low VRAM Attention (experimental),\n                                  Model Preview Override\n\nOn disk as well: the turbo LoRA named in the loader, and taeh3.safetensors for\nthe live preview (or set tiny_vae to none).\n\nCLIP reaches this node FROM THE LORA LOADER, not from the encoder. That is what\nmakes the text half of every LoRA land. Do not rewire it back.\n\n`steps` is 7, which only works with the turbo LoRA. Missing a pack? Its nodes\nload as red boxes -- delete them, wire the loader straight into `model` and the\nencoder into `clip`, and raise `steps` to 20 or so.\n\nBEFORE YOU RUN IT, supply three pictures. Open REFERENCES on the node and drop\nyour own onto each thumbnail, or put files in ComfyUI/input/h3_refs named:\n\n    ref_face.jpg     head-and-shoulders, even light   -> @hero_face\n    ref_outfit.jpg   full length, same person         -> @hero_outfit\n    ref_room.jpg     the room, wide                   -> @kitchen\n\nWithout them the run stops and names the reference it could not find. Nothing\nguesses.\n\nWhat each hop is testing:\n\n  1  kitchen, dialogue           all three references active\n  2  lateral move to the window  kitchen only\n  3  exits through the doorway   kitchen only\n  4  hallway - UNSEEN space      face re-asserted; no room reference exists\n  5  dialogue, ZERO references   identity, wardrobe and voice ride on the frame\n                                 pin plus subjects.1.locked/context alone\n  6  returns to the kitchen      on a MATCH CUT, not a continuous join -- one\n                                 unbroken take across two rooms makes the model\n                                 morph one into the other mid-movement\n\nHop 5 is the point of the whole thing. If the cook is still the same person in\nthe same apron with the same voice, with no picture in front of the encoder,\nthe register is doing its job.\n\n`shots` on each reference is what schedules this. On a continuation chain,\nomitting `shots` means HOP 1 ONLY. Right for a place plate, wrong for a face:\nput every face reference on every hop, or the identity drifts and stays\ndrifted. List every hop a still should appear on.\n\nSettings that are deliberate, not defaults:\n  control_after_generate = fixed   or no two runs are comparable\n  tone_compensate = frame_shift    counters the drift that accumulates over six\n                                   hops. Set it to `off` and re-queue for a\n                                   same-seed A/B: tone mode is not in the hop\n                                   key, so every hop replays from cache in\n                                   seconds instead of re-rendering.\n  cache_hops = on                  edit shot 4 and only shots 4-6 re-render\n"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 30,
+      "type": "LTX_lora_loader",
+      "pos": [
+        520,
+        -40
+      ],
+      "size": [
+        420,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 11
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 12
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            13
+          ]
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            18
+          ]
+        }
+      ],
+      "title": "LoRA Loader Stack (turbo)",
+      "properties": {
+        "htc_speed": "lora",
+        "Node name for S&R": "LTX_lora_loader"
+      },
+      "widgets_values": [
+        "minimax",
+        "[{\"on\":true,\"lora\":\"minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors\",\"str\":1,\"v\":1,\"a\":1,\"t\":1}]",
+        ""
+      ]
+    },
+    {
+      "id": 31,
+      "type": "H3AdaLNLoRAFix",
+      "pos": [
+        520,
+        240
+      ],
+      "size": [
+        340,
+        150
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 13
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "title": "H3 AdaLN LoRA Fix",
+      "properties": {
+        "htc_speed": "adaln",
+        "Node name for S&R": "H3AdaLNLoRAFix"
+      },
+      "widgets_values": [
+        "port"
+      ]
+    },
+    {
+      "id": 32,
+      "type": "MiniMaxLowVRAMAttention",
+      "pos": [
+        520,
+        430
+      ],
+      "size": [
+        330,
+        58
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            15
+          ]
+        }
+      ],
+      "title": "MiniMax H3 Low VRAM Attention",
+      "properties": {
+        "htc_speed": "lowvram",
+        "Node name for S&R": "MiniMaxLowVRAMAttention"
+      },
+      "widgets_values": [
+        4
+      ]
+    },
+    {
+      "id": 33,
+      "type": "H3SLAAttention",
+      "pos": [
+        520,
+        530
+      ],
+      "size": [
+        340,
+        322
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 15
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            16
+          ]
+        }
+      ],
+      "title": "H3 SLA Attention",
+      "properties": {
+        "htc_speed": "sla",
+        "Node name for S&R": "H3SLAAttention"
+      },
+      "widgets_values": [
+        0.9,
+        "64",
+        8192,
+        0,
+        true,
+        true,
+        "0",
+        "comfy_kitchen",
+        true,
+        true,
+        "Light"
+      ]
+    },
+    {
+      "id": 34,
+      "type": "ModelPreviewOverrideKJ",
+      "pos": [
+        520,
+        900
+      ],
+      "size": [
+        360,
+        480
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 16
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "title": "Model Preview Override",
+      "properties": {
+        "htc_speed": "preview",
+        "Node name for S&R": "ModelPreviewOverrideKJ"
+      },
+      "widgets_values": [
+        512,
+        80,
+        true,
+        100,
+        8,
+        "taeh3.safetensors",
+        ""
+      ]
+    }
+  ],
+  "links": [
+    [
+      3,
+      4,
+      0,
+      7,
+      2,
+      "VAE"
+    ],
+    [
+      4,
+      5,
+      0,
+      7,
+      3,
+      "VAE"
+    ],
+    [
+      5,
+      7,
+      0,
+      16,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      7,
+      1,
+      16,
+      1,
+      "AUDIO"
+    ],
+    [
+      7,
+      7,
+      2,
+      16,
+      2,
+      "STRING"
+    ],
+    [
+      8,
+      16,
+      0,
+      8,
+      0,
+      "IMAGE"
+    ],
+    [
+      9,
+      16,
+      1,
+      8,
+      1,
+      "AUDIO"
+    ],
+    [
+      10,
+      8,
+      0,
+      9,
+      0,
+      "VIDEO"
+    ],
+    [
+      11,
+      2,
+      0,
+      30,
+      0,
+      "MODEL"
+    ],
+    [
+      12,
+      3,
+      0,
+      30,
+      1,
+      "CLIP"
+    ],
+    [
+      13,
+      30,
+      0,
+      31,
+      0,
+      "MODEL"
+    ],
+    [
+      14,
+      31,
+      0,
+      32,
+      0,
+      "MODEL"
+    ],
+    [
+      15,
+      32,
+      0,
+      33,
+      0,
+      "MODEL"
+    ],
+    [
+      16,
+      33,
+      0,
+      34,
+      0,
+      "MODEL"
+    ],
+    [
+      17,
+      34,
+      0,
+      7,
+      0,
+      "MODEL"
+    ],
+    [
+      18,
+      30,
+      1,
+      7,
+      1,
+      "CLIP"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8264462809917354,
+      "offset": [
+        76.11091610712583,
+        -281.1386834420914
+      ]
+    }
+  },
+  "version": 0.4
+}

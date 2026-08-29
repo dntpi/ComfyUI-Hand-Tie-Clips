@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+# Every source in this pack has .bak siblings -- the reflex that stands in for
+# version control here. They are working files, not releases.
+*.bak
+*.bak*

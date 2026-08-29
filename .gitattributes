@@ -1,0 +1,11 @@
+# Every source file in this pack is written LF. Without this, a clone on
+# Windows checks out CRLF and the next commit shows every line of every file
+# as changed -- which would bury real diffs in a pack whose whole value is
+# being able to see what changed between renders.
+* text=auto eol=lf
+
+# Keep binary-ish assets out of the text pipeline.
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.safetensors binary

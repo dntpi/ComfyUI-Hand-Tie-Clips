@@ -1,0 +1,872 @@
+/* H3 Ref Chain -- node panel styling.
+ *
+ * External stylesheet rather than a template literal in JS: the old inline
+ * sheet hardcoded every colour as a hex, so a light ComfyUI theme rendered the
+ * panel as dark-grey islands on a light node. Everything below derives from
+ * ComfyUI's own custom properties through color-mix(), which is the idiom the
+ * sibling MiniMaxH3-Contex-Loop pack already uses.
+ *
+ * Class prefixes: .h3e- editor, .h3rc- preview.
+ */
+
+.h3e-root,
+.h3rc-preview {
+    /* Black, one hairline, no radius -- the PromptMasterLD `.ldp-root` system.
+     *
+     * This used to derive every surface from the host theme with color-mix().
+     * The intent was light-theme safety; in practice --h3-bg mixed toward
+     * #111827 and --h3-sunken toward #000, so a light theme got dark blue-grey
+     * islands anyway while the accents stayed literal hex. Committing to one
+     * look is more honest than half-following two. */
+    --h3-bg:      #0a0a0a;
+    --h3-panel:   #111111;
+    --h3-sunken:  #0d0d0d;
+    --h3-border:  #2a2a2a;
+    --h3-border-soft: #1c1c1c;
+
+    --h3-text:    #e8e8e8;
+    --h3-muted:   #9a9a9a;
+    --h3-faint:   #6a6a6a;
+
+    /* One accent. Change this line and the whole panel follows. */
+    --h3-accent:  #e8ff47;
+    --h3-accent-soft: color-mix(in srgb, var(--h3-accent) 10%, transparent);
+    --h3-accent-wash: color-mix(in srgb, var(--h3-accent) 4%, transparent);
+    /* Text that sits ON the accent. Never white -- acid yellow needs ink. */
+    --h3-on-accent: #101010;
+    --h3-warn:    #ffb020;
+    --h3-error:   #ff3b30;
+    --h3-ok:      #5fbf7a;
+
+    /* One spacing scale. */
+    --h3-gap: 8px;
+    --h3-gap-sm: 5px;
+    /* Square. Kept as tokens rather than deleted so a rounded variant is one
+     * edit, and so no rule has to change to get there. */
+    --h3-radius: 0px;
+    --h3-radius-sm: 0px;
+    --h3-row-h: 28px;
+
+    /* A type scale, which this sheet did not have. Hierarchy was carried by
+     * four literal sizes plus alpha, with nothing bold anywhere, which is why
+     * it read flat. */
+    --h3-fs-xs: 9px;
+    --h3-fs-sm: 10px;
+    --h3-fs: 11px;
+    --h3-fs-lg: 12px;
+    --h3-weight-label: 700;
+    /* One label idiom. Seven different letter-spacings were doing this job. */
+    --h3-track: .14em;
+
+    box-sizing: border-box;
+    color: var(--h3-text);
+    font: var(--h3-fs-lg)/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.h3e-root *,
+.h3e-root *::before,
+.h3e-root *::after,
+.h3rc-preview *,
+.h3rc-preview *::before,
+.h3rc-preview *::after { box-sizing: border-box; }
+
+/* ---------------------------------------------------------------- editor -- */
+
+.h3e-root {
+    display: flex;
+    flex-direction: column;
+    gap: var(--h3-gap);
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 2px;
+    /* The root no longer scrolls -- .h3e-scroll does. See the note at the end
+     * of this sheet. */
+    overflow: hidden;
+}
+
+/* The containment context the rail's @container queries need. Without this the
+ * queries below never match -- see the note above them. */
+.h3e-section { container-type: inline-size; }
+
+.h3e-section {
+    background: var(--h3-bg);
+    border: 1px solid var(--h3-border);
+    border-radius: var(--h3-radius);
+    padding: var(--h3-gap);
+}
+
+/* Sticky header so "+ shot" stays reachable in a long plan. */
+.h3e-head {
+    position: sticky;
+    top: calc(var(--h3-gap) * -1);
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    margin: 0 0 var(--h3-gap);
+    padding: 4px 0;
+    background: var(--h3-bg);
+}
+
+.h3e-title {
+    font-size: var(--h3-fs-sm);
+    font-weight: var(--h3-weight-label);
+    letter-spacing: var(--h3-track);
+    text-transform: uppercase;
+    color: var(--h3-text);
+}
+.h3e-count { font-size: var(--h3-fs-sm); color: var(--h3-faint); font-variant-numeric: tabular-nums; }
+.h3e-spacer { flex: 1; }
+
+/* -- controls ------------------------------------------------------------- */
+
+.h3e-root button,
+.h3e-root input,
+.h3e-root select,
+.h3e-root textarea {
+    font: inherit;
+    color: var(--h3-text);
+    background: var(--h3-sunken);
+    border: 1px solid var(--h3-border);
+    border-radius: var(--h3-radius-sm);
+    padding: 5px 7px;
+    min-width: 0;
+    transition: border-color .13s ease, background-color .13s ease, opacity .13s ease;
+}
+
+.h3e-root textarea { resize: vertical; line-height: 1.45; }
+
+.h3e-root button { cursor: pointer; white-space: nowrap; background: var(--h3-panel); }
+.h3e-root button:hover { border-color: var(--h3-accent); }
+.h3e-root button:active { background: color-mix(in srgb, var(--h3-accent) 22%, var(--h3-panel)); }
+.h3e-root button:disabled { cursor: not-allowed; opacity: .4; }
+
+.h3e-root input:hover,
+.h3e-root select:hover,
+.h3e-root textarea:hover { border-color: color-mix(in srgb, var(--h3-accent) 55%, var(--h3-border)); }
+
+/* Keyboard focus was completely invisible before -- ~8 controls per card. */
+.h3e-root :focus-visible {
+    outline: 2px solid var(--h3-accent);
+    outline-offset: 1px;
+    border-color: var(--h3-accent);
+}
+
+.h3e-btn { padding: 5px 9px; }
+.h3e-x {
+    padding: 4px 8px;
+    color: var(--h3-error);
+    background: transparent;
+    border-color: var(--h3-border-soft);
+}
+.h3e-x:hover { border-color: var(--h3-error); background: color-mix(in srgb, var(--h3-error) 14%, transparent); }
+
+/* -- Simple / Shots toggle ------------------------------------------------ */
+
+.h3e-modes { display: flex; border: 1px solid var(--h3-border); border-radius: var(--h3-radius-sm); overflow: hidden; }
+.h3e-root .h3e-mode {
+    border: 0;
+    border-radius: 0;
+    background: var(--h3-sunken);
+    color: var(--h3-muted);
+    padding: 5px 12px;
+    font-size: 11px;
+}
+.h3e-root .h3e-mode:hover { background: color-mix(in srgb, var(--h3-accent) 12%, var(--h3-sunken)); color: var(--h3-text); }
+.h3e-root .h3e-mode[aria-pressed="true"],
+.h3e-root .h3e-mode.h3e-on {
+    background: color-mix(in srgb, var(--h3-accent) 34%, var(--h3-sunken));
+    color: var(--h3-text);
+}
+
+.h3e-empty {
+    color: var(--h3-muted);
+    padding: 14px 10px;
+    line-height: 1.6;
+    text-align: center;
+    border: 1px dashed var(--h3-border-soft);
+    border-radius: var(--h3-radius-sm);
+}
+.h3e-empty-cta { display: block; margin: 8px auto 0; }
+
+/* -- shot cards ----------------------------------------------------------- */
+
+.h3e-card {
+    --h3-card-accent: var(--h3-accent);
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--h3-card-accent) 7%, transparent), transparent 140px),
+        var(--h3-panel);
+    border: 1px solid color-mix(in srgb, var(--h3-card-accent) 46%, var(--h3-border));
+    border-left: 4px solid var(--h3-card-accent);
+    border-radius: var(--h3-radius);
+    padding: var(--h3-gap-sm) var(--h3-gap);
+    margin-bottom: var(--h3-gap-sm);
+    transition: border-color .13s ease, box-shadow .13s ease;
+}
+.h3e-card:hover { border-color: color-mix(in srgb, var(--h3-card-accent) 70%, var(--h3-border)); }
+.h3e-card.h3e-drop,
+.h3e-card.h3e-drag-over { outline: 2px solid var(--h3-accent); outline-offset: 1px; }
+.h3e-card.h3e-dragging { opacity: .45; }
+.h3e-card.h3e-invalid { border-left-color: var(--h3-error); }
+
+.h3e-card-head {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    min-height: var(--h3-row-h);
+}
+
+/* A one-character glyph is not a drag target. */
+.h3e-drag {
+    cursor: grab;
+    user-select: none;
+    padding: 4px 5px;
+    border-radius: 4px;
+    color: var(--h3-faint);
+    line-height: 1;
+}
+.h3e-drag:hover { color: var(--h3-text); background: var(--h3-accent-soft); }
+.h3e-drag:active { cursor: grabbing; }
+
+/* Collapse/expand affordance. */
+.h3e-root .h3e-fold {
+    padding: 3px 6px;
+    background: transparent;
+    border-color: transparent;
+    color: var(--h3-muted);
+    font-size: 10px;
+    line-height: 1;
+}
+.h3e-root .h3e-fold:hover { color: var(--h3-text); background: var(--h3-accent-soft); border-color: transparent; }
+.h3e-card.h3e-collapsed .h3e-card-body { display: none; }
+.h3e-card.h3e-collapsed { padding-bottom: var(--h3-gap-sm); }
+.h3e-fold-mark { display: inline-block; transition: transform .15s ease; }
+.h3e-card.h3e-collapsed .h3e-fold-mark { transform: rotate(-90deg); }
+
+.h3e-num,
+.h3e-ord {
+    background: color-mix(in srgb, var(--h3-accent) 28%, var(--h3-sunken));
+    color: var(--h3-text);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.h3e-timing { font-size: 10px; color: var(--h3-muted); font-variant-numeric: tabular-nums; }
+.h3e-lock { font-size: 10px; color: var(--h3-warn); }
+.h3e-peek {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: var(--h3-faint);
+}
+
+.h3e-beat { width: 100%; background: var(--h3-sunken); }
+
+/* -- directive row: grid, not fixed-width flex ---------------------------- */
+
+.h3e-dirs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: var(--h3-gap-sm);
+    margin-top: var(--h3-gap-sm);
+}
+.h3e-dir { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h3e-dir-label,
+.h3e-field > span:first-child {
+    font-size: var(--h3-fs-xs);
+    font-weight: var(--h3-weight-label);
+    letter-spacing: var(--h3-track);
+    text-transform: uppercase;
+    color: var(--h3-muted);
+}
+.h3e-select, .h3e-input { width: 100%; }
+
+/* -- notes: hint / warning / error are three different things ------------- */
+
+.h3e-note {
+    border-radius: var(--h3-radius-sm);
+    padding: 6px 8px;
+    margin-top: var(--h3-gap-sm);
+    line-height: 1.5;
+    border: 1px solid;
+    color: var(--h3-warn);
+    background: color-mix(in srgb, var(--h3-warn) 12%, transparent);
+    border-color: color-mix(in srgb, var(--h3-warn) 40%, transparent);
+}
+.h3e-note.h3e-note-error {
+    color: var(--h3-error);
+    background: color-mix(in srgb, var(--h3-error) 13%, transparent);
+    border-color: color-mix(in srgb, var(--h3-error) 45%, transparent);
+}
+.h3e-note.h3e-note-hint {
+    color: var(--h3-muted);
+    background: color-mix(in srgb, var(--h3-accent) 8%, transparent);
+    border-color: var(--h3-border-soft);
+}
+
+.h3e-adv { margin-top: var(--h3-gap-sm); }
+.h3e-adv > summary,
+.h3e-json-wrap > summary {
+    cursor: pointer;
+    color: var(--h3-muted);
+    font-size: 10px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 3px 2px;
+    border-radius: 4px;
+}
+.h3e-adv > summary:hover,
+.h3e-json-wrap > summary:hover { color: var(--h3-text); background: var(--h3-accent-soft); }
+
+.h3e-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    gap: var(--h3-gap-sm);
+    margin: var(--h3-gap-sm) 0;
+}
+.h3e-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h3e-field .h3e-input, .h3e-field .h3e-select { width: 100%; }
+.h3e-check { flex-direction: row; align-items: center; gap: 6px; }
+.h3e-check input { width: auto; }
+
+/* -- run panel ------------------------------------------------------------ */
+
+/* A <details> wearing .h3e-section, so it keeps the panel chrome whether it is
+ * open or shut. Collapsed by default: these dials are set once and then left,
+ * unlike the script above them, and the summary line carries enough of the
+ * state that opening it is a choice rather than a check. */
+.h3e-run { padding: var(--h3-gap); }
+.h3e-run > summary {
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    gap: var(--h3-gap-sm);
+    padding: 2px;
+    border-radius: 4px;
+    list-style: none;              /* the default triangle sits badly on a row */
+    min-width: 0;
+}
+.h3e-run > summary::-webkit-details-marker { display: none; }
+.h3e-run > summary::before {
+    content: "▸";
+    color: var(--h3-faint);
+    font-size: 9px;
+    transition: transform .12s ease;
+}
+.h3e-run[open] > summary::before { transform: rotate(90deg); }
+.h3e-run > summary:hover { background: var(--h3-accent-soft); }
+.h3e-run > summary:hover .h3e-title { color: var(--h3-text); }
+
+/* The digest is one line and must stay one line: it is read at a glance with
+ * the panel shut, and wrapping it would push the script off screen. */
+.h3e-run-digest {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.h3e-run-body { margin-top: var(--h3-gap-sm); }
+.h3e-run-group + .h3e-run-group {
+    margin-top: var(--h3-gap-sm);
+    padding-top: var(--h3-gap-sm);
+    border-top: 1px solid var(--h3-border-soft);
+}
+.h3e-run-label {
+    font-size: var(--h3-fs-xs);
+    font-weight: var(--h3-weight-label);
+    letter-spacing: var(--h3-track);
+    text-transform: uppercase;
+    color: var(--h3-muted);
+}
+/* auto-FILL, not auto-fit: auto-fit collapses the empty tracks, so the two
+ * dials in CACHE stretched to half the panel each while the four in OUTPUT sat
+ * at a quarter. Keeping the empty tracks lines every group up on one grid. */
+.h3e-run-group .h3e-grid {
+    margin-top: 4px;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+}
+.h3e-run .h3e-run-wide { grid-column: span 2; }
+/* Digits line up column-wise, so a changed seed is visible at a glance. */
+.h3e-run input[type="number"] { font-variant-numeric: tabular-nums; }
+
+/* A checkbox plus the widget's own label_on/label_off, so the state reads as
+ * "vary per hop" rather than as a bare tick. */
+.h3e-run-toggle { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.h3e-root .h3e-run-toggle input { width: auto; flex: none; }
+.h3e-run-togglabel {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--h3-muted);
+}
+
+
+/* -- reference rail ------------------------------------------------------- */
+
+/* Was fixed pixel widths in a non-wrapping flex row summing to ~406px, so the
+ * description got crushed and the row overflowed a narrow node. */
+.h3e-ref {
+    display: grid;
+    grid-template-columns: auto minmax(88px, 1.1fr) minmax(74px, .8fr) minmax(74px, .8fr) minmax(96px, 1fr) minmax(120px, 1.6fr) auto;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    padding: 4px;
+    margin-bottom: 4px;
+    min-height: var(--h3-row-h);
+    border: 1px solid transparent;
+    border-radius: var(--h3-radius-sm);
+    transition: background-color .13s ease, border-color .13s ease;
+}
+.h3e-ref:hover { background: var(--h3-panel); border-color: var(--h3-border-soft); }
+.h3e-ref.h3e-inactive { opacity: .55; }
+.h3e-ref.h3e-bad { border-color: color-mix(in srgb, var(--h3-error) 55%, transparent); }
+.h3e-ref.h3e-bad .h3e-tag { border-color: var(--h3-error); }
+.h3e-inactive .h3e-ord { background: var(--h3-sunken); color: var(--h3-faint); }
+.h3e-tag, .h3e-slot, .h3e-subj, .h3e-ret, .h3e-desc { width: 100%; }
+
+/* The rail's 7-track grid needs ~536px of content width and the node only ever
+ * offers ~510px at NODE_WIDTH 560, so it is crushed by default. These queries
+ * are the relief -- and until `container-type` was declared on .h3e-section
+ * (below) they matched nothing at all, because a @container query without a
+ * containment context is dead code. That is why the rail looked mangled at
+ * every node width. */
+@container (max-width: 560px) {
+    /* Drop the description to its own line first: it is the widest track and
+     * the least useful one to read mid-row. */
+    .h3e-ref {
+        grid-template-columns: auto minmax(88px, 1.2fr) minmax(74px, .9fr) minmax(74px, .9fr) minmax(96px, 1fr) auto;
+    }
+    .h3e-ref .h3e-desc { grid-column: 2 / -1; }
+}
+@container (max-width: 430px) {
+    /* Then stack: tag on the top row with the ordinal and the kill, the three
+     * selects sharing the next, description below that. */
+    .h3e-ref { grid-template-columns: auto 1fr auto; }
+    .h3e-ref .h3e-slot,
+    .h3e-ref .h3e-subj { grid-column: 2 / 3; }
+    .h3e-ref .h3e-ret,
+    .h3e-ref .h3e-desc { grid-column: 1 / -1; }
+}
+
+/* Per-hop schedule chips. */
+.h3e-chips { display: flex; flex-wrap: wrap; gap: 3px; grid-column: 1 / -1; padding: 2px 0 0 26px; }
+.h3e-chip {
+    font-size: 9px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--h3-border-soft);
+    background: var(--h3-sunken);
+    color: var(--h3-faint);
+    cursor: pointer;
+    user-select: none;
+    transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+}
+.h3e-chip:hover { border-color: var(--h3-accent); color: var(--h3-text); }
+.h3e-chip.h3e-chip-on {
+    background: color-mix(in srgb, var(--h3-accent) 30%, var(--h3-sunken));
+    color: var(--h3-text);
+    border-color: color-mix(in srgb, var(--h3-accent) 55%, transparent);
+}
+.h3e-chips-label { font-size: 9px; color: var(--h3-faint); align-self: center; margin-right: 2px; letter-spacing: .06em; }
+
+.h3e-subject {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    margin: 4px 0 var(--h3-gap-sm) 26px;
+}
+.h3e-subject .h3e-input { flex: 1; }
+.h3e-subj-badge {
+    /* Was a hardcoded #a98bd8 that appeared nowhere else in the sheet and read
+     * as an unexplained colour code beside the ordinal badge. A subject is a
+     * different KIND of thing, not a different priority: outline, not fill. */
+    background: transparent;
+    border: 1px solid var(--h3-accent);
+    color: var(--h3-accent);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.h3e-json {
+    width: 100%;
+    min-height: 120px;
+    background: var(--h3-sunken);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    margin-top: 4px;
+}
+
+/* -- vocabulary unavailable ----------------------------------------------- */
+
+.h3e-offline {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    margin-bottom: var(--h3-gap-sm);
+}
+.h3e-offline .h3e-btn { margin-left: auto; }
+
+/* --------------------------------------------------------------- preview -- */
+
+.h3rc-preview {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    background: var(--h3-bg);
+    border: 1px solid var(--h3-border);
+    border-radius: var(--h3-radius);
+    overflow: hidden;
+}
+
+.h3rc-frame { position: relative; flex: 1 1 auto; min-height: 60px; background: var(--h3-sunken); }
+.h3rc-img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    display: none;
+}
+.h3rc-img.h3rc-seam-b { clip-path: inset(0 0 0 50%); }
+
+.h3rc-placeholder {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--h3-faint);
+    font-size: 12px;
+    letter-spacing: .02em;
+    user-select: none;
+    text-align: center;
+    padding: 0 12px;
+}
+
+/* Seam divider, only while two frames are shown. */
+.h3rc-seam-line {
+    position: absolute; top: 0; bottom: 0; left: 50%;
+    width: 1px;
+    background: color-mix(in srgb, var(--h3-accent) 70%, transparent);
+    display: none;
+}
+.h3rc-seam-tag {
+    position: absolute; bottom: 6px;
+    font-size: 9px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--h3-text);
+    background: color-mix(in srgb, #000 55%, transparent);
+    padding: 2px 6px; border-radius: 3px;
+    display: none;
+}
+.h3rc-seam-tag.h3rc-tag-a { left: 6px; }
+.h3rc-seam-tag.h3rc-tag-b { right: 6px; }
+.h3rc-showing-seam .h3rc-seam-line,
+.h3rc-showing-seam .h3rc-seam-tag { display: block; }
+
+/* Progress across the whole chain. */
+.h3rc-bar { flex: 0 0 3px; background: var(--h3-sunken); overflow: hidden; }
+.h3rc-bar-fill {
+    height: 100%;
+    width: 0;
+    background: var(--h3-accent);
+    transition: width .25s ease;
+}
+.h3rc-bar-fill.h3rc-done { background: var(--h3-ok); }
+
+.h3rc-panel {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 9px;
+    background: var(--h3-panel);
+    border-top: 1px solid var(--h3-border-soft);
+}
+.h3rc-line { display: flex; align-items: center; gap: var(--h3-gap-sm); font-size: 11px; min-width: 0; }
+.h3rc-status-label { color: var(--h3-muted); flex: 0 0 auto; }
+.h3rc-status-value {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; flex: 1;
+    color: var(--h3-text);
+    font-variant-numeric: tabular-nums;
+}
+.h3rc-meta {
+    display: flex; flex-wrap: wrap; gap: 4px 10px;
+    font-size: 10px; color: var(--h3-muted);
+    font-variant-numeric: tabular-nums;
+}
+.h3rc-meta b { font-weight: 600; color: var(--h3-text); }
+.h3rc-mech { padding: 1px 6px; border-radius: 999px; font-size: 9px; letter-spacing: .04em; }
+.h3rc-mech-motion_context { background: color-mix(in srgb, var(--h3-ok) 26%, transparent); color: var(--h3-text); }
+.h3rc-mech-addguide_pixels { background: color-mix(in srgb, var(--h3-warn) 30%, transparent); color: var(--h3-text); }
+
+/* Resize grip -- pointer capture, unscaled offsetHeight. */
+.h3rc-grip {
+    flex: 0 0 11px;
+    position: relative;
+    cursor: ns-resize;
+    background: var(--h3-panel);
+    border-top: 1px solid var(--h3-border-soft);
+}
+.h3rc-grip::after {
+    content: "";
+    position: absolute;
+    left: calc(50% - 18px);
+    top: 4px;
+    width: 36px; height: 2px;
+    border-radius: 2px;
+    background: var(--h3-faint);
+}
+.h3rc-grip:hover::after { background: var(--h3-accent); }
+
+
+/* -- accent states, pickers, media strip ----------------------------------
+ *
+ * The old palette was a soft blue, so "active" could be a 28-34% tint sitting
+ * behind unchanged text. An acid accent cannot do that -- the result is olive
+ * mud -- so emphasis inverts instead: accent fill, ink text. Same rule
+ * PromptMasterLD uses, and the reason --h3-on-accent exists.
+ */
+.h3e-root .h3e-mode.h3e-on {
+    background: var(--h3-accent);
+    color: var(--h3-on-accent);
+    font-weight: 700;
+}
+.h3e-num,
+.h3e-ord {
+    background: var(--h3-accent);
+    color: var(--h3-on-accent);
+    font-weight: 700;
+}
+.h3e-inactive .h3e-ord {
+    background: var(--h3-sunken);
+    color: var(--h3-faint);
+}
+.h3e-chip.h3e-chip-on {
+    background: var(--h3-accent);
+    color: var(--h3-on-accent);
+    border-color: var(--h3-accent);
+    font-weight: 700;
+}
+
+/* Grouping by a left rule and a wash rather than an outlined box. */
+.h3e-section {
+    border: none;
+    border-left: 2px solid var(--h3-border);
+    background: var(--h3-bg);
+}
+.h3e-card { border-left-width: 2px; }
+.h3e-run-group {
+    border-left: 2px solid var(--h3-accent);
+    background: var(--h3-accent-wash);
+    padding-left: var(--h3-gap-sm);
+}
+
+/* -- media pickers --------------------------------------------------------
+ *
+ * Empty is dashed, filled is solid, so the border alone says whether a slot
+ * holds something -- readable at a glance across nine of them. `contain` and
+ * never `cover`: the whole job of this thumbnail is letting you identify the
+ * picture, and a cropped face is worse than a letterboxed one.
+ */
+.h3e-pick { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h3e-thumb {
+    position: relative;
+    width: 100%;
+    height: 46px;
+    border: 1px dashed var(--h3-border);
+    background: var(--h3-sunken);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    overflow: hidden;
+    transition: border-color .12s ease, background-color .12s ease;
+}
+.h3e-thumb:hover { border-color: var(--h3-accent); }
+.h3e-thumb.h3e-has { border-style: solid; }
+.h3e-thumb.h3e-hot {
+    border-style: solid;
+    border-color: var(--h3-accent);
+    background: color-mix(in srgb, var(--h3-accent) 10%, var(--h3-sunken));
+}
+.h3e-thumb-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+}
+.h3e-thumb-hint {
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    text-align: center;
+    line-height: 1.15;
+    white-space: pre-line;
+    pointer-events: none;
+}
+.h3e-thumb-bad { color: var(--h3-error); }
+/* Reveal on hover, and a destructive hover is a tinted ground rather than a
+ * red fill -- a clear button that shouts is one people misread. */
+.h3e-root .h3e-thumb-x {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    z-index: 5;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    line-height: 1;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, #000 78%, transparent);
+    border: 1px solid var(--h3-border);
+    color: var(--h3-muted);
+}
+.h3e-thumb:hover .h3e-thumb-x { display: flex; }
+.h3e-root .h3e-thumb-x:hover {
+    color: var(--h3-error);
+    border-color: var(--h3-error);
+    background: color-mix(in srgb, var(--h3-error) 18%, #000);
+}
+.h3e-root .h3e-pickfile {
+    font-size: var(--h3-fs-xs);
+    padding: 2px 4px;
+}
+
+/* -- media strip ---------------------------------------------------------- */
+.h3e-media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: var(--h3-gap-sm);
+    margin-top: 4px;
+}
+.h3e-media-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h3e-media-label {
+    font-size: var(--h3-fs-xs);
+    font-weight: var(--h3-weight-label);
+    letter-spacing: var(--h3-track);
+    text-transform: uppercase;
+    color: var(--h3-muted);
+}
+
+
+/* -- pinned RUN ----------------------------------------------------------
+ *
+ * `.h3e-root` used to be the scroll container with all four sections as
+ * children, which put RUN below the script -- out of view on any workflow
+ * with more than a couple of shots, and it is the section you open on every
+ * queue. Split in two: the authoring sections scroll, RUN is pinned.
+ *
+ * `min-height: 0` on the scroller is what makes this work at all. A flex item
+ * defaults to `min-height: auto`, so the scroller would refuse to shrink below
+ * its content and push RUN off the bottom of the node instead of scrolling.
+ */
+.h3e-scroll {
+    flex: 1 1 auto;
+    /* Never let RUN crush the authoring sections to nothing. Below this the
+     * scroller stops shrinking and RUN scrolls internally instead. */
+    min-height: 160px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    display: flex;
+    flex-direction: column;
+    gap: var(--h3-gap);
+}
+.h3e-root > .h3e-run {
+    /* `0 0 auto`. It must NOT shrink: flex divides a deficit in proportion to
+     * each item's content height, and the scroller's content is far taller, so
+     * a shrinkable RUN loses most of the space and clips its lower groups. The
+     * scroller absorbs all the shrinking; its min-height is the floor that
+     * stops RUN taking the whole panel, and max-height below is the ceiling. */
+    flex: 0 0 auto;
+    max-height: 55%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+/* Always open, so the disclosure triangle would be a control that does
+ * nothing. The summary stays as the header and digest bar. */
+.h3e-root > .h3e-run > .h3e-run-sum {
+    cursor: default;
+    list-style: none;
+}
+.h3e-root > .h3e-run > .h3e-run-sum::-webkit-details-marker { display: none; }
+.h3e-root > .h3e-run > .h3e-run-sum::marker { content: ""; }
+.h3e-root > .h3e-run > .h3e-run-body {
+    overflow-y: auto;
+    min-height: 0;
+}
+/* Pinned means it reads as chrome, not as another card in the stack. */
+.h3e-root > .h3e-run > .h3e-run-sum {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--h3-bg);
+}
+
+/* -- template panel -------------------------------------------------------
+ * Sits between the SCRIPT header and the card list, hidden until asked for.
+ * Each row is text plus one button, so the whole thing survives the narrow
+ * container breakpoints without its own media query. */
+.h3e-tpl {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-bottom: var(--h3-gap-sm);
+    border: 1px solid var(--h3-border-soft);
+    background: var(--h3-sunken);
+}
+
+.h3e-tpl > .h3e-note {
+    margin: 0;
+    border: 0;
+    border-bottom: 1px solid var(--h3-border-soft);
+    color: var(--h3-faint);
+}
+
+.h3e-tpl-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--h3-gap);
+    padding: 7px 8px;
+}
+
+.h3e-tpl-row + .h3e-tpl-row { border-top: 1px solid var(--h3-border-soft); }
+.h3e-tpl-row:hover { background: var(--h3-accent-wash); }
+
+/* min-width: 0 or the text column refuses to wrap and pushes the button off
+ * the panel -- a flex item will not shrink below its content by default. */
+.h3e-tpl-text { flex: 1 1 auto; min-width: 0; }
+
+.h3e-tpl-name {
+    color: var(--h3-text);
+    font-size: var(--h3-fs);
+    font-weight: var(--h3-weight-label);
+}
+
+.h3e-tpl-hint {
+    color: var(--h3-muted);
+    font-size: var(--h3-fs-sm);
+    margin-top: 1px;
+}
+
+.h3e-tpl-note {
+    color: var(--h3-faint);
+    font-size: var(--h3-fs-sm);
+    line-height: 1.5;
+    margin-top: 3px;
+}
+
+.h3e-tpl-row > .h3e-btn { flex: 0 0 auto; }

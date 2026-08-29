@@ -1,0 +1,1358 @@
+{
+  "id": "h3-ref2va-chain",
+  "revision": 1,
+  "last_node_id": 34,
+  "last_link_id": 18,
+  "nodes": [
+    {
+      "id": 2,
+      "type": "UNETLoader",
+      "pos": [
+        0,
+        340
+      ],
+      "size": [
+        420,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "unet_name",
+          "name": "unet_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "unet_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "weight_dtype",
+          "name": "weight_dtype",
+          "type": "COMBO",
+          "widget": {
+            "name": "weight_dtype"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "MODEL",
+          "name": "MODEL",
+          "type": "MODEL",
+          "slot_index": 0,
+          "links": [
+            11
+          ]
+        }
+      ],
+      "title": "DiT (ref2va)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "minimax_h3_hybrid_fl2va_ref2va_b30-49-int8.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "CLIPLoader",
+      "pos": [
+        0,
+        460
+      ],
+      "size": [
+        420,
+        106
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "clip_name",
+          "name": "clip_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "clip_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "type",
+          "name": "type",
+          "type": "COMBO",
+          "widget": {
+            "name": "type"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "device",
+          "name": "device",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "CLIP",
+          "name": "CLIP",
+          "type": "CLIP",
+          "slot_index": 0,
+          "links": [
+            12
+          ]
+        }
+      ],
+      "title": "Text encoder",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "minimax",
+        "default"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "VAELoader",
+      "pos": [
+        0,
+        600
+      ],
+      "size": [
+        420,
+        82
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae_name",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "slot_index": 0,
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "Video VAE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax_h3_video_vae_int8_convrot.safetensors"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "VAELoader",
+      "pos": [
+        0,
+        720
+      ],
+      "size": [
+        420,
+        82
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae_name",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "slot_index": 0,
+          "links": [
+            4
+          ]
+        }
+      ],
+      "title": "Audio VAE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax_h3_audio_vae_fp32.safetensors"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "HandTieClips",
+      "pos": [
+        994,
+        427
+      ],
+      "size": [
+        968.3162169696975,
+        1426.2006199999998
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "model",
+          "name": "model",
+          "type": "MODEL",
+          "link": 17
+        },
+        {
+          "localized_name": "clip",
+          "name": "clip",
+          "type": "CLIP",
+          "link": 18
+        },
+        {
+          "localized_name": "vae",
+          "name": "vae",
+          "type": "VAE",
+          "link": 3
+        },
+        {
+          "localized_name": "audio_vae",
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 4
+        },
+        {
+          "localized_name": "continuity_state",
+          "name": "continuity_state",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "localized_name": "prompt",
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "chains",
+          "name": "chains",
+          "type": "COMBO",
+          "widget": {
+            "name": "chains"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "resolution",
+          "name": "resolution",
+          "type": "COMBO",
+          "widget": {
+            "name": "resolution"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "aspect",
+          "name": "aspect",
+          "type": "COMBO",
+          "widget": {
+            "name": "aspect"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "duration",
+          "name": "duration",
+          "type": "COMBO",
+          "widget": {
+            "name": "duration"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "overlap",
+          "name": "overlap",
+          "type": "COMBO",
+          "widget": {
+            "name": "overlap"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "seed_per_shot",
+          "name": "seed_per_shot",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "seed_per_shot"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "steps",
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "sampler_name",
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler_name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "scheduler",
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": {
+            "name": "scheduler"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shift_video",
+          "name": "shift_video",
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_video"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shift_audio",
+          "name": "shift_audio",
+          "type": "FLOAT",
+          "widget": {
+            "name": "shift_audio"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ref_image_size",
+          "name": "ref_image_size",
+          "type": "COMBO",
+          "widget": {
+            "name": "ref_image_size"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "hop_script",
+          "name": "hop_script",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "hop_script"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "pin_to_qwen",
+          "name": "pin_to_qwen",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "pin_to_qwen"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shot_plan",
+          "name": "shot_plan",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "shot_plan"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ref_plan",
+          "name": "ref_plan",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "ref_plan"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cache_hops",
+          "name": "cache_hops",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "cache_hops"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "cache_budget_gb",
+          "name": "cache_budget_gb",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "cache_budget_gb"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audio_pin_frames",
+          "name": "audio_pin_frames",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "audio_pin_frames"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "pin_renorm",
+          "name": "pin_renorm",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "pin_renorm"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "pin_noise",
+          "name": "pin_noise",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "pin_noise"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tone_compensate",
+          "name": "tone_compensate",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "tone_compensate"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "start_image_file",
+          "name": "start_image_file",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "start_image_file"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "reference_video_file",
+          "name": "reference_video_file",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "reference_video_file"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "voice_file",
+          "name": "voice_file",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "voice_file"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            5
+          ]
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "slot_index": 1,
+          "links": [
+            6
+          ]
+        },
+        {
+          "localized_name": "info",
+          "name": "info",
+          "type": "STRING",
+          "slot_index": 2,
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "H3RefChain",
+        "h3_plan_backup": "{\n  \"shots\": [\n    {\n      \"id\": \"s1\",\n      \"beat\": \"Live-action, natural indoor light. The cook stands at the counter in @kitchen, looks up from the chopping board, and speaks one short line to someone off-frame.\",\n      \"directives\": {\n        \"camera\": \"hold\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s2\",\n      \"beat\": \"The cook sets the knife down, turns toward the window, and finishes her last word as she looks out.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"push_in\",\n        \"framing\": \"close\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s3\",\n      \"beat\": \"The cook leans back against the counter with her lips closed, and lets her eyes move slowly across the room. The room is still, with only the low hum of the refrigerator.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"pull_back\",\n        \"framing\": \"medium\",\n        \"pace\": \"slow\",\n        \"tail\": \"settle\"\n      }\n    }\n  ]\n}",
+        "h3_editor_mode": "shots"
+      },
+      "widgets_values": [
+        "Live-action, natural indoor light. The person looks exactly as in the reference photographs.\n\nA cook in an apron stands at a kitchen counter, slicing. They look up, speak one short line, then turn back to the board.",
+        "2",
+        "0.3 MP",
+        "16:9 landscape",
+        "5 s",
+        "0.9 s",
+        427058607873049,
+        "fixed",
+        true,
+        7,
+        "res_multistep",
+        "simple",
+        12,
+        3,
+        "match",
+        "next",
+        "last frame",
+        "{\n  \"shots\": [\n    {\n      \"id\": \"s1\",\n      \"beat\": \"A cook in an apron stands at a kitchen counter, looks up from the chopping board and says, 'You are earlier than I expected.' She turns back to the board and goes on slicing, the knife tapping steadily against the wood.\",\n      \"directives\": {\n        \"camera\": \"hold\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s2\",\n      \"beat\": \"She sets the knife down, turns toward the window and looks out at the street, her weight settling onto one hip. The kitchen is quiet apart from the low hum of the refrigerator.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"pan_follow\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"settle\"\n      }\n    }\n  ]\n}",
+        "{\n  \"refs\": [],\n  \"subjects\": {}\n}",
+        "on",
+        19,
+        24,
+        "off",
+        0,
+        "frame_shift",
+        "",
+        "",
+        "",
+        "Live-action, natural light, one continuous take."
+      ],
+      "title": "H3 Ref2VA Chain - starter"
+    },
+    {
+      "id": 16,
+      "type": "HTCChainPreview",
+      "pos": [
+        2258.827272727274,
+        -90.16060606060621
+      ],
+      "size": [
+        400,
+        460
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 6
+        },
+        {
+          "localized_name": "info",
+          "name": "info",
+          "shape": 7,
+          "type": "STRING",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            8
+          ]
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "slot_index": 1,
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "H3ChainPreview",
+        "h3rcPanelH": 40
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 8,
+      "type": "CreateVideo",
+      "pos": [
+        2991.7272727272743,
+        37.33939393939383
+      ],
+      "size": [
+        300,
+        130
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 8
+        },
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 9
+        },
+        {
+          "localized_name": "fps",
+          "name": "fps",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bit_depth",
+          "name": "bit_depth",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "bit_depth"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "color_space",
+          "name": "color_space",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "color_space"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VIDEO",
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "slot_index": 0,
+          "links": [
+            10
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        24,
+        "auto",
+        "sRGB"
+      ]
+    },
+    {
+      "id": 9,
+      "type": "SaveVideo",
+      "pos": [
+        3032.515151515151,
+        714.542424242424
+      ],
+      "size": [
+        340,
+        106
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO",
+          "link": 10
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "format.codec",
+          "name": "format.codec",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format.codec"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "codec",
+          "name": "codec",
+          "shape": 7,
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "codec"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO",
+          "links": []
+        }
+      ],
+      "title": "SAVE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/HANDTIECLIPS/chain",
+        "auto",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 30,
+      "type": "LTX_lora_loader",
+      "pos": [
+        520,
+        -40
+      ],
+      "size": [
+        420,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 11
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 12
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            13
+          ]
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            18
+          ]
+        }
+      ],
+      "title": "LoRA Loader Stack (turbo)",
+      "properties": {
+        "htc_speed": "lora",
+        "Node name for S&R": "LTX_lora_loader"
+      },
+      "widgets_values": [
+        "minimax",
+        "[{\"on\":true,\"lora\":\"minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors\",\"str\":1,\"v\":1,\"a\":1,\"t\":1}]",
+        ""
+      ]
+    },
+    {
+      "id": 31,
+      "type": "H3AdaLNLoRAFix",
+      "pos": [
+        520,
+        240
+      ],
+      "size": [
+        340,
+        150
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 13
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "title": "H3 AdaLN LoRA Fix",
+      "properties": {
+        "htc_speed": "adaln",
+        "Node name for S&R": "H3AdaLNLoRAFix"
+      },
+      "widgets_values": [
+        "port"
+      ]
+    },
+    {
+      "id": 32,
+      "type": "MiniMaxLowVRAMAttention",
+      "pos": [
+        520,
+        430
+      ],
+      "size": [
+        330,
+        58
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            15
+          ]
+        }
+      ],
+      "title": "MiniMax H3 Low VRAM Attention",
+      "properties": {
+        "htc_speed": "lowvram",
+        "Node name for S&R": "MiniMaxLowVRAMAttention"
+      },
+      "widgets_values": [
+        4
+      ]
+    },
+    {
+      "id": 33,
+      "type": "H3SLAAttention",
+      "pos": [
+        520,
+        530
+      ],
+      "size": [
+        340,
+        322
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 15
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            16
+          ]
+        }
+      ],
+      "title": "H3 SLA Attention",
+      "properties": {
+        "htc_speed": "sla",
+        "Node name for S&R": "H3SLAAttention"
+      },
+      "widgets_values": [
+        0.9,
+        "64",
+        8192,
+        0,
+        true,
+        true,
+        "0",
+        "comfy_kitchen",
+        true,
+        true,
+        "Light"
+      ]
+    },
+    {
+      "id": 34,
+      "type": "ModelPreviewOverrideKJ",
+      "pos": [
+        520,
+        900
+      ],
+      "size": [
+        360,
+        480
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 16
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            17
+          ]
+        }
+      ],
+      "title": "Model Preview Override",
+      "properties": {
+        "htc_speed": "preview",
+        "Node name for S&R": "ModelPreviewOverrideKJ"
+      },
+      "widgets_values": [
+        512,
+        80,
+        true,
+        100,
+        8,
+        "taeh3.safetensors",
+        ""
+      ]
+    },
+    {
+      "id": 20,
+      "type": "MarkdownNote",
+      "pos": [
+        -960,
+        -400
+      ],
+      "size": [
+        440,
+        940
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "START HERE",
+      "properties": {
+        "htc_card": "start"
+      },
+      "widgets_values": [
+        "## Start here\n\nTwo hops of 5 s, joined into one 10 s clip.\n\n### Requires\n\nThe MODEL wire is a turbo stack, not a bare loader:\n\n```\nUNETLoader\n  -> LoRA Loader Stack          (turbo LoRA)\n  -> H3 AdaLN LoRA Fix\n  -> MiniMax H3 Low VRAM Attention\n  -> H3 SLA Attention\n  -> Model Preview Override\n  -> this node\n```\n\n| pack | nodes |\n|---|---|\n| **ComfyUI-PlagueKind-Nodes** | LoRA Loader Stack, AdaLN Fix, SLA Attention |\n| **ComfyUI-KJNodes** | Low VRAM Attention (experimental), Model Preview Override |\n\nAlso on disk: the **turbo LoRA** named in the loader, and `taeh3.safetensors`\nfor the live preview (or set `tiny_vae` to `none`).\n\n**CLIP goes to this node from the LoRA loader, not from the encoder.** That is\nwhat makes the text half of every LoRA land. Do not rewire it back.\n\n`steps` is **7**, which only works with the turbo LoRA. Missing a pack? Its\nnodes load as red boxes -- delete them, wire the loader straight into `model`\nand the encoder into `clip`, and raise `steps` to 20 or so.\n\n1. Point the four **loaders** at your H3 files.\n2. Queue.\n3. Read the **SHOTS** cards on the node.\n\n**Shot 1 is the whole opening. Every later shot is only the new beat.** The node\nwrites the identity lock, the live-frame citation and the join itself -- so\nre-describing the face, the clothes or the room after shot 1 competes with the\nframe pin instead of reinforcing it.\n\nThis plan ships with **no references on purpose**, so it runs before you have\nsupplied any pictures.\n\n### Adding pictures\n\n- Open **REFERENCES**, add a row, drop a photo on its thumbnail. Files land in\n  `ComfyUI/input/h3_refs`. There is no Load Image node to wire.\n- Give the row a `@tag`, and group photos of the same person under one subject.\n- Write the tag into the beat: `@hero_face stands at the counter in @kitchen`.\n\nThe long-form guide is `PROMPTING.md` in the pack folder."
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 21,
+      "type": "MarkdownNote",
+      "pos": [
+        -960,
+        600
+      ],
+      "size": [
+        440,
+        760
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "The rules",
+      "properties": {
+        "htc_card": "rules"
+      },
+      "widgets_values": [
+        "## The rules that decide whether it works\n\nNot style preferences. This is how this model fails.\n\n### 1. The prompt is additive\n\nSampling runs at **cfg 1.0 with no negative branch**. Every concept you name is\nadded, and nothing can be removed by mentioning it -- `no cut` puts the word\n*cut* in front of the encoder. **Never write a negation.**\n\n### 2. Never name the thing you want to end\n\n\"The cook stops talking\" keeps her talking. Write the state you want as **a pose\nplus a sound**:\n\n> leans back against the counter with her lips closed, and lets her eyes move\n> slowly across the room. The kitchen is quiet apart from the low hum of the\n> refrigerator.\n\nAudio is always generated. Silence written as an absence comes back as speech,\nso **silence has to be written as a sound** -- room tone, a fridge, a single\nclick. Keep it narrowband: \"faint street noise\" renders as a five-second hiss.\n\n**The ban is on the idea, not on a word list.** *Fades, passes, wanes, subsides,\ndies down, eases off* all name an ending as surely as *stops* does, and all of\nthem add the thing they describe. Ask of each sentence: is this happening, or\nhas it finished happening?\n\n### 3. A state change belongs at the END of the previous shot\n\nEvery hop opens holding the frames it was handed, and the audio pin carries the\nprevious hop's tail across the join. Nothing you write in shot 3 can make shot 3\nstart quiet. **Arrive there before the previous shot ends.**\n\n### 4. A hop that ends on dialogue keeps talking\n\nSpeech at the end of hop N opens hop N+1 and propagates down the whole chain.\nLand each line **mid-hop** and leave a non-verbal action running into the seam --\nslicing, walking, a hand on a doorframe. Give every hop with no dialogue a sound\nbed of its own.\n\n### 5. A walk between two rooms is `match_cut`\n\n`join: continuous` across a real location change makes the model morph one room\ninto the other mid-movement.\n\n### 6. Set `tail` on your last shot\n\nLeft at `ongoing`, the model is told action is still underway at the final frame\nand will invent something to satisfy it. Use `settle` or `hold`."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 22,
+      "type": "MarkdownNote",
+      "pos": [
+        -960,
+        1420
+      ],
+      "size": [
+        440,
+        640
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "References and @tags",
+      "properties": {
+        "htc_card": "refs"
+      },
+      "widgets_values": [
+        "## References and @tags\n\nA picture in the register does not make the model use it. **The beat is what\ndrives the frame** -- write the tag into the action line.\n\nPhrase a place as a place that is *depicted*, not as a container to be placed\ninside: \"at the counter in `@kitchen`\", not \"steps into `@kitchen`\".\n\n### Fields\n\n| field | what it does |\n|---|---|\n| `tag` | what you write in beats as `@tag` |\n| `file` | a bare filename in `input/h3_refs` |\n| `subject` | groups pictures **of the same person** |\n| `retention` | `fully_preserved` / `partially_copy` / `reference` |\n| `shots` | the 1-based hops this picture rides |\n\n**One subject number per person.** Two different people under one number makes\nthe model render the average of their faces.\n\n### `shots` is the part that decides continuity\n\n**A reference with no `shots` list rides hop 1 only.** Right for a **place**\nplate: a room still riding a hop set somewhere else beats the frame pin, and the\nmodel follows the still. **List every hop a picture belongs on.**\n\n**A face plate is the opposite \u2014 put it on every hop.** A hop scheduled with no\nface reference came back a different person, and no later hop recovered.\nIdentity drift does not self-correct.\n\n- Every **face** ref gets every hop: `\"shots\": [1, 2, 3, 4, 5, 6]`.\n- Keep a **place** ref on the hops set in that place, and off the rest.\n\n### `locked` and `context`\n\nPer-subject prose that rides **every hop**, with no picture citation, so it\ncarries identity across a hop where the photograph is absent. Give every subject\na `locked`, and a `name` -- from hop 2 on, `@tag` for a person resolves to that\nname.\n\n**Name a colour or it drifts.** A noun with no adjective is unanchored: each hop\nis an independent encode, so \"the bowl\" on hop 4 came back stainless steel. Put\nproperties in `context` -- \"the bowl is white porcelain\" -- never locations, and\nrepeat the adjective in every beat."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 23,
+      "type": "MarkdownNote",
+      "pos": [
+        -480,
+        -400
+      ],
+      "size": [
+        440,
+        640
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Directives",
+      "properties": {
+        "htc_card": "directives"
+      },
+      "widgets_values": [
+        "## Directives\n\nFive axes, all optional, set per shot. An unset axis emits nothing at all and\ncosts no tokens.\n\n| axis | values |\n|---|---|\n| `join` | `continuous`, `match_cut`, `hard_cut` -- **omit on shot 1** |\n| `camera` | `hold`, `pan_follow`, `push_in`, `pull_back`, `orbit`, `handheld` |\n| `framing` | `keep`, `wide`, `medium`, `close` |\n| `pace` | `slow`, `steady`, `brisk` |\n| `tail` | `ongoing` (default), `settle`, `hold` |\n\nThey compile in that order -- `join` first, because it describes how this hop\nmeets the previous one.\n\n### Two combinations the node warns about\n\n**`join: continuous` + a framing change + `camera: hold`.** A framing change asks\nthe audience to be somewhere new; with the camera still, the only way there is a\ncut. Earn it on the move (`push_in`, `pull_back`, `pan_follow`) or use\n`framing: keep`.\n\n**`push_in` + `wide`, or `pull_back` + `close`.** The move points the opposite way\nfrom the destination.\n\nBoth are warnings, not errors. They are legitimate things to want -- they just\nrarely read the way you meant.\n\n### Duration\n\nPer-shot `duration` overrides the chain, using exactly these labels:\n`\"5 s\"`, `\"7 s\"`, `\"8 s\"`, `\"10 s\"`, `\"15 s\"`."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 24,
+      "type": "MarkdownNote",
+      "pos": [
+        -480,
+        280
+      ],
+      "size": [
+        440,
+        760
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "When it goes wrong",
+      "properties": {
+        "htc_card": "trouble"
+      },
+      "widgets_values": [
+        "## When it goes wrong\n\n| symptom | cause | fix |\n|---|---|---|\n| The clip cuts to the reference photo in its last seconds | The beat finished before the frames did | Set `tail`, give the beat enough to do |\n| A stray gesture or line in the closing second | `tail: ongoing` on the final shot | `settle` or `hold` |\n| She keeps talking after you asked for quiet | You named the ending | Pose plus a sound |\n| Dialogue continues into hops that have none written | The hop before ended on speech | Land the line early; non-verbal action into the seam; a sound bed on every quiet hop |\n| A character walks between two rooms and one morphs into the other | `continuous` across a location change | `match_cut` |\n| Silence renders as speech | Silence written as an absence | Name room tone, a fridge, a distant car |\n| Ambience is a five-second hiss | Broadband wording | Narrowband, or one discrete event |\n| Two characters' faces merge | Both declared as the same `subject` | One subject number per person |\n| The face becomes a different person partway through | A hop scheduled with no face plate. `locked` holds a face that is still right; only a plate rebuilds one that is gone, and the drift never self-corrects | Put the face ref on **every** hop |\n| A stylised plan renders photoreal | The node's hop-1 establishing line asserts live action | Name the medium in shot 1's first sentence, or clear the `establish` widget |\n| The film gets darker every hop | Luminance drifts one way and nothing pushes back | Restate the light as a positive property in every beat |\n| A location introduced mid-plan drifts | It has no place plate of its own | Plate it, on the hop it arrives and every hop after |\n| A prop or garment changes colour or material | Named with no adjective, so each hop's encode is free to invent one | Repeat the adjective in every beat, and state it as a property in `context` |\n| A hard cut ~1.5 s into a hop, mid-scene | The previous hop over-delivered, so this beat instructs what its own live frame already did | One movement per hop; write the next beat so it is true from either ending |\n| A continuous join reads as a cut | Framing change with `camera: hold` | Earn it on the move, or `framing: keep` |\n| The run stops, naming a reference | That row's picture is not in `h3_refs` | Drop the file on the row, or clear its picture to run without it |\n| A reference has no effect on some hop | Its `shots` list leaves that hop out | List every hop the picture should ride |\n| A pasted plan is rejected as invalid JSON | Escaped double quotes mangled in transit | Single quotes around dialogue |\n\nEvery error message names the shot or the reference it came from. Nothing\nguesses."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 25,
+      "type": "MarkdownNote",
+      "pos": [
+        -480,
+        1080
+      ],
+      "size": [
+        440,
+        620
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Let a model write it",
+      "properties": {
+        "htc_card": "author"
+      },
+      "widgets_values": [
+        "## Let a model write your plan\n\n`prompt_pack/` in the pack folder turns any chat model into a plan writer. In\nLM Studio, or anything with a system-prompt box:\n\n1. Load a model with **context 8192 or more**. The prompt is ~2,600 tokens and\n   the reply another 1,000-2,000; a 4k window truncates the rules and you get\n   invented directive names.\n2. Paste **`prompt_pack/SYSTEM_PROMPT.md`** into the **System Prompt** box.\n   Nothing else goes in that box.\n3. **Temperature 0.3-0.5.** Higher and the JSON grows trailing commas and smart\n   quotes.\n4. Describe the scene, and say how many hops and what pictures you have:\n\n   > Six hops. A cook in a kitchen; she says one line, walks out into a hallway,\n   > waits by a window, then comes back. I have a face photo, a photo of her\n   > apron, and a photo of the kitchen.\n\n5. Each panel section has its own **JSON** disclosure at the bottom. The first\n   ```json``` block goes in the one under **SCRIPT** (`shot_plan`), the second\n   in the one under **REFERENCES** (`ref_plan`). Bad JSON keeps the last good\n   version on screen and says so, rather than discarding your paste.\n6. **If the node rejects it, paste the error straight back into the chat.** One\n   round trip usually fixes it.\n\nWant it to match a shape? Paste `prompt_pack/EXAMPLE_6_HOP.md` first.\n\nSmall models (7B-8B) hold the JSON schema but drift on the prose rules -- they\nwrite negations. Skim the beats before queueing."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    }
+  ],
+  "links": [
+    [
+      3,
+      4,
+      0,
+      7,
+      2,
+      "VAE"
+    ],
+    [
+      4,
+      5,
+      0,
+      7,
+      3,
+      "VAE"
+    ],
+    [
+      5,
+      7,
+      0,
+      16,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      7,
+      1,
+      16,
+      1,
+      "AUDIO"
+    ],
+    [
+      7,
+      7,
+      2,
+      16,
+      2,
+      "STRING"
+    ],
+    [
+      8,
+      16,
+      0,
+      8,
+      0,
+      "IMAGE"
+    ],
+    [
+      9,
+      16,
+      1,
+      8,
+      1,
+      "AUDIO"
+    ],
+    [
+      10,
+      8,
+      0,
+      9,
+      0,
+      "VIDEO"
+    ],
+    [
+      11,
+      2,
+      0,
+      30,
+      0,
+      "MODEL"
+    ],
+    [
+      12,
+      3,
+      0,
+      30,
+      1,
+      "CLIP"
+    ],
+    [
+      13,
+      30,
+      0,
+      31,
+      0,
+      "MODEL"
+    ],
+    [
+      14,
+      31,
+      0,
+      32,
+      0,
+      "MODEL"
+    ],
+    [
+      15,
+      32,
+      0,
+      33,
+      0,
+      "MODEL"
+    ],
+    [
+      16,
+      33,
+      0,
+      34,
+      0,
+      "MODEL"
+    ],
+    [
+      17,
+      34,
+      0,
+      7,
+      0,
+      "MODEL"
+    ],
+    [
+      18,
+      30,
+      1,
+      7,
+      1,
+      "CLIP"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "READ ME -- writing for this node",
+      "bounding": [
+        -990,
+        -465,
+        980,
+        2560
+      ],
+      "color": "#3f789e",
+      "font_size": 24
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8264462809917354,
+      "offset": [
+        500,
+        -281.1386834420914
+      ]
+    }
+  },
+  "version": 0.4
+}

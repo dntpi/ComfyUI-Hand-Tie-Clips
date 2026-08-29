@@ -269,8 +269,8 @@ AUTHOR = """\
 `prompt_pack/` in the pack folder turns any chat model into a plan writer. In
 LM Studio, or anything with a system-prompt box:
 
-1. Load a model with **context 8192 or more**. The prompt is ~2,600 tokens and
-   the reply another 1,000-2,000; a 4k window truncates the rules and you get
+1. Load a model with **context 16384 or more**. The prompt is ~4,700 tokens and
+   the reply another 1,000-2,000; a small window truncates the rules and you get
    invented directive names.
 2. Paste **`prompt_pack/SYSTEM_PROMPT.md`** into the **System Prompt** box.
    Nothing else goes in that box.
@@ -292,7 +292,28 @@ LM Studio, or anything with a system-prompt box:
 Want it to match a shape? Paste `prompt_pack/EXAMPLE_6_HOP.md` first.
 
 Small models (7B-8B) hold the JSON schema but drift on the prose rules -- they
-write negations. Skim the beats before queueing.\
+write negations. Skim the beats before queueing.
+
+## Fixing one hop without re-rendering the rest
+
+Set **`cache_hops` to `on` before your first run.** It is off by default, and a
+hop that was never cached cannot be reused. Needs `ffmpeg` on PATH.
+
+The cache key **chains**, so editing shot 5 of 8 re-renders 5 to 8 and reuses 1
+to 4 off disk. Hop 6 was rendered *from* hop 5, so it has to. **Edit the
+earliest hop you dislike and work forward** -- that way each hop is paid for
+once.
+
+Anything chain-wide re-renders everything: resolution, aspect, overlap, sampler,
+scheduler, either shift, `ref_image_size`, `pin_to_qwen`, the LoRA stack, or
+**any reference picture** (keyed on pixels, so a re-crop counts even under the
+same filename). That is the usual reason the cache looks broken.
+
+Loved a hop? Put `"locked": true` and a stable `"id"` on that shot and it keeps
+that exact take even when its inputs move. Unrelated to `subjects.N.locked`,
+which is identity text.
+
+Full detail in `PROMPTING.md`, under *Re-rolling one hop*.\
 """
 
 

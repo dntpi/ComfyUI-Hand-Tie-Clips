@@ -24,7 +24,7 @@ The prompt is no longer a wall of `---`-delimited text, and the MODEL wire is no
 | **`shot_plan`** | The script, as JSON. One shot per hop — **the shot count is the hop count**, so `chains` can no longer disagree with it. |
 | **`directives`** | `join` / `camera` / `framing` / `pace` / `tail` per shot, compiled to vetted prose. Improving a phrase improves every plan you have ever written. |
 | **`ref_plan`** | Stable `@tags` for reference stills, grouped into subjects, each naming a picture file. Removing one can no longer silently renumber `<Picture N>`. |
-| **`cache_hops`** | Lossless per-hop cache. Re-roll one shot, resume after a crash, and hold roughly one hop in RAM instead of the whole clip. |
+| **`cache_hops`** | Lossless per-hop cache. Re-roll one shot, resume after a crash, and hold roughly one hop in RAM instead of the whole clip. Edit hop 5 of 8 and only 5-8 re-render. [How to use it](PROMPTING.md#re-rolling-one-hop). |
 | **the editor** | Cards on the node, not JSON in a textarea. Hover any directive to read the exact sentence it puts in the prompt, or hit **Templates** for a ready-made pattern. |
 
 Simple mode keeps the old one-prompt workflow; the speed stack (LoRAs, AdaLN fix, low-VRAM, SLA) stays as four ordinary nodes on the MODEL wire, where you can see it.
@@ -175,7 +175,7 @@ Fields, all optional except `beat`:
 | `directives` | The five axes below. |
 | `prose` | Free text appended verbatim, for anything the vocabulary lacks. |
 | `seed`, `steps`, `duration` | Per-shot overrides. `duration` takes the same labels as the widget (`"8 s"`). |
-| `locked` | Reuse this shot's cached render even when its inputs changed. Needs `cache_hops=on`. |
+| `locked` | Reuse this shot's cached render even when its inputs changed -- freeze a take you like while you rewrite the hops around it. Needs `cache_hops=on`, and give the shot an `id`. Not to be confused with `subjects.N.locked`, which is identity text. |
 | `id` | Stable name, used as the cache pointer. Generated if absent. |
 
 ### Directives

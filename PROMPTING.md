@@ -470,6 +470,77 @@ A shot may override the chain with `"duration": "7 s"`, using the same labels.
 
 ---
 
+## Re-rolling one hop
+
+Eight hops in, hop 6 is wrong and the other seven are fine. `cache_hops` is how
+you fix 6 without re-rendering 1 through 5.
+
+Turn it **on before the first run of a plan** -- it is `off` by default, and a
+hop that was never cached cannot be reused. It needs `ffmpeg` on PATH; without
+it the node raises rather than quietly carrying on without a cache.
+
+### Editing a hop invalidates that hop and everything after it
+
+Every hop is rendered from the previous hop's tail, so the cache key **chains**:
+hop N's key mixes in hop N-1's key. Rewrite shot 5's beat and hops 5, 6, 7 and 8
+re-render, while 1 to 4 come straight off disk.
+
+That is correct rather than a limitation. Hop 6 was rendered *from* hop 5. If
+hop 5 changes, the old hop 6 is a continuation of a frame that no longer exists.
+
+The working rule: **edit the earliest shot you are unhappy with, and expect
+everything after it to re-render.** Fix front to back and you pay for each hop
+once. Fix back to front and you pay repeatedly.
+
+The cache is lossless 16-bit, chosen so that a resumed chain is not a different
+render from an uninterrupted one -- a cached hop's last frame becomes the next
+hop's pin, so an 8-bit round trip would have let the cache change the output.
+
+### What re-renders the whole chain
+
+Some inputs are not per-hop. Touching any of these invalidates every cached hop
+at once:
+
+- the canvas -- `resolution`, `aspect`, `overlap`
+- sampling -- `sampler_name`, `scheduler`, `shift_video`, `shift_audio`
+- `ref_image_size`, `pin_to_qwen`
+- **any reference picture**, the voice, the reference clip, the first-frame pin.
+  These are keyed on actual pixels, so re-saving a file with a different crop
+  counts even when the filename is identical
+- **the model wire** -- a different LoRA stack or attention path is a different
+  fingerprint, because a hop rendered under different LoRAs is not that hop
+
+So swapping one reference photo re-renders everything. That is the right answer,
+since every hop carried that photo -- but it does not look right from the
+outside, and it is the most common reason the cache appears to have stopped
+working.
+
+### `locked` freezes a hop you are happy with
+
+A shot with `"locked": true` reuses its last render **even when its inputs
+changed**. The ordinary cache says *the same inputs give you the same pixels
+back*; `locked` says *give me those pixels regardless*.
+
+Use it when a hop came out better than its prompt deserves and you want to hold
+that exact take while you rewrite the hops around it:
+
+```json
+{"id": "s3", "beat": "...", "locked": true, "directives": {"join": "continuous"}}
+```
+
+**Give a locked shot an `id`.** The lock is stored against that name rather than
+against the content key -- that is what lets it survive the edit that would
+otherwise have invalidated it. Without an `id` it falls back to `shot3`, which
+moves if you reorder the plan.
+
+Locking a hop does not stop the hops after it re-rendering. They are still
+continuations of it, and if you edited them they still change.
+
+> **Two unrelated fields are called `locked`.** `subjects.N.locked` in the
+> *reference register* is identity text that rides every hop -- the face that
+> must not drift. `shots[].locked` in the *shot plan* is this cache pin. Same
+> word, different blocks, unrelated jobs.
+
 ## When it goes wrong
 
 | symptom | cause | fix |
@@ -491,6 +562,9 @@ A shot may override the chain with `"duration": "7 s"`, using the same labels.
 | A continuous join reads as a cut | Framing change with `camera: hold` | Earn it on the move, or `framing: keep` |
 | The run stops naming a reference | That row's picture is not in `h3_refs`. A named file that is not on disk is fatal -- rendering the chain without it is never what was meant | Drop the file on the row in the REFERENCES rail, or clear its picture to run without it |
 | A reference has no effect on some hop | Its `shots` list leaves that hop out. This is silent, not an error -- it is a legitimate schedule | List every hop the picture should ride |
+| Every hop re-renders after a tiny edit | You changed something chain-wide -- a reference picture, the sampler, the resolution, the LoRA stack. Those are not per-hop | Expected. See [Re-rolling one hop](#re-rolling-one-hop) |
+| A re-roll of hop 6 also re-rendered 7 and 8 | The cache key chains; 7 and 8 were continuations of the old 6 | Expected. Edit the earliest hop you dislike and work forward |
+| A hop you liked changed anyway | Its inputs moved and it was not locked | `"locked": true` on that shot, plus a stable `id` |
 | A pasted plan is rejected as invalid JSON | Usually escaped double quotes mangled in transit | Use single quotes around dialogue |
 
 ---

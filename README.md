@@ -31,6 +31,31 @@ Simple mode keeps the old one-prompt workflow; the speed stack (LoRAs, AdaLN fix
 
 ## Install
 
+### Clone it (recommended)
+
+From your `ComfyUI/custom_nodes/` folder:
+
+```
+cd ComfyUI/custom_nodes
+git clone https://github.com/dntpi/ComfyUI-Hand-Tie-Clips.git
+```
+
+Or from HuggingFace, if that is where you found it -- the two are mirrors of the same repository and either is fine:
+
+```
+git clone https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips
+```
+
+Cloning creates the folder at the right depth for you, which is the mistake the zip route invites. **Updating later is then one command** from inside the pack folder:
+
+```
+git pull
+```
+
+followed by a restart of ComfyUI. No re-downloading, and you can see exactly what changed with `git log`.
+
+### Or unzip it
+
 Unzip the folder into `ComfyUI/custom_nodes/`, so that it lands as:
 
 ```
@@ -42,6 +67,8 @@ ComfyUI/custom_nodes/ComfyUI-Hand-Tie-Clips/
 ```
 
 One folder level too deep (`custom_nodes/ComfyUI-Hand-Tie-Clips/ComfyUI-Hand-Tie-Clips/`) is the usual mistake, and the pack simply will not appear.
+
+### Either way
 
 No dependencies to install. Everything it imports -- `torch`, `numpy`, `PIL`, `av`, `aiohttp` -- already ships with ComfyUI, which is why `dependencies` in `pyproject.toml` is empty.
 

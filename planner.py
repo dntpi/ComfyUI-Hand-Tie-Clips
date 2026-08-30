@@ -1,0 +1,349 @@
+"""Have a language model write a plan, then make it fix its own mistakes.
+
+`prompt_pack/README.md` has always told people to close this loop by hand:
+
+    If the node rejects the plan, paste the error straight back into the chat --
+    every message names the shot or reference it came from, and one round trip
+    usually fixes it.
+
+That instruction is the whole feature. The node already carries validators whose
+messages were written to be read, and the A/B run that chose the shipped prompt
+proved the need: two unrelated model families made the same `@tag` mismatch, and
+one round trip fixed both. This module does that round trip automatically.
+
+The important design property is that `validate()` is **pure and synchronous**
+and `write_plan()` takes its completion function as an argument. Together those
+mean the repair loop can be tested with a scripted fake model and no server --
+which is the only way it gets tested at all, in the tradition of
+`tools/check_features.py`. A loop that has never demonstrably repaired anything
+is a loop nobody should trust.
+
+`validate()` deliberately re-runs the *real* checkers rather than describing the
+rules a second time. A second copy of the rules is a second thing to get wrong,
+and the whole point is that what passes here is what the node accepts.
+"""
+
+import json
+import re
+
+from . import directives as _d
+from . import plan as _plan
+from . import refs as _refs
+
+TAG = "HandTieClips"
+
+MAX_ATTEMPTS = 3
+SYSTEM_PROMPT = "prompt_pack/SYSTEM_PROMPT.md"
+SCHEMA_FILE = "prompt_pack/SCHEMA.json"
+
+
+def _pack_file(rel):
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(here, rel.replace("/", os.sep))
+
+
+def system_prompt():
+    """The shipped prompt, read from disk rather than copied into this file.
+
+    `SYSTEM_PROMPT.md` is generated from `AUTHORING_PROMPT.md` and is the exact
+    text the docs tell people to paste into LM Studio. Reading it means the
+    button and the manual route can never drift apart, and improving the prompt
+    improves both at once.
+    """
+    with open(_pack_file(SYSTEM_PROMPT), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def schema():
+    """The generated JSON Schema, for servers that support structured output.
+
+    `tools/gen_schema.py` builds this from the node itself and asserts against
+    `plan._SHOT_KEYS`, `refs.REF_FIELDS` and `refs.SUBJECT_FIELDS`, so it cannot
+    describe a vocabulary that does not exist. Handing it to the server as
+    `response_format` deletes the malformed-JSON failure class outright.
+    """
+    try:
+        with open(_pack_file(SCHEMA_FILE), encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception as exc:
+        print(f"[{TAG}] SCHEMA.json unreadable, falling back to free-form "
+              f"JSON: {exc}", flush=True)
+        return None
+
+
+# -- pulling the two blocks out of a reply ---------------------------------
+
+_FENCE = re.compile(r"```(?:json)?\s*(.+?)```", re.S)
+
+
+def split_reply(raw):
+    """Return (shot_plan_text, ref_plan_text) from a model's reply.
+
+    Three shapes have to work, because all three occur in practice:
+      * structured output -- one object with `shot_plan` and `ref_plan` keys;
+      * two ```json``` fences, which is what the prompt asks for in prose;
+      * one bare object, when a model ignores the fences entirely.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return "", ""
+
+    # Structured output: a single object carrying both.
+    try:
+        whole = json.loads(raw)
+    except ValueError:
+        whole = None
+    if isinstance(whole, dict) and ("shot_plan" in whole or "ref_plan" in whole):
+        sp = whole.get("shot_plan")
+        rp = whole.get("ref_plan")
+        dump = lambda v: "" if v is None else (
+            v if isinstance(v, str) else json.dumps(v, indent=2))
+        return dump(sp), dump(rp)
+
+    blocks = [b.strip() for b in _FENCE.findall(raw) if b.strip()]
+    if not blocks and whole is not None:
+        blocks = [raw]
+
+    shot_txt = ref_txt = ""
+    for b in blocks:
+        try:
+            obj = json.loads(b)
+        except ValueError:
+            continue
+        # Identify by shape, not by order: a model that emits the register
+        # first should not have its plans swapped silently.
+        if isinstance(obj, dict) and ("refs" in obj or "subjects" in obj):
+            ref_txt = ref_txt or b
+        elif isinstance(obj, list) or (isinstance(obj, dict) and "shots" in obj):
+            shot_txt = shot_txt or b
+    if not shot_txt and blocks:
+        shot_txt = blocks[0]
+    return shot_txt, ref_txt
+
+
+# -- validation ------------------------------------------------------------
+
+def validate(shot_text, ref_text, *, hops=None, known_files=None):
+    """Run the node's own checkers. Returns (errors, warnings).
+
+    `errors` are what the node would REJECT -- they go back to the model.
+    `warnings` are the lints the node prints and keeps going on; they are shown
+    to the person but never retried, because a model asked to fix a lint it
+    disagrees with tends to rewrite the parts that were fine.
+    """
+    from .h3_ref_chain import DURATION_FRAMES
+
+    errors, warnings = [], []
+
+    try:
+        shots = _plan.parse_plan(shot_text)
+    except Exception as exc:
+        return [_clean(exc)], warnings
+    if not shots:
+        return ["shot_plan is empty -- it needs at least one shot."], warnings
+
+    if hops and len(shots) != int(hops):
+        errors.append(f"the plan has {len(shots)} shot(s) but {hops} hop(s) "
+                      f"were asked for. Write exactly {hops}.")
+
+    try:
+        ref_plan = _refs.parse_ref_plan(ref_text)
+    except Exception as exc:
+        return [_clean(exc)], warnings
+
+    refs = ref_plan.get("refs") or []
+    subs = ref_plan.get("subjects") or {}
+    known = {r["tag"] for r in refs}
+
+    # A duration label has to be exact -- "10s" is not "10 s". `parse_plan` does
+    # not check this (it takes any string), so the failure surfaces later, at
+    # h3_ref_chain.py:1399. Catching it here turns a rejected queue into a retry.
+    for i, sh in enumerate(shots):
+        dur = (sh or {}).get("duration")
+        if dur and str(dur) not in DURATION_FRAMES:
+            errors.append(
+                f"shot {i + 1}: duration {dur!r} is not a valid label. "
+                f"Use one of: {', '.join(DURATION_FRAMES)}")
+
+    # A named picture that is not on disk stops the queue, so an invented
+    # filename is a model error worth retrying rather than a user problem.
+    if known_files is not None:
+        have = {str(f) for f in known_files}
+        # The full list is already in the system turn. Repeating thirty-odd
+        # filenames inside every error buries the one sentence that says what
+        # to do, and on a folder this size it is most of the retry turn.
+        shown = sorted(have)[:12]
+        catalogue = (", ".join(shown)
+                     + (f", and {len(have) - len(shown)} more (see the list "
+                        f"above)" if len(have) > len(shown) else ""))
+        for r in refs:
+            fname = (r.get("file") or "").strip()
+            if fname and fname not in have:
+                errors.append(
+                    f"@{r['tag']} names '{fname}', which is not in the "
+                    f"reference folder. Do not invent filenames -- use one of "
+                    f"the exact names given, or omit `file` for this ref. "
+                    + (f"Available: {catalogue}." if have
+                       else "The folder is empty, so omit `file` entirely."))
+
+    # Which refs count as loaded. The node derives this from files it actually
+    # decoded (`slot_images` at h3_ref_chain.py:1447); here the file list stands
+    # in for the disk. A ref whose picture is not wired is not ACTIVE on any
+    # hop, and `resolve_tags` then rejects a tag that is otherwise perfectly
+    # declared -- so getting this wrong makes every good plan look broken.
+    if known_files is None:
+        wired = {r["slot"] for r in refs}
+    else:
+        have = {str(f) for f in known_files}
+        wired = {r["slot"] for r in refs
+                 if not (r.get("file") or "").strip()
+                 or (r.get("file") or "").strip() in have}
+
+    # The tag round trip. This is the fault the A/B actually produced: a beat
+    # says @kitchen and the register never declares it, so resolve_tags raises
+    # and the queue stops. Nothing before this point catches it.
+    for i, sh in enumerate(shots):
+        beat = (sh or {}).get("beat") or ""
+        if not beat:
+            continue
+        used = set(re.findall(r"@([A-Za-z0-9_]+)", beat))
+        unknown = sorted(used - known)
+        if unknown:
+            errors.append(
+                f"shot {i + 1}: the beat uses "
+                + ", ".join(f"@{t}" for t in unknown)
+                + " but the reference register does not declare "
+                + ("them" if len(unknown) > 1 else "it")
+                + ". The tag in the beat and the `tag` in the register must be "
+                  "the same string, character for character."
+                + (f" Declared: {', '.join('@' + t for t in sorted(known))}."
+                   if known else ""))
+            continue
+        if not refs:
+            continue
+        active = _refs.active_refs(refs, i, wired)
+        ords = _refs.ordinals(active)
+        shift = 1 if i > 0 else 0            # the live frame takes ordinal 1
+        hop_ords = {t: n + shift for t, n in ords.items()}
+        try:
+            resolved = _refs.resolve_tags(
+                beat, hop_ords, _refs.subjects(refs), where=f"shot {i + 1}",
+                declared=known,
+                subject_names=({k: (v or {}).get("name")
+                                for k, v in subs.items()} if i > 0 else None))
+        except Exception as exc:
+            errors.append(_clean(exc))
+            continue
+        if i > 0 and _d.is_full_h3_prompt(resolved):
+            warnings.append(
+                f"shot {i + 1}: this reads as a complete H3 block rather than "
+                f"a continuation beat; it will be flattened.")
+
+    # The lints. These never stop a queue, so they are reported, not retried.
+    try:
+        warnings.extend(_plan.check_coherence(shots) or [])
+    except Exception:
+        pass
+    for fn, args in ((_plan.check_place_handoff, (shots, ref_plan)),
+                     (_plan.check_over_delivery, (shots,))):
+        try:
+            warnings.extend(fn(*args) or [])
+        except Exception:
+            pass
+    try:
+        # `wired`, not an empty set. Passing set() makes check() report every
+        # ref as unreadable -- four false "this ref is inactive" warnings on a
+        # plan whose pictures are all present, which is worse than no warning
+        # because it teaches the reader to ignore the tier.
+        warnings.extend(_refs.check(ref_plan, wired) or [])
+    except Exception:
+        pass
+
+    return errors, [str(w) for w in warnings]
+
+
+def _clean(exc):
+    """Validator messages are prefixed for the ComfyUI log. The model does not
+    need the prefix, and leaving it in invites it to echo the tag back."""
+    msg = str(exc).strip()
+    for prefix in (f"[{TAG}] ", f"{TAG}: "):
+        if msg.startswith(prefix):
+            msg = msg[len(prefix):]
+    return msg
+
+
+# -- the loop --------------------------------------------------------------
+
+def build_user_turn(brief, hops, files):
+    """The one user message. Names the files that actually exist, so the model
+    schedules pictures it has rather than inventing plausible filenames."""
+    lines = [(brief or "").strip() or "A short scene of your choosing.",
+             "",
+             f"Write exactly {int(hops)} hop(s)."]
+    if files:
+        lines += ["",
+                  "These reference files are on disk. Use these exact "
+                  "filenames, and only these:"]
+        lines += [f"  - {f}" for f in files]
+    else:
+        lines += ["",
+                  "There are no reference files on disk. Write the plan "
+                  "without a `file` on any reference."]
+    return "\n".join(lines)
+
+
+async def write_plan(brief, hops, *, complete_fn, files=None,
+                     attempts=MAX_ATTEMPTS, use_schema=True, on_step=None):
+    """Generate a plan and repair it until the node would accept it.
+
+    `complete_fn(messages, schema=...)` is injected rather than imported so the
+    loop can be driven by a scripted fake in `tools/check_planner.py`. That test
+    is the only proof the repair path works that does not need a GPU, a server
+    and a person watching.
+
+    Never returns an unvalidated plan: if it does not converge, `ok` is False
+    and `errors` holds the last set, for the person to fix by hand.
+    """
+    files = list(files or [])
+    messages = [{"role": "system", "content": system_prompt()},
+                {"role": "user", "content": build_user_turn(brief, hops, files)}]
+    sch = schema() if use_schema else None
+
+    last_errors, warnings = [], []
+    shot_text = ref_text = ""
+
+    for attempt in range(1, int(attempts) + 1):
+        if on_step:
+            on_step({"attempt": attempt, "of": int(attempts),
+                     "errors": last_errors})
+        reply = await complete_fn(messages, schema=sch)
+        shot_text, ref_text = split_reply(reply)
+        if not shot_text:
+            last_errors = ["the reply contained no JSON. Answer with the two "
+                           "JSON blocks and nothing else."]
+        else:
+            last_errors, warnings = validate(
+                shot_text, ref_text, hops=hops, known_files=files)
+        if not last_errors:
+            return {"ok": True, "shot_plan": shot_text, "ref_plan": ref_text,
+                    "attempts": attempt, "errors": [], "warnings": warnings}
+
+        print(f"[{TAG}] plan attempt {attempt}/{attempts} rejected: "
+              + "; ".join(last_errors[:3]), flush=True)
+        if attempt >= int(attempts):
+            break
+        # Feed the reply back with the node's own words. Keeping the assistant
+        # turn matters: without it the model re-derives the plan from scratch
+        # and reliably reintroduces a different fault.
+        messages.append({"role": "assistant", "content": reply})
+        messages.append({"role": "user", "content":
+                         "The node rejected that plan:\n\n"
+                         + "\n".join(f"- {e}" for e in last_errors)
+                         + "\n\nReturn the two corrected JSON blocks. Change "
+                           "only what the errors name; leave the rest as it "
+                           "was."})
+
+    return {"ok": False, "shot_plan": shot_text, "ref_plan": ref_text,
+            "attempts": int(attempts), "errors": last_errors,
+            "warnings": warnings}

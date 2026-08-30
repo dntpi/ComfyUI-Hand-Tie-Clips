@@ -17,6 +17,15 @@ IMAGE sockets, which were most of a 16-socket column.
 Everything that decides *where bytes land* lives in `media.py`, not here: one
 prefix-checked resolver used by both the route and the loaders, so there is a
 single place to be wrong about it. The route itself never joins a path.
+
+Since 2026-08-30 it also carries the optional plan writer: `GET/POST
+/h3_ref_chain/llm` reads and saves the local chat-server settings, and `POST
+/h3_ref_chain/plan` runs the generate-validate-repair loop in `planner.py`.
+Those are the only places in the pack that touch the network, and none of them
+is reachable from a graph execution -- the button writes JSON into a widget,
+and queueing reads the widget. `llm` and `planner` are imported inside the
+handlers rather than at module scope so a broken or absent aiohttp client
+cannot stop the pack from loading.
 """
 
 import os as _os
@@ -29,6 +38,8 @@ TAG = "HandTieClips"
 ROUTE = "/h3_ref_chain/vocab"
 UPLOAD_ROUTE = "/h3_ref_chain/upload"
 FILES_ROUTE = "/h3_ref_chain/files"
+LLM_ROUTE = "/h3_ref_chain/llm"
+PLAN_ROUTE = "/h3_ref_chain/plan"
 
 # A batch of stills is a handful; this is a guard against a runaway multipart
 # body, not a considered product limit.
@@ -174,5 +185,128 @@ def register():
         for note in skipped:
             print(f"[{TAG}] upload skipped {note}", flush=True)
         return web.json_response({"ok": True, "files": saved, "skipped": skipped})
+
+    # -- the optional plan writer -----------------------------------------
+    #
+    # Everything below is inert until someone opens Settings in the panel and
+    # points it at a server. With no server configured the panel shows the
+    # manual paste recipe and nothing here is ever called.
+
+    @instance.routes.get(LLM_ROUTE)
+    async def _llm_get(_request):
+        """Saved settings plus whatever models the server currently offers.
+
+        Answers 200 with an empty model list when the server is down, rather
+        than an error: the user needs this panel open in order to fix the URL
+        that is the reason the list is empty.
+        """
+        try:
+            from . import llm as _llm
+            conn = _llm.load_conn()
+            found = await _llm.models(conn["server_url"])
+            return web.json_response({
+                "ok": True,
+                "server_url": conn["server_url"],
+                # The saved model goes back with the list so the panel can
+                # PRESELECT it. Without this the dropdown lands on option[0]
+                # and the next save silently rewrites the configured model to
+                # whatever happens to be first -- the exact bug recorded at
+                # PromptMasterLD's h3_studio_ui.js:5007.
+                "model": conn["model"],
+                "temperature": conn["temperature"],
+                "unload_after": conn["unload_after"],
+                # [{id, loaded}] -- `loaded` is None on servers with no
+                # native state route. The panel marks the difference, because
+                # picking an unloaded model is picking a 400.
+                "models": found,
+                "online": bool(found),
+                "any_loaded": any(m.get("loaded") for m in found),
+            })
+        except Exception as exc:
+            print(f"[{TAG}] llm route failed: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    @instance.routes.post(LLM_ROUTE)
+    async def _llm_set(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response(
+                {"ok": False, "error": "expected a JSON body"}, status=400)
+        try:
+            from . import llm as _llm
+            conn = _llm.save_conn(body if isinstance(body, dict) else {})
+            return web.json_response({"ok": True, **conn})
+        except Exception as exc:
+            print(f"[{TAG}] llm save failed: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    @instance.routes.post(PLAN_ROUTE)
+    async def _plan(request):
+        """Write a plan, and make the model repair it until the node accepts it.
+
+        Returns `ok: false` with a readable `error` for every failure mode --
+        no server, no model, a model that will not converge. None of them is a
+        500: they are all ordinary states of a machine the user controls, and
+        an exception page in a status line helps nobody.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response(
+                {"ok": False, "error": "expected a JSON body"}, status=400)
+
+        brief = str(body.get("brief") or "").strip()
+        try:
+            hops = max(1, min(24, int(body.get("hops") or 3)))
+        except (TypeError, ValueError):
+            hops = 3
+
+        try:
+            from . import llm as _llm
+            from . import planner as _planner
+        except Exception as exc:
+            return web.json_response(
+                {"ok": False, "error": f"the plan writer failed to load: {exc}"})
+
+        conn = _llm.load_conn()
+        if not conn.get("model"):
+            return web.json_response(
+                {"ok": False, "error": "no model is selected -- open Settings "
+                                       "in the panel and pick one."})
+
+        # Only the files actually on disk. The model then schedules pictures
+        # that exist instead of inventing plausible filenames, which is the
+        # difference between a plan that queues and one that stops at the
+        # missing-picture check.
+        files = [f["name"] for f in _media.listing({"image", "video"})]
+
+        async def complete_fn(messages, schema=None):
+            return await _llm.complete(
+                conn["server_url"], conn["model"], messages,
+                schema=schema, temperature=conn["temperature"])
+
+        try:
+            out = await _planner.write_plan(
+                brief, hops, complete_fn=complete_fn, files=files)
+        except _llm.LLMError as exc:
+            return web.json_response({"ok": False, "error": str(exc)})
+        except Exception as exc:
+            print(f"[{TAG}] plan route failed: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)})
+
+        # Hand the VRAM back before the render that almost certainly follows.
+        # A courtesy, never a failure: `unload` swallows its own errors and
+        # returns False when no endpoint answers.
+        if conn.get("unload_after"):
+            try:
+                await _llm.unload(conn["server_url"], conn["model"])
+            except Exception:
+                pass
+
+        if out["ok"]:
+            print(f"[{TAG}] wrote a {hops}-hop plan in {out['attempts']} "
+                  f"attempt(s)", flush=True)
+        return web.json_response(out)
 
     return True

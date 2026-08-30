@@ -12,3 +12,6 @@ HANDOVER.md
 # `comfy node publish` builds this in the repo root. A build artifact, not a
 # release -- it briefly got committed on 2026-08-30 because of a `git add -A`.
 node.zip
+
+# Local LLM connection settings -- a machine property, not a release.
+htc_llm.json

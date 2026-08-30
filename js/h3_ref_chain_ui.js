@@ -6,6 +6,7 @@ import {
 import { createPlanEditor } from "./editor/plan_editor.js";
 import { createRefRail, parseRefPlan, refPlanToJson } from "./editor/ref_rail.js";
 import { createRunPanel } from "./editor/run_panel.js";
+import { createWriterBar } from "./editor/writer_bar.js";
 import { createMediaStrip, MEDIA_WIDGETS } from "./editor/media_strip.js";
 
 const VERSION = "v1.5.0";
@@ -15,6 +16,9 @@ const VERSION = "v1.5.0";
  * like the rename having broken the pack. */
 const NODE_TYPES = new Set(["HandTieClips", "H3RefChain"]);
 const NODE_WIDTH = 560;
+// Mirrors MODE_PROP in editor/plan_editor.js -- the writer forces Shots mode
+// after a plan lands, and the property is the only part of that it should touch.
+const EDITOR_MODE_PROP = "h3_editor_mode";
 const EDITOR_MIN_H = 460;
 const STYLE_ID = "h3rc-style";
 
@@ -127,12 +131,36 @@ function mountEditor(node) {
         onChange: () => node.graph?.setDirtyCanvas?.(true, true),
     });
 
+    // A written plan lands in the two widgets and then goes through the same
+    // reload path a hand-paste does, so nothing downstream needs to know a
+    // model was involved. Collapsed by default and inert until opened: this is
+    // an accelerator for the manual recipe, not a step in it.
+    const writer = createWriterBar(node, {
+        hopCount,
+        onWritten: (shotJson, refJson) => {
+            if (shotJson) planWidget.value = shotJson;
+            if (refJson) refWidget.value = refJson;
+            // Force Shots mode by setting the property rather than calling
+            // setMode(): setMode's "shots" branch is written for an EMPTY
+            // editor and migrates the prompt widget into cards, which would
+            // overwrite the plan that was just written. reload() below fills
+            // `shots` from the widget, which is the whole job here.
+            if (shotJson) {
+                node.properties ??= {};
+                node.properties[EDITOR_MODE_PROP] = "shots";
+            }
+            node._h3Editor?.refresh();
+            node.graph?.setDirtyCanvas?.(true, true);
+        },
+    });
+
     // Authoring sections scroll; RUN does not. RUN is the one section touched
     // on every queue, and it used to be the last child of the scroller -- so
     // it sat below however many shot cards the script had and you had to
     // scroll the panel just to reach the summary bar. It is pinned to the
     // bottom of the panel now, collapsed to its ~28px summary until opened.
     const scroll = el("div", "h3e-scroll");
+    scroll.appendChild(writer.root);
     scroll.appendChild(rail.root);
     scroll.appendChild(mediaStrip.root);
     scroll.appendChild(editor.root);
@@ -164,11 +192,13 @@ function mountEditor(node) {
             editor.reload();
             rail.render();
             mediaStrip.render();
+            writer.syncHops();
             applyVisibility();   // syncs the run panel on the way through
         },
         rail,
         editor,
         runPanel,
+        writer,
     };
 
     applyVisibility();

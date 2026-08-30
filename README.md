@@ -15,6 +15,12 @@ tags:
 
 One node. Write a shot plan, drop in your reference stills, queue.
 
+![Six consecutive frames across a join](https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/seam-frames.png)
+
+*Six consecutive frames spanning the join between hop 1 and hop 2. One of these
+is the last frame the first generation produced and the next is the first frame
+of a second, separate generation. The pack exists so that you cannot tell which.*
+
 > **Renamed 2026-08-29.** This pack was `ComfyUI-H3-Ref-Chain`. The nodes now
 > live under the **Hand Tie Clips** category and register as `HandTieClips`,
 > `HTCChainPreview`, `HTCToneCompensate` and `HTCContinuityState`. The old ids
@@ -351,6 +357,8 @@ hop's first and last **delivered** frame side by side, its beat, its directives,
 and what actually happened to it — seed, steps, whether it came from cache, what
 the tone correction did. Wire it to a Save Image.
 
+![Contact sheet](https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/contact-sheet.png)
+
 On a chain of any length this is the fastest way to find the hop that broke. The
 one hard cut in the 114-second reference chain sat in a plan that passed every
 automated check; it is obvious in one row of a contact sheet and invisible in a
@@ -400,14 +408,21 @@ only the correction differs:
 
 | `tone_anchor` | drift across the chain | worst seam |
 |---|---|---|
-| off | 13.4/255 | 1.9/255 |
-| 0.15 | 7.4 | 1.0 |
-| 0.35 | 5.1 | 1.6 |
-| 0.60 | 2.9 | 2.1 |
+| off | 13.5/255 | 2.1/255 |
+| 0.15 | 7.4 | 1.3 |
+| 0.35 | 5.1 | 1.9 |
+| 0.60 | 2.9 | 2.6 |
 
-Monotonic, with no knee: each step of strength removes roughly another 16% of
-the drift and costs about 0.5/255 of seam step. Hop 1 is byte-identical in all
-four. **0.35 is the default and stays.**
+Both columns are **H3 Seam Report's own numbers**, so what you measure matches
+what this table says.
+
+![Seam report chart](https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/seam-report.png)
+
+Drift falls evenly — 45%, 62%, 78% of the uncorrected slide. The seam does not:
+`0.15` pulls it *tighter* than the uncorrected chain, and it grows from there at
+roughly 0.6/255 per step of strength. Hop 1 is byte-identical in all four.
+**0.35 is the default and stays** — it halves the drift while every seam still
+reads as marginal or better.
 
 One caveat the numbers cannot capture: a scene that brightens *for a reason* —
 walking toward a window — is indistinguishable from drift from the inside, and

@@ -4,11 +4,19 @@
 # being able to see what changed between renders.
 * text=auto eol=lf
 
-# Images and video the docs might carry. Deliberately not LFS: they would be
-# small, and GitHub LFS has a quota where plain blobs do not.
+# Images and video the docs might carry.
 *.png binary
 *.jpg binary
 *.mp4 binary
+
+# ...except the doc images, which MUST be LFS. The note below says the Hub
+# refuses a plain blob over 10 MB; that is out of date. On 2026-08-30 it
+# rejected the whole push over three PNGs of 262-545 KB -- "Your push was
+# rejected because it contains binary files" -- so the Hub now wants every
+# binary in Xet/LFS regardless of size. GitHub's LFS quota is 1 GB and these
+# are about 1.1 MB total, so paying it here costs nothing and is what keeps a
+# single `git push origin main` reaching both hosts.
+docs/img/*.png filter=lfs diff=lfs merge=lfs -text
 
 # ---------------------------------------------------------------------------
 # Below is HuggingFace's default LFS ruleset, kept because this repo is

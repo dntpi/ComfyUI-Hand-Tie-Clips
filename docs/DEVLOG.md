@@ -849,14 +849,22 @@ hop 3 mean minus hop 1 mean; seams are the step across the join.
 
 | `tone_anchor` | drift | seam @192 | seam @362 | flicker |
 |---|---|---|---|---|
-| off | 13.4/255 | 1.2 | 1.9 | 0.4675 |
-| 0.15 | 7.4 (-45%) | 0.9 | 1.0 | 0.4566 |
-| 0.35 | 5.1 (-62%) | 1.4 | 1.6 | 0.4618 |
-| 0.60 | 2.9 (-78%) | 2.1 | 1.8 | 0.4661 |
+| off | 13.5/255 | +0.9 | +2.1 | 0.4675 |
+| 0.15 | 7.4 (-45%) | -1.3 | -1.0 | 0.4566 |
+| 0.35 | 5.1 (-62%) | -1.9 | -1.6 | 0.4618 |
+| 0.60 | 2.9 (-78%) | -2.6 | -1.8 | 0.4661 |
 
-Monotonic, no knee: each step of strength buys ~16pp of drift removal and costs
-~0.5/255 of seam. Hop 1 is byte-identical across all four, as the design
-requires. **The shipped 0.35 default is defensible and stays.**
+Seam figures are `seam.measure(window=6)` -- the shipped node's own method, not
+an ad-hoc frame difference -- so the docs and the instrument a user runs agree.
+
+Drift removal is even: 45 / 62 / 78% of the uncorrected slide, ~16pp per step.
+**The seam is not monotonic.** `0.15` pulls it tighter than the uncorrected
+chain (2.1 -> 1.3) before it grows again, so there is a shallow optimum below
+the default rather than a straight trade. From 0.15 up it costs ~0.6/255 per
+step. Note also that the seams flip sign: uncorrected they are positive, and
+every corrected run overshoots slightly negative. Hop 1 is byte-identical across
+all four, as the design requires. **The shipped 0.35 default stays** -- it
+halves the drift while every seam still reads marginal or better.
 
 The propagation claim in section 20 -- that no carry variable is needed --
 is visible in the logs: hop 3's `frame_shift` grew with anchor strength

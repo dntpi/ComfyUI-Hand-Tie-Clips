@@ -1,9 +1,14 @@
 [project]
 name = "comfyui-hand-tie-clips"
-version = "0.4.1"
+version = "0.4.2"
 description = "Native MiniMax H3 Ref2VA chain: persistent references, previous-segment clip+audio pin, one queue."
 readme = "README.md"
-license = { file = "LICENSE" }
+# SPDX string, not `{ file = "LICENSE" }`. The registry does not resolve the file
+# form -- it stored the table verbatim and the public listing showed
+# `{"file": "LICENSE"}` where the licence should be. The LICENSE file stays; this
+# is what GitHub and the registry both read.
+license = "MIT"
+authors = [{ name = "sandpies" }]
 requires-python = ">=3.10"
 dependencies = []
 
@@ -17,4 +22,4 @@ Repository = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"
 [tool.comfy]
 PublisherId = "sandpies"
 DisplayName = "Hand Tie Clips"
-Icon = ""
+Icon = "https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/icon.png"

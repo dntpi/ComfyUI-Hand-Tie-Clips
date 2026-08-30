@@ -15,7 +15,7 @@ tags:
 
 One node. Write a shot plan, drop in your reference stills, queue.
 
-![Six consecutive frames across a join](https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/seam-frames.png)
+![Six consecutive frames across a join](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/seam-frames.png)
 
 *Six consecutive frames spanning the join between hop 1 and hop 2. One of these
 is the last frame the first generation produced and the next is the first frame
@@ -357,7 +357,7 @@ hop's first and last **delivered** frame side by side, its beat, its directives,
 and what actually happened to it — seed, steps, whether it came from cache, what
 the tone correction did. Wire it to a Save Image.
 
-![Contact sheet](https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/contact-sheet.png)
+![Contact sheet](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/contact-sheet.png)
 
 On a chain of any length this is the fastest way to find the hop that broke. The
 one hard cut in the 114-second reference chain sat in a plan that passed every
@@ -416,7 +416,7 @@ only the correction differs:
 Both columns are **H3 Seam Report's own numbers**, so what you measure matches
 what this table says.
 
-![Seam report chart](https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/seam-report.png)
+![Seam report chart](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/seam-report.png)
 
 Drift falls evenly — 45%, 62%, 78% of the uncorrected slide. The seam does not:
 `0.15` pulls it *tighter* than the uncorrected chain, and it grows from there at

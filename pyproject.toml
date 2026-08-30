@@ -22,4 +22,4 @@ Repository = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"
 [tool.comfy]
 PublisherId = "sandpies"
 DisplayName = "Hand Tie Clips"
-Icon = "https://raw.githubusercontent.com/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/icon.png"
+Icon = "https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/icon.png"

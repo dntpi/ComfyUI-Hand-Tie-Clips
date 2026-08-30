@@ -16,6 +16,11 @@
 # binary in Xet/LFS regardless of size. GitHub's LFS quota is 1 GB and these
 # are about 1.1 MB total, so paying it here costs nothing and is what keeps a
 # single `git push origin main` reaching both hosts.
+# NOTE: an LFS-tracked file is served as its 131-byte POINTER by
+# raw.githubusercontent.com and by github.com/<o>/<r>/raw/ -- 200 OK,
+# text/plain, and every <img> silently broken. The host that resolves LFS is
+# media.githubusercontent.com/media/<o>/<r>/<ref>/<path>, which is what the
+# README and pyproject Icon point at. Do not "tidy" those back to raw.
 docs/img/*.png filter=lfs diff=lfs merge=lfs -text
 
 # ---------------------------------------------------------------------------

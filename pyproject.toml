@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-hand-tie-clips"
-version = "0.4.3"
+version = "0.4.4"
 description = "Native MiniMax H3 Ref2VA chain: persistent references, previous-segment clip+audio pin, one queue."
 readme = "README.md"
 # SPDX string, not `{ file = "LICENSE" }`. The registry does not resolve the file

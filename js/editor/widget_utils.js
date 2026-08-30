@@ -165,6 +165,30 @@ export function widgetByName(node, name) {
     return node.widgets?.find((w) => w.name === name) || null;
 }
 
+/**
+ * The `tooltip` a widget was given in INPUT_TYPES, wherever this frontend
+ * keeps it.
+ *
+ * `widgetOptions(w).tooltip` on its own is not enough, and returned nothing
+ * for the entire RUN panel: ComfyUI's own tooltip layer does not read the
+ * widget object at all, it reads the node DEFINITION. So every native dial
+ * showed its help text while every field this editor drew showed none, which
+ * reads as "the panel has no tooltips" rather than as a lookup miss.
+ *
+ * Which of the three places holds the string depends on the frontend version,
+ * so all three are tried instead of pinning one. Never retype the sentences
+ * here: INPUT_TYPES is the single source, for the same reason routes.py exists.
+ */
+export function tooltipFor(node, w) {
+    if (!w) return "";
+    const direct = w.tooltip || widgetOptions(w).tooltip;
+    if (direct) return String(direct);
+    const spec = node?.constructor?.nodeData?.input;
+    const entry = spec?.required?.[w.name] || spec?.optional?.[w.name];
+    const tip = Array.isArray(entry) ? entry[1]?.tooltip : null;
+    return tip ? String(tip) : "";
+}
+
 /** Hide every widget in `names`, show the rest of `names`' complement set. */
 export function setWidgetVisibility(node, hiddenNames) {
     const hide = new Set(hiddenNames);

@@ -921,3 +921,51 @@ fast-preview button it sounds like. `dry_run` is the fast-preview button.
   and started rendering at hop 4.
 - **Over-delivery lint**: exercised offline; never fired in ComfyUI because both
   shipped plans and the test plan stay clean. Unproven against a real positive.
+
+## 22. Two models, one prompt, the same two mistakes (2026-08-30)
+
+A 3-hop / 10 s brief was written to load six traps into thirty seconds, and
+handed to two local models in LM Studio with `prompt_pack/SYSTEM_PROMPT.md` in
+the system box, temperature 0.4, and nothing else. `EXAMPLE_6_HOP.md` was
+deliberately withheld -- it argues for six hops and would have contaminated a
+3-hop test. Grading ran every reply through the real parsers rather than by eye.
+
+| | qwen | gemma 26b-a4b |
+|---|---|---|
+| FAIL | 4 | 2 |
+| after the shared prompt bug | 2 | 0 |
+
+**Both models made the same tag mistake, which makes it the prompt's.** Each
+wrote `@kitchen` in the beat -- correctly, that is rule 10's own example -- and
+then invented `"tag": "kitchen_plate"` for the register. The string `_plate`
+appears nowhere in the prompt; they arrived at the same convention
+independently. The cause was in the file: rule 10's only concrete place tag
+lives in a *beat*, the register example held one ref (`hero_face`, a person),
+and the two were never shown together. The invariant *was* stated, in a field
+bullet 150 lines later -- and models copy examples, not bullets. `PROMPTING.md`,
+the human guide, has had a three-ref example including `kitchen` all along; the
+machine prompt was trimmed and lost it.
+
+**The silent one.** qwen wrote `"name": "@cook_face"` into `subjects`. That
+parses, resolves, renders, and is wrong: `name` is what `resolve_tags`
+substitutes for a subject's tag from hop 2 on, so the tag resolved to itself and
+a literal at-sign reached the encoder on two of three hops. Nothing caught it.
+`check_prompts.py` would have, but only for the two shipped workflows.
+
+**Where the models actually differed** is invisible to any parser. Both lifted
+rule 2's worked answer verbatim (*"water runs in slow threads down the window
+glass"*). But hop 3 moves to a hallway, and qwen also copied rule 4's example
+*object* -- putting "a single click from the refrigerator" in a corridor, the
+kitchen appliance following her out of the room. gemma copied rule 4's *method*
+and wrote "the low hum of a hallway light". Recitation versus transfer, and only
+one of them survives a change of location.
+
+**Both** also left `tail` off hops 1-2, describing the arrival at rest in prose
+instead of directing it -- so the over-delivery lint, which only arms after a
+`settle`, still has not fired on a real positive.
+
+Fixed here: the register example carries a place tag on both sides of the round
+trip and says the two spellings are one string; `refs.py` rejects an `@tag` in
+`name`, `locked` or `context`. Not fixed, because it is a brief-writing lesson
+rather than a bug: ending a chain in a location no plate describes earns the
+place-handoff warning, and that was the brief's fault, not either model's.

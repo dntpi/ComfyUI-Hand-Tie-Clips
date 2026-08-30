@@ -75,11 +75,30 @@ def _norm_subject(key, raw):
     if unknown:
         _fail(f"subject {num}: unknown field(s) {unknown}. "
               f"Valid: {list(SUBJECT_FIELDS)}")
-    return num, {
+    out = {
         "name": str(raw.get("name") or "").strip(),
         "locked": str(raw.get("locked") or "").strip(),
         "context": str(raw.get("context") or "").strip(),
     }
+    # All three fields are PROSE that reaches the encoder verbatim -- `name`
+    # is what `resolve_tags` substitutes for a subject's tag on hop 2+, and
+    # `locked`/`context` are copied into the continuity line. A reference tag
+    # written here therefore resolves to itself: a model that wrote
+    # `"name": "@cook_face"` put a literal at-sign into the conditioning of
+    # every continuation hop, and nothing anywhere caught it -- the plan
+    # parsed, the tags resolved, the render completed, and two of three hops
+    # were conditioned on a token no one intended. Loud here, or silent
+    # forever.
+    import re                       # local, as everywhere else in this module
+    for field, text in out.items():
+        hit = re.search(r"@[A-Za-z0-9_]+", text)
+        if hit:
+            _fail(f"subject {num}: `{field}` contains the reference tag "
+                  f"'{hit.group(0)}'. These fields are prose that reaches the "
+                  f"text encoder literally -- @tags only resolve inside a "
+                  f"shot's beat. Write the plain words instead, e.g. "
+                  f"\"the cook\".")
+    return num, out
 
 
 def _norm_ref(raw, i):

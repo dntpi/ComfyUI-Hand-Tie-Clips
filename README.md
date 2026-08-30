@@ -37,6 +37,19 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > `avcodec_open2`. Both fixed. The Starter now also ships the seam report wired.
 > Measurements are in [`docs/DEVLOG.md`](docs/DEVLOG.md) section 21.
 
+> **0.4.4 — 2026-08-30.** Two local models were given `prompt_pack/SYSTEM_PROMPT.md`
+> and the same scene, and both made the same two mistakes — so both were the
+> prompt's fault, not theirs. The register example had no place tag in it, so
+> each model invented its own convention (`kitchen_plate`) while leaving
+> `@kitchen` in the beat, and the run stopped on an unknown reference. One model
+> also wrote `"name": "@cook_face"` into `subjects`, which parsed, rendered, and
+> quietly put a literal at-sign in front of the text encoder on every
+> continuation hop. The prompt now shows a place tag on both sides of the round
+> trip and says the two spellings are one string; `refs.py` now rejects an
+> `@tag` in `name`, `locked` or `context` instead of encoding it. The RUN panel
+> also has its tooltips back — it read them from `widget.options`, where this
+> frontend does not keep them. Section 22 of the devlog has the A/B.
+
 **Writing for it:** [PROMPTING.md](PROMPTING.md) is the authoring guide — the rules that come from what this model actually does, not from taste. [prompt_pack/](prompt_pack/) has a copy-paste prompt that gets a language model to write plans for you.
 
 Each hop is native **MiniMax H3 Reference-to-Video**. Hops after the first are guided by the **previous hop's sampler AV latent** via `ComfyUI-H3-Motion-Context` when that pack is installed (22 picture frames + 24-frame end-aligned audio). Stock `MiniMaxH3AddGuide` is the fallback when Motion-Context is missing or the previous hop was a pixel cache hit. Voice stays as a reference every hop. Identity stills ride hop 1; later hops use the pin for wardrobe and room unless a ref lists those hops in `shots`. A 5 s hop drops the airlock on a continuous join — validate seams at 8 s or 15 s.

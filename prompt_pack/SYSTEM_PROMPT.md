@@ -89,6 +89,11 @@ These are not style preferences. They are how this model fails.
    write reaches the encoder literally, so formatting becomes noise in the
    conditioning.
 
+   **The tag in the beat and the `tag` in the register are the same string,
+   character for character.** Writing `@kitchen` in a beat commits you to
+   `"tag": "kitchen"` in `ref_plan` -- not `kitchen_plate`, not `kitchen_ref`.
+   Decide the name once and use it in both documents.
+
 11. **Every object that persists gets an adjective.** A bare noun is
    unanchored: each hop encodes "the bowl" from scratch and is free to make it
    steel in one hop and porcelain in the next. Name a colour or a material the
@@ -236,7 +241,10 @@ then pinned into the next hop's audio.
   "refs": [
     {"tag": "hero_face", "file": "face.jpg", "subject": 1,
      "retention": "fully_preserved", "shots": [1, 4],
-     "desc": "head-and-shoulders, even light"}
+     "desc": "head-and-shoulders, even light"},
+    {"tag": "kitchen", "file": "kitchen_wide.jpg",
+     "retention": "reference", "shots": [1, 2, 3],
+     "desc": "wide shot of the counter and window"}
   ],
   "subjects": {
     "1": {"name": "the cook",
@@ -245,6 +253,17 @@ then pinned into the next hop's audio.
   }
 }
 ```
+
+The place entry is `"tag": "kitchen"` because the beat says `@kitchen`. **The
+two spellings are one string.** Naming the register entry `kitchen_plate`,
+`kitchen_ref` or `kitchen_bg` while the beat still reads `@kitchen` stops the
+run: the node resolves tags by exact name and has no way to guess that two
+different words meant the same picture.
+
+`subjects` holds **plain prose, never tags.** `name` is the phrase that replaces
+a subject's `@tag` from hop 2 on, so `"name": "@hero_face"` would resolve to
+itself and put a literal at-sign in front of the encoder. Write `"the cook"`.
+The same goes for `locked` and `context`.
 
 Valid ref fields: `tag`, `file`, `subject`, `retention`, `desc`, `shots`. (There
 is also `slot`, which is derived from list position — never author it.)

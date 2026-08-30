@@ -13,12 +13,14 @@
  * is byte-identical to one produced by the stock UI, and anything this panel
  * cannot express is still reachable by dropping it from the group list.
  *
- * Help text is read from `widget.options.tooltip`, i.e. the `tooltip` written in
- * INPUT_TYPES. Retyping those sentences here would be a second copy that goes
- * stale, for exactly the reason routes.py exists.
+ * Help text comes from the `tooltip` written in INPUT_TYPES, via
+ * `tooltipFor()`. Retyping those sentences here would be a second copy that
+ * goes stale, for exactly the reason routes.py exists. Reading only
+ * `widget.options.tooltip` was not enough and left the whole panel with no
+ * tooltips at all while the native dials kept theirs -- see tooltipFor().
  */
 
-import { el, widgetByName, widgetType, widgetOptions } from "./widget_utils.js";
+import { el, widgetByName, widgetType, widgetOptions, tooltipFor } from "./widget_utils.js";
 
 const OPEN_PROP = "h3_run_open";
 
@@ -257,8 +259,16 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
                 l.appendChild(el("span", null, labelFor(w)));
                 l.appendChild(f.input);
                 // The tooltip is the widget's own, straight from INPUT_TYPES.
-                const tip = widgetOptions(w).tooltip;
-                if (tip) l.title = String(tip);
+                // Set on the label, which wraps both the caption and the
+                // control, so the hover target is the whole field rather than
+                // the six pixels of text. `title` on the input as well because
+                // a DOM <select>/<input> does not always inherit the ancestor's
+                // tooltip while it has focus.
+                const tip = tooltipFor(node, w);
+                if (tip) {
+                    l.title = tip;
+                    f.input.title = tip;
+                }
                 grid.appendChild(l);
                 owned.push(name);
                 readers.push(f.read);

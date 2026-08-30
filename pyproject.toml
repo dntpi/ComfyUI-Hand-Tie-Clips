@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-hand-tie-clips"
-version = "0.4.2"
+version = "0.4.3"
 description = "Native MiniMax H3 Ref2VA chain: persistent references, previous-segment clip+audio pin, one queue."
 readme = "README.md"
 # SPDX string, not `{ file = "LICENSE" }`. The registry does not resolve the file
@@ -8,12 +8,16 @@ readme = "README.md"
 # `{"file": "LICENSE"}` where the licence should be. The LICENSE file stays; this
 # is what GitHub and the registry both read.
 license = "MIT"
+# The registry reads no author field from either section -- this is here as
+# correct package metadata, not to populate the listing, which stays blank.
 authors = [{ name = "sandpies" }]
 requires-python = ">=3.10"
 dependencies = []
 
 [project.urls]
 Repository = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"
+Documentation = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/PROMPTING.md"
+"Bug Tracker" = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/issues"
 
 # `comfy node publish` needs PublisherId as well as the Repository above.
 # Set 2026-08-30 from registry.comfy.org/publishers/sandpies. Globally unique
@@ -22,4 +26,8 @@ Repository = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"
 [tool.comfy]
 PublisherId = "sandpies"
 DisplayName = "Hand Tie Clips"
+# Square, 400x400. The specifications page requires square and <=400x400; the
+# publishing page says "max 800x400", which is looser. 400x400 satisfies both.
+# The wide crop belongs in Banner, which is what the 21:9 slot is for.
 Icon = "https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/icon.png"
+Banner = "https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/banner.png"

@@ -78,6 +78,10 @@ Notes and limits:
   node, never in the workflow. A shared `.json` cannot point at your server.
 * **Unload after writing** is on by default. A 27B and an H3 render do not fit
   on one card. It is skipped when the server is on another machine.
+* **Free VRAM** unloads everything the writer is holding, on demand. Reach for
+  it before queueing if a render just ran out of memory: the automatic unload
+  only hands back the model configured here, and LM Studio may have loaded a
+  different one on its own.
 * No API keys, no cloud providers, no model downloading — local servers only.
 * This is **alpha**. The manual recipe above is the one to fall back on.
 

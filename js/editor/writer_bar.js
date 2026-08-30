@@ -19,6 +19,7 @@ import { el, button } from "./widget_utils.js";
 
 const LLM_URL = "/h3_ref_chain/llm";
 const PLAN_URL = "/h3_ref_chain/plan";
+const UNLOAD_URL = "/h3_ref_chain/llm/unload";
 
 export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const root = el("details", "h3e-section h3e-writer");
@@ -52,6 +53,13 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const go = button("Write plan", "Generate a plan and repair it until the "
         + "node accepts it", () => run());
     row.appendChild(go);
+
+    // In the main row on purpose. This is the button you reach for when a
+    // render just OOMed, and a killswitch behind a disclosure is not one.
+    const freeBtn = button("Free VRAM", "Unload whatever the writer is holding "
+        + "in memory, right now -- not just the model configured here. Press "
+        + "it before queueing if the card is full.", () => freeVram());
+    row.appendChild(freeBtn);
     body.appendChild(row);
 
     const status = el("div", "h3e-note h3e-writer-status");
@@ -118,7 +126,34 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     function setBusy(on) {
         busy = on;
         go.disabled = on;
+        // Unloading mid-generation would evict the model answering the prompt.
+        freeBtn.disabled = on;
         go.textContent = on ? "Writing…" : "Write plan";
+    }
+
+    async function freeVram() {
+        if (busy) return;
+        freeBtn.disabled = true;
+        freeBtn.textContent = "Freeing…";
+        try {
+            const r = await fetch(UNLOAD_URL, { method: "POST" });
+            const j = await r.json();
+            // "Nothing was loaded" is a success with nothing to do, and saying
+            // so beats a bare "done" that leaves the user wondering whether
+            // the card is actually free.
+            say(!j.ok
+                ? (j.error || "could not reach the writer")
+                : j.unloaded
+                    ? `Freed ${j.unloaded} model(s): ${j.note}`
+                    : `Nothing to free — ${j.note}`,
+                j.ok ? "hint" : "error");
+            if (j.ok && j.unloaded) await loadConn(false);
+        } catch (e) {
+            say(String(e), "error");
+        } finally {
+            freeBtn.disabled = false;
+            freeBtn.textContent = "Free VRAM";
+        }
     }
 
     async function loadConn(announce) {

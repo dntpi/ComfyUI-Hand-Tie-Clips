@@ -40,6 +40,7 @@ UPLOAD_ROUTE = "/h3_ref_chain/upload"
 FILES_ROUTE = "/h3_ref_chain/files"
 LLM_ROUTE = "/h3_ref_chain/llm"
 PLAN_ROUTE = "/h3_ref_chain/plan"
+UNLOAD_ROUTE = "/h3_ref_chain/llm/unload"
 
 # A batch of stills is a handful; this is a guard against a runaway multipart
 # body, not a considered product limit.
@@ -240,6 +241,27 @@ def register():
         except Exception as exc:
             print(f"[{TAG}] llm save failed: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    @instance.routes.post(UNLOAD_ROUTE)
+    async def _llm_unload(request):
+        """Free the writer's VRAM on demand. Never a 500, never a hard error.
+
+        The automatic unload after writing covers the ordinary case. This is
+        for the ones it cannot: the checkbox was off, the write failed before
+        it ran, or LM Studio's JIT put a different model in memory than the one
+        configured. Pressing it when nothing is loaded is a no-op that says so.
+        """
+        try:
+            from . import llm as _llm
+        except Exception as exc:
+            return web.json_response({"ok": False, "error": str(exc)})
+        try:
+            conn = _llm.load_conn()
+            n, note = await _llm.unload_all(conn["server_url"], conn["model"])
+            return web.json_response({"ok": True, "unloaded": n, "note": note})
+        except Exception as exc:
+            print(f"[{TAG}] unload failed: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)})
 
     @instance.routes.post(PLAN_ROUTE)
     async def _plan(request):

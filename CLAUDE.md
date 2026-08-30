@@ -193,7 +193,12 @@ Four rules, each of which cost something to learn:
 - **No subprocess, ever.** 0.4.1–0.4.3 were registry-Flagged under
   `python_command_injection_risk` until `store.py` moved off `subprocess.Popen`.
   PromptMasterLD's unload ladder ends in `lms unload --all`; that rung is
-  deliberately absent here and the four HTTP ones are enough. The sibling pack
+  deliberately absent here and the four HTTP ones are enough. `unload_all` is
+  the killswitch that rung existed for: it lists loaded models over HTTP and
+  walks each through the same ladder. `unload` alone was not enough, because
+  it only ever targets the configured model -- and the three cases that
+  actually OOM a render are the ones where that is not what is resident (the
+  checkbox was off, the write failed early, or JIT loaded something else). The sibling pack
   can afford it because it has no `pyproject.toml` and is never scanned.
 - **No blocking I/O.** These functions are awaited inside aiohttp handlers, so
   `urllib.request` — which is what PromptMasterLD uses from its worker thread —

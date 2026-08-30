@@ -20,6 +20,8 @@ Covers:
                        duration label, an invented filename, a hop-count miss
   * write_plan      -- repairs on attempt 2, reports warnings, and never
                        returns an unvalidated plan when it cannot converge
+  * unload_all      -- the killswitch refuses to evict a writer that is not on
+                       this machine, without opening a connection to find out
 """
 from __future__ import annotations
 
@@ -222,6 +224,27 @@ def main():
     ck("an empty reply is reported as such",
        out["ok"] is False and any("no JSON" in e for e in out["errors"]),
        "; ".join(out["errors"][:1]))
+
+    # ------------------------------------------------------- the killswitch
+    # Only the parts that need no server. `unload_all` short-circuits on a
+    # non-local host BEFORE it opens a session, so this asserts the guard
+    # without touching the network.
+    print("\nllm.unload_all -- the local-only guard")
+    LM = importlib.import_module("htcpack.llm")
+
+    ck("localhost shares this GPU", LM.shares_this_gpu("http://127.0.0.1:1234"))
+    ck("a bare host with no scheme still resolves",
+       LM.shares_this_gpu("localhost:1234"))
+    # TEST-NET-1, guaranteed unroutable and never this machine.
+    ck("a remote host does not",
+       not LM.shares_this_gpu("http://192.0.2.1:1234"))
+
+    n, note = asyncio.run(LM.unload_all("http://192.0.2.1:1234", "some-model"))
+    ck("a remote writer is never evicted", n == 0, note)
+    ck("and it says why", "another machine" in note, note)
+
+    n, note = asyncio.run(LM.unload_all("", "some-model"))
+    ck("no server configured is not an error", n == 0, note)
 
     print()
     if FAIL:

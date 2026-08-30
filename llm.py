@@ -415,6 +415,46 @@ def shares_this_gpu(base_url):
     return bool(here & there)
 
 
+async def _unload_one(session, base, model):
+    """One model, every known eviction verb. -> bool. Never raises.
+
+    LM Studio's unload route changed shape between versions, so the bodies are
+    tried in order; a backend with no unload endpoint at all is ordinary.
+    """
+    import aiohttp
+
+    for path, body in (
+        ("/api/v1/models/unload", {"instance_id": model}),
+        ("/api/v1/models/unload", {"identifier": model}),
+        ("/api/v0/models/unload", {"instance_id": model}),
+        ("/api/v0/models/unload", {"identifier": model}),
+    ):
+        try:
+            async with session.post(
+                base + path, json=body,
+                timeout=aiohttp.ClientTimeout(total=UNLOAD_TIMEOUT),
+            ) as resp:
+                if resp.status < 400:
+                    print(f"[{TAG}] unloaded {model} from the writer",
+                          flush=True)
+                    return True
+        except Exception:
+            continue
+    # Ollama keeps its own eviction verb; harmless against LM Studio.
+    try:
+        async with session.post(
+            base + "/api/generate",
+            json={"model": model, "keep_alive": 0},
+            timeout=aiohttp.ClientTimeout(total=UNLOAD_TIMEOUT),
+        ) as resp:
+            if resp.status < 400:
+                print(f"[{TAG}] evicted {model} (keep_alive 0)", flush=True)
+                return True
+    except Exception:
+        pass
+    return False
+
+
 async def unload(base_url, model):
     """Hand the VRAM back, so the render that follows has somewhere to live.
 
@@ -437,39 +477,10 @@ async def unload(base_url, model):
               flush=True)
         return False
 
-    attempts = [
-        ("/api/v1/models/unload", {"instance_id": model}),
-        ("/api/v1/models/unload", {"identifier": model}),
-        ("/api/v0/models/unload", {"instance_id": model}),
-        ("/api/v0/models/unload", {"identifier": model}),
-    ]
     try:
         async with aiohttp.ClientSession() as session:
-            for path, body in attempts:
-                try:
-                    async with session.post(
-                        base + path, json=body,
-                        timeout=aiohttp.ClientTimeout(total=UNLOAD_TIMEOUT),
-                    ) as resp:
-                        if resp.status < 400:
-                            print(f"[{TAG}] unloaded {model} from the writer",
-                                  flush=True)
-                            return True
-                except Exception:
-                    continue
-            # Ollama keeps its own eviction verb; harmless against LM Studio.
-            try:
-                async with session.post(
-                    base + "/api/generate",
-                    json={"model": model, "keep_alive": 0},
-                    timeout=aiohttp.ClientTimeout(total=UNLOAD_TIMEOUT),
-                ) as resp:
-                    if resp.status < 400:
-                        print(f"[{TAG}] evicted {model} (keep_alive 0)",
-                              flush=True)
-                        return True
-            except Exception:
-                pass
+            if await _unload_one(session, base, model):
+                return True
     except Exception as exc:
         print(f"[{TAG}] unload failed: {exc}", flush=True)
         return False
@@ -477,3 +488,64 @@ async def unload(base_url, model):
     print(f"[{TAG}] no unload endpoint answered -- free the VRAM in LM Studio "
           f"if the render runs short", flush=True)
     return False
+
+
+async def unload_all(base_url, fallback_model=""):
+    """The killswitch: evict everything the writer has in VRAM. -> (n, note).
+
+    `unload` only ever targets the model this pack configured, which is right
+    for the automatic path -- it hands back exactly what writing a plan caused
+    to be loaded. It is not enough for a button whose whole job is "give me the
+    card back now", because the three situations that actually OOM a render are
+    the ones where the configured model is not what is resident: the unload
+    checkbox was off, the write failed before it ran, or LM Studio's JIT loaded
+    something other than what was asked for.
+
+    PromptMasterLD covers this with `lms unload --all`. That rung is a
+    subprocess, which is what got 0.4.1-0.4.3 registry-Flagged under
+    `python_command_injection_risk`, so this lists loaded models over HTTP and
+    walks them through the same ladder instead. Same effect, nothing spawned.
+    """
+    import aiohttp
+
+    base = normalise_base(base_url)
+    if not base:
+        return 0, "no server configured"
+    if not shares_this_gpu(base):
+        # The laptop-and-desktop bug: never reach across a network to evict
+        # someone else's model. Freeing VRAM here would free the wrong VRAM.
+        return 0, "the writer is on another machine -- nothing to free here"
+
+    try:
+        listed = await models(base)
+    except Exception as exc:
+        listed = []
+        print(f"[{TAG}] could not list models to unload: {exc}", flush=True)
+
+    # `loaded` is None on servers with no /api/v0/models -- unknown, not false.
+    # Falling back to the configured model beats evicting nothing at all.
+    targets = [m["id"] for m in listed if m.get("loaded") is True]
+    guessing = False
+    if not targets:
+        if any(m.get("loaded") is None for m in listed) and fallback_model:
+            targets, guessing = [fallback_model], True
+        else:
+            return 0, "nothing is loaded"
+
+    done = []
+    try:
+        async with aiohttp.ClientSession() as session:
+            for name in targets:
+                if await _unload_one(session, base, name):
+                    done.append(name)
+    except Exception as exc:
+        print(f"[{TAG}] unload_all failed: {exc}", flush=True)
+        return len(done), f"stopped after {len(done)}: {exc}"
+
+    if not done:
+        return 0, ("no unload endpoint answered -- free the VRAM in LM Studio "
+                   "directly")
+    note = ", ".join(done)
+    if guessing:
+        note += " (this server does not report what is loaded)"
+    return len(done), note

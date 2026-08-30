@@ -903,7 +903,11 @@
     align-items: center;
     gap: var(--h3-gap-sm);
     margin-bottom: var(--h3-gap-sm);
+    /* The brief, the hop count and two buttons do not fit a narrow node at
+       one line. Wrap rather than squeezing the brief down to nothing. */
+    flex-wrap: wrap;
 }
+.h3e-writer-row button { flex: 0 0 auto; }
 .h3e-writer-brief { flex: 1 1 auto; min-width: 0; }
 .h3e-writer-hops  { flex: 0 0 56px; text-align: center; }
 .h3e-writer-url   { flex: 1 1 auto; min-width: 0; }

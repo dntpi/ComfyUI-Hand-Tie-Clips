@@ -260,6 +260,28 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None):
     except Exception:
         pass
 
+    # SYSTEM_PROMPT.md rule 13, and its own closing checklist: the final shot
+    # sets `tail` to `settle` or `hold`. Left at the default `ongoing`, the
+    # chain ends mid-gesture -- the clip stops rather than finishes.
+    #
+    # A warning and not an error, even though it is mechanical enough to be
+    # one. The node does not reject it, and this file's whole doctrine is that
+    # `errors` means "the node would refuse this": promoting a prose rule into
+    # the retry loop asks the model to rewrite a plan that would have rendered,
+    # which is how the parts that were already right get lost. Shown, not
+    # retried. `tools/grade_plan.py` is the instrument that grades this tier
+    # properly, and it caught this gap.
+    try:
+        last = (shots[-1].get("directives") or {}).get("tail")
+        if last not in ("settle", "hold"):
+            warnings.append(
+                f"shot {len(shots)} is the last one and leaves `tail` as "
+                f"{last or 'the default (ongoing)'}. SYSTEM_PROMPT rule 13 asks "
+                f"the final shot for `settle` or `hold`, so the chain closes "
+                f"instead of stopping mid-gesture.")
+    except Exception:
+        pass
+
     return errors, [str(w) for w in warnings]
 
 

@@ -80,9 +80,12 @@ GOOD_SHOTS = [
     {"id": "s2", "beat": "She lifts the plate and turns toward the doorway, "
                          "the light shifting across her shoulders.",
      "directives": {}},
+    # `tail` matters here, and this fixture went without it for a while:
+    # SYSTEM_PROMPT rule 13 asks the final shot to settle or hold, and a
+    # fixture called "the good plan" should not quietly break a shipped rule.
     {"id": "s3", "beat": "She steps into the hallway, the low hum of a light "
                          "overhead, and walks on out of frame.",
-     "directives": {}},
+     "directives": {"tail": "settle"}},
 ]
 
 # Attempt 1's fault: the beat cites @kitchen, the register never declares it.
@@ -148,6 +151,17 @@ def main():
     ck("a good plan warns about nothing that is present",
        not any("inactive" in w or "could not be read" in w for w in warns),
        "; ".join(warns[:1]))
+
+    # A prose rule the node does not enforce belongs in the WARN tier: shown,
+    # never retried. Found by tools/grade_plan.py, which the loop's own
+    # validator was passing straight over.
+    no_tail = json.loads(json.dumps(GOOD_SHOTS))
+    no_tail[-1]["directives"] = {}
+    errs, warns = PL.validate(json.dumps(no_tail), json.dumps(GOOD_REFS),
+                              hops=3, known_files=FILES)
+    ck("a final shot with no tail warns", any("tail" in w for w in warns),
+       "; ".join(warns[:1]))
+    ck("and does not fail the plan over it", not errs, "; ".join(errs[:1]))
 
     errs, _ = PL.validate(json.dumps(GOOD_SHOTS), json.dumps(BAD_REFS),
                           hops=3, known_files=FILES)

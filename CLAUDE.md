@@ -24,6 +24,20 @@ No build step, linter config, or test suite (`pyproject.toml` declares zero depe
   - the `[HandTieClips]`-prefixed console lines (hop count, shot plan table, reference register table, model-patch log, cache hits, overlap drop, final frame/duration summary);
   - the node's third output, **`info`**, which carries the fully assembled per-hop prompts. Wire it to a Preview Text node to read exactly what each hop sent to the text encoder. The editor shows what you wrote; `info` shows what the compiler made of it, which is not the same thing.
 
+### Pushing, when the change touches `docs/img/`
+
+`origin` carries **two push URLs** (GitHub and HuggingFace) so one `git push origin main` mirrors both. Git LFS does not follow that: it uploads objects to the first URL only, so GitHub gets a pointer in the tree with no object behind it and rejects the push with `GH008: Your push referenced at least 2 unknown Git LFS objects`. Push the objects first:
+
+```
+git lfs push https://github.com/dntpi/ComfyUI-Hand-Tie-Clips.git main
+git push origin main
+```
+
+Two further traps behind that one, both silent:
+
+- **`raw.githubusercontent.com` does not resolve an LFS pointer.** It serves the 131-byte pointer file as `200 OK` / `text/plain`, so every `<img>` breaks with no error anywhere. Use `media.githubusercontent.com/media/<owner>/<repo>/<ref>/<path>`, which is what the README and the `Icon`/`Banner` fields point at. `github.com/<o>/<r>/raw/` behaves like `raw.`, not like `media.`.
+- **HuggingFace refuses plain binaries regardless of size** -- it rejected PNGs of 262-545 KB, not just the >10 MB the old `.gitattributes` comment assumed. Anything binary under `docs/img/` must be LFS or the mirror push fails.
+
 ## Architecture
 
 Python modules feed four nodes, plus a DOM editor in `js/`. `h3_ref_chain.py` holds `HandTieClips.run()` and the prompt-assembly helpers; `plan.py`, `directives.py`, `refs.py`, `store.py` and `tone.py` are parsers, compilers and estimators with no ComfyUI imports in their math, which is what makes them testable outside a running server. `routes.py` serves the editor its vocabulary. `preview_node.py` and `tone.py` each register a standalone side node.

@@ -11,9 +11,10 @@ dependencies = []
 Repository = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"
 
 # `comfy node publish` needs PublisherId as well as the Repository above.
-# PublisherId comes from a registry.comfy.org account and is the last field
-# outstanding. Neither is needed to install the pack by hand or from a zip.
+# Set 2026-08-30 from registry.comfy.org/publishers/sandpies. Globally unique
+# and immutable -- it is in the registry URL -- so it is not a field to tidy.
+# Neither it nor Repository is needed to install the pack by hand or from a zip.
 [tool.comfy]
-PublisherId = ""
+PublisherId = "sandpies"
 DisplayName = "Hand Tie Clips"
 Icon = ""

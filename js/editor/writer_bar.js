@@ -86,6 +86,12 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const modelRow = el("div", "h3e-writer-row");
     const model = el("select", "h3e-select h3e-writer-model");
     model.title = "Which loaded model writes the plan.";
+    // Persist on pick, because Write plan sends only the brief and the hop
+    // count -- the server uses the SAVED model. Without this the dropdown
+    // looks like it selects the writer and does not: choosing a model and
+    // pressing Write plan would quietly run the previous one, and the only
+    // evidence would be a plan in the wrong house style.
+    model.addEventListener("change", () => { if (model.value) saveConn(); });
     modelRow.appendChild(model);
     cog.appendChild(modelRow);
 

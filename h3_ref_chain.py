@@ -2026,7 +2026,12 @@ class HandTieClips:
                           meta={"dry_run": True, "hops": int(n),
                                 "would_be_frames": int(total_frames),
                                 "done": True})
-            return (_sheet.placeholder(),
+            # Sized to the geometry the chain WOULD have produced, not 1x1:
+            # the images output usually lands in a video encoder, and one black
+            # frame at the real resolution both encodes cleanly and shows the
+            # dimensions the plan resolved to. One frame is not the master --
+            # the 31 GB allocation this mode exists to avoid is untouched.
+            return (_sheet.placeholder(width, height),
                     {"waveform": torch.zeros((1, 2, 1024), dtype=torch.float32),
                      "sample_rate": 44100},
                     info,

@@ -1,8 +1,8 @@
 {
   "id": "h3-ref2va-chain",
   "revision": 1,
-  "last_node_id": 35,
-  "last_link_id": 19,
+  "last_node_id": 38,
+  "last_link_id": 22,
   "nodes": [
     {
       "id": 2,
@@ -529,7 +529,8 @@
           "type": "IMAGE",
           "slot_index": 0,
           "links": [
-            5
+            5,
+            20
           ]
         },
         {
@@ -1089,6 +1090,118 @@
       ]
     },
     {
+      "id": 36,
+      "type": "HTCSeamReport",
+      "pos": [
+        2991.7,
+        1100.0
+      ],
+      "size": [
+        340,
+        130
+      ],
+      "flags": {},
+      "order": 107,
+      "mode": 0,
+      "title": "H3 Seam Report - measure the joins",
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 20
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "report",
+          "name": "report",
+          "type": "STRING",
+          "slot_index": 0,
+          "links": [
+            21
+          ]
+        },
+        {
+          "localized_name": "chart",
+          "name": "chart",
+          "type": "IMAGE",
+          "slot_index": 1,
+          "links": [
+            22
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "HTCSeamReport"
+      },
+      "widgets_values": [
+        2,
+        22,
+        6
+      ]
+    },
+    {
+      "id": 37,
+      "type": "PreviewAny",
+      "pos": [
+        3400.0,
+        1100.0
+      ],
+      "size": [
+        400,
+        300
+      ],
+      "flags": {},
+      "order": 108,
+      "mode": 0,
+      "title": "Seam numbers",
+      "inputs": [
+        {
+          "localized_name": "source",
+          "name": "source",
+          "type": "*",
+          "link": 21
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 38,
+      "type": "PreviewImage",
+      "pos": [
+        3400.0,
+        1450.0
+      ],
+      "size": [
+        400,
+        320
+      ],
+      "flags": {},
+      "order": 109,
+      "mode": 0,
+      "title": "Seam chart",
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 22
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "cnr_id": "comfy-core"
+      },
+      "widgets_values": []
+    },
+    {
       "id": 20,
       "type": "MarkdownNote",
       "pos": [
@@ -1100,7 +1213,7 @@
         940
       ],
       "flags": {},
-      "order": 100,
+      "order": 110,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1126,7 +1239,7 @@
         760
       ],
       "flags": {},
-      "order": 101,
+      "order": 111,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1152,7 +1265,7 @@
         640
       ],
       "flags": {},
-      "order": 102,
+      "order": 112,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1178,7 +1291,7 @@
         640
       ],
       "flags": {},
-      "order": 103,
+      "order": 113,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1201,10 +1314,10 @@
       ],
       "size": [
         440,
-        840
+        900
       ],
       "flags": {},
-      "order": 104,
+      "order": 114,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1213,7 +1326,7 @@
         "htc_card": "trouble"
       },
       "widgets_values": [
-        "## When it goes wrong\n\n| symptom | cause | fix |\n|---|---|---|\n| The clip cuts to the reference photo in its last seconds | The beat finished before the frames did | Set `tail`, give the beat enough to do |\n| A stray gesture or line in the closing second | `tail: ongoing` on the final shot | `settle` or `hold` |\n| She keeps talking after you asked for quiet | You named the ending | Pose plus a sound |\n| Dialogue continues into hops that have none written | The hop before ended on speech | Land the line early; non-verbal action into the seam; a sound bed on every quiet hop |\n| A character walks between two rooms and one morphs into the other | `continuous` across a location change | `match_cut` |\n| Silence renders as speech | Silence written as an absence | Name room tone, a fridge, a distant car |\n| Ambience is a five-second hiss | Broadband wording | Narrowband, or one discrete event |\n| Two characters' faces merge | Both declared as the same `subject` | One subject number per person |\n| The face becomes a different person partway through | A hop scheduled with no face plate. `locked` holds a face that is still right; only a plate rebuilds one that is gone, and the drift never self-corrects | Put the face ref on **every** hop |\n| A stylised plan renders photoreal | The node's hop-1 establishing line asserts live action | Name the medium in shot 1's first sentence, or clear the `establish` widget |\n| The film gets darker every hop | Each hop dims across its own frames and hands the darker tail on. Seam correction cannot see it | `tone_compensate=anchor`. Also restate the light as a positive property in every beat |\n| A location introduced mid-plan drifts | It has no place plate of its own | Plate it, on the hop it arrives and every hop after |\n| A prop or garment changes colour or material | Named with no adjective, so each hop's encode is free to invent one | Repeat the adjective in every beat, and state it as a property in `context` |\n| A hard cut ~1.5 s into a hop, mid-scene | The previous hop over-delivered, so this beat instructs what its own live frame already did | One movement per hop; write the next beat so it is true from either ending |\n| A continuous join reads as a cut | Framing change with `camera: hold` | Earn it on the move, or `framing: keep` |\n| The run stops, naming a reference | That row's picture is not in `h3_refs` | Drop the file on the row, or clear its picture to run without it |\n| A reference has no effect on some hop | Its `shots` list leaves that hop out | List every hop the picture should ride |\n| A deliberately dark scene keeps being brightened | `anchor` cannot tell intent from drift | `\"tone\": \"rebase\"` on that scene's first shot |\n| You cannot tell which hop broke | 114 s is a lot to scrub | `contact_sheet=on` -- one row per hop, first and last frame |\n| A pasted plan is rejected as invalid JSON | Escaped double quotes mangled in transit | Single quotes around dialogue |\n\nEvery error message names the shot or the reference it came from. Nothing\nguesses."
+        "## When it goes wrong\n\n| symptom | cause | fix |\n|---|---|---|\n| The clip cuts to the reference photo in its last seconds | The beat finished before the frames did | Set `tail`, give the beat enough to do |\n| A stray gesture or line in the closing second | `tail: ongoing` on the final shot | `settle` or `hold` |\n| She keeps talking after you asked for quiet | You named the ending | Pose plus a sound |\n| Dialogue continues into hops that have none written | The hop before ended on speech | Land the line early; non-verbal action into the seam; a sound bed on every quiet hop |\n| A character walks between two rooms and one morphs into the other | `continuous` across a location change | `match_cut` |\n| Silence renders as speech | Silence written as an absence | Name room tone, a fridge, a distant car |\n| Ambience is a five-second hiss | Broadband wording | Narrowband, or one discrete event |\n| Two characters' faces merge | Both declared as the same `subject` | One subject number per person |\n| The face becomes a different person partway through | A hop scheduled with no face plate. `locked` holds a face that is still right; only a plate rebuilds one that is gone, and the drift never self-corrects | Put the face ref on **every** hop |\n| A stylised plan renders photoreal | The node's hop-1 establishing line asserts live action | Name the medium in shot 1's first sentence, or clear the `establish` widget |\n| The film gets darker every hop | Each hop dims across its own frames and hands the darker tail on. Seam correction cannot see it | `tone_compensate=anchor`. `tone_anchor=0.35` removed ~60% of measured drift; 0.6 removes ~78% and costs ~0.5/255 more seam step. Also restate the light as a positive property in every beat |\n| A location introduced mid-plan drifts | It has no place plate of its own | Plate it, on the hop it arrives and every hop after |\n| A prop or garment changes colour or material | Named with no adjective, so each hop's encode is free to invent one | Repeat the adjective in every beat, and state it as a property in `context` |\n| A hard cut ~1.5 s into a hop, mid-scene | The previous hop over-delivered, so this beat instructs what its own live frame already did | One movement per hop; write the next beat so it is true from either ending |\n| A continuous join reads as a cut | Framing change with `camera: hold` | Earn it on the move, or `framing: keep` |\n| The run stops, naming a reference | That row's picture is not in `h3_refs` | Drop the file on the row, or clear its picture to run without it |\n| A reference has no effect on some hop | Its `shots` list leaves that hop out | List every hop the picture should ride |\n| A deliberately dark scene keeps being brightened | `anchor` cannot tell intent from drift | `\"tone\": \"rebase\"` on that scene's first shot |\n| You cannot tell which hop broke | 114 s is a lot to scrub | `contact_sheet=on` -- one row per hop, first and last frame |\n| A pasted plan is rejected as invalid JSON | Escaped double quotes mangled in transit | Single quotes around dialogue |\n\nEvery error message names the shot or the reference it came from. Nothing\nguesses."
       ],
       "color": "#432",
       "bgcolor": "#653"
@@ -1223,14 +1336,14 @@
       "type": "MarkdownNote",
       "pos": [
         -480,
-        1160
+        1220
       ],
       "size": [
         440,
-        560
+        800
       ],
       "flags": {},
-      "order": 105,
+      "order": 115,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1239,7 +1352,7 @@
         "htc_card": "check"
       },
       "widgets_values": [
-        "## Check before you render\n\nA chain is minutes to hours. These three dials cost seconds and catch almost\neverything.\n\n### `dry_run = on`\n\nCompiles every hop's prompt and stops. No model, no sampler. Read the result\non **`info`**, or as a page on **`contact_sheet`**.\n\nWhat you wrote is not what the encoder gets -- directives, continuation\nscaffolding, the identity lock and the `<Picture N>` citations are all\nassembled at render time. This is the only way to see the real thing first.\nEvery plan warning prints on the way through, too.\n\n### `render_through = N`\n\nStop after N hops. With `cache_hops=on`, 3 then 5 then 8 builds the chain up\nand only ever renders the new hops. The plan is **not** truncated -- shot 4\nstill keys exactly as it will in the full run.\n\n### `quality = draft`\n\n0.3 MP, 6 steps. Enough to read blocking, camera and whether a join lands.\nBoth values are in the cache key, so a draft never overwrites its final.\n\n---\n\nAfterwards: **`contact_sheet = on`** gives one row per hop -- first and last\ndelivered frame, beat, directives, seed, cache hit, tone correction. Wire it\nto a Save Image.\n\nAnd **H3 Seam Report** takes the chain's `images` and measures every join:\ninvisible / marginal / visible, plus the chain's cumulative drift.\n"
+        "## Check before you render\n\nA chain is minutes to hours. These three dials cost seconds and catch almost\neverything.\n\n### `dry_run = on`\n\nCompiles every hop's prompt and stops. No model, no sampler. Read the result\non **`info`**, or as a page on **`contact_sheet`**.\n\nWhat you wrote is not what the encoder gets -- directives, continuation\nscaffolding, the identity lock and the `<Picture N>` citations are all\nassembled at render time. This is the only way to see the real thing first.\nEvery plan warning prints on the way through, too.\n\n### `render_through = N`\n\nStop after N hops. With `cache_hops=on`, 3 then 5 then 8 builds the chain up\nand only ever renders the new hops. The plan is **not** truncated -- shot 4\nstill keys exactly as it will in the full run.\n\n### `quality = draft`\n\n0.3 MP, 6 steps. Enough to read blocking, camera and whether a join lands.\nBoth values are in the cache key, so a draft never overwrites its final.\n\nIt is a **fidelity** lever more than a speed one. Measured: ~42 s/hop against\n~45 s/hop at 7 steps. If you already render at 0.3 MP and 6-8 steps it saves\nalmost nothing -- `dry_run` is the fast button. Draft earns its place when your\nfinal is genuinely heavier, 1.0 MP at 14 steps.\n\n---\n\nAfterwards: **`contact_sheet = on`** gives one row per hop -- first and last\ndelivered frame, beat, directives, seed, cache hit, tone correction. Wire it\nto a Save Image.\n\nAnd **H3 Seam Report** -- already wired on this canvas -- takes the chain's\n`images` and measures every join: invisible / marginal / visible, plus the\nchain's cumulative drift.\n\n**Set `hops` to your shot count.** It derives hop length from frames, hops and\noverlap, so a wrong `hops` does not error -- it returns a plausible length and\nputs every seam at a frame where no join exists.\n\nA single reading includes whatever the scene did across the cut, so it is an\nupper bound. To isolate the seam, A/B two renders from the same seed and cache\nchanging only `tone_compensate`; the hop store writes before tone is applied,\nso the second run re-grades from cache in seconds.\n"
       ],
       "color": "#232",
       "bgcolor": "#353"
@@ -1249,14 +1362,14 @@
       "type": "MarkdownNote",
       "pos": [
         -480,
-        1760
+        2060
       ],
       "size": [
         440,
         620
       ],
       "flags": {},
-      "order": 106,
+      "order": 116,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -1407,6 +1520,30 @@
       35,
       0,
       "IMAGE"
+    ],
+    [
+      20,
+      7,
+      0,
+      36,
+      0,
+      "IMAGE"
+    ],
+    [
+      21,
+      36,
+      0,
+      37,
+      0,
+      "STRING"
+    ],
+    [
+      22,
+      36,
+      1,
+      38,
+      0,
+      "IMAGE"
     ]
   ],
   "groups": [
@@ -1417,7 +1554,7 @@
         -990,
         -465,
         980,
-        2905
+        3200
       ],
       "color": "#3f789e",
       "font_size": 24

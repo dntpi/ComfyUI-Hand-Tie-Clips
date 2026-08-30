@@ -25,7 +25,7 @@ GREEN = ("#232", "#353")      # ComfyUI's green -- card 1 only, so the entry
 GROUP = {
     "id": 1,
     "title": "READ ME -- writing for this node",
-    "bounding": [-990, -465, 980, 2905],
+    "bounding": [-990, -465, 980, 3200],
     "color": "#3f789e",
     "font_size": 24,
 }
@@ -260,14 +260,29 @@ still keys exactly as it will in the full run.
 0.3 MP, 6 steps. Enough to read blocking, camera and whether a join lands.
 Both values are in the cache key, so a draft never overwrites its final.
 
+It is a **fidelity** lever more than a speed one. Measured: ~42 s/hop against
+~45 s/hop at 7 steps. If you already render at 0.3 MP and 6-8 steps it saves
+almost nothing -- `dry_run` is the fast button. Draft earns its place when your
+final is genuinely heavier, 1.0 MP at 14 steps.
+
 ---
 
 Afterwards: **`contact_sheet = on`** gives one row per hop -- first and last
 delivered frame, beat, directives, seed, cache hit, tone correction. Wire it
 to a Save Image.
 
-And **H3 Seam Report** takes the chain's `images` and measures every join:
-invisible / marginal / visible, plus the chain's cumulative drift.
+And **H3 Seam Report** -- already wired on this canvas -- takes the chain's
+`images` and measures every join: invisible / marginal / visible, plus the
+chain's cumulative drift.
+
+**Set `hops` to your shot count.** It derives hop length from frames, hops and
+overlap, so a wrong `hops` does not error -- it returns a plausible length and
+puts every seam at a frame where no join exists.
+
+A single reading includes whatever the scene did across the cut, so it is an
+upper bound. To isolate the seam, A/B two renders from the same seed and cache
+changing only `tone_compensate`; the hop store writes before tone is applied,
+so the second run re-grades from cache in seconds.
 """
 
 TROUBLE = """\
@@ -285,7 +300,7 @@ TROUBLE = """\
 | Two characters' faces merge | Both declared as the same `subject` | One subject number per person |
 | The face becomes a different person partway through | A hop scheduled with no face plate. `locked` holds a face that is still right; only a plate rebuilds one that is gone, and the drift never self-corrects | Put the face ref on **every** hop |
 | A stylised plan renders photoreal | The node's hop-1 establishing line asserts live action | Name the medium in shot 1's first sentence, or clear the `establish` widget |
-| The film gets darker every hop | Each hop dims across its own frames and hands the darker tail on. Seam correction cannot see it | `tone_compensate=anchor`. Also restate the light as a positive property in every beat |
+| The film gets darker every hop | Each hop dims across its own frames and hands the darker tail on. Seam correction cannot see it | `tone_compensate=anchor`. `tone_anchor=0.35` removed ~60% of measured drift; 0.6 removes ~78% and costs ~0.5/255 more seam step. Also restate the light as a positive property in every beat |
 | A location introduced mid-plan drifts | It has no place plate of its own | Plate it, on the hop it arrives and every hop after |
 | A prop or garment changes colour or material | Named with no adjective, so each hop's encode is free to invent one | Repeat the adjective in every beat, and state it as a property in `context` |
 | A hard cut ~1.5 s into a hop, mid-scene | The previous hop over-delivered, so this beat instructs what its own live frame already did | One movement per hop; write the next beat so it is true from either ending |
@@ -430,7 +445,7 @@ CARDS = [
     ("rules", "The rules", [-960, 600], [440, 760], YELLOW, RULES),
     ("refs", "References and @tags", [-960, 1420], [440, 640], YELLOW, REFERENCES),
     ("directives", "Directives", [-480, -400], [440, 640], YELLOW, DIRECTIVES),
-    ("trouble", "When it goes wrong", [-480, 280], [440, 840], YELLOW, TROUBLE),
-    ("check", "Check before you render", [-480, 1160], [440, 560], GREEN, CHECK),
-    ("author", "Let a model write it", [-480, 1760], [440, 620], YELLOW, AUTHOR),
+    ("trouble", "When it goes wrong", [-480, 280], [440, 900], YELLOW, TROUBLE),
+    ("check", "Check before you render", [-480, 1220], [440, 800], GREEN, CHECK),
+    ("author", "Let a model write it", [-480, 2060], [440, 620], YELLOW, AUTHOR),
 ]

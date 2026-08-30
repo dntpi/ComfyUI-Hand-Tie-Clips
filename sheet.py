@@ -100,9 +100,21 @@ def _font(size, bold=False):
     return f
 
 
-def placeholder():
-    """The 1x1 black IMAGE returned when no sheet was built."""
-    return torch.zeros((1, 1, 1, 3), dtype=torch.float32)
+def placeholder(width=16, height=16):
+    """The black IMAGE returned when no sheet was built.
+
+    Even dimensions, minimum 2, are a hard requirement rather than a default.
+    This used to be 1x1, which is inert to `SaveImage` but detonates any video
+    encoder downstream: libx264 in yuv420p subsamples chroma by 2 and cannot
+    open a context whose width or height is odd, so a dry run wired to
+    `SaveVideo` -- exactly what the Starter ships -- died in `avcodec_open2`
+    before a frame was written, with a traceback naming ComfyUI's video node
+    and nothing of ours. A placeholder whose whole job is to keep a graph alive
+    must survive the nodes the graph actually contains.
+    """
+    w = max(2, int(width) & ~1)
+    h = max(2, int(height) & ~1)
+    return torch.zeros((1, h, w, 3), dtype=torch.float32)
 
 
 def _wrap(draw, text, font, max_w):

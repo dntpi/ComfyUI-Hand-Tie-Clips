@@ -1,3 +1,16 @@
+---
+license: mit
+tags:
+  - comfyui
+  - comfyui-nodes
+  - custom-nodes
+  - video
+  - video-generation
+  - text-to-video
+  - image-to-video
+  - minimax-h3
+---
+
 # Hand Tie Clips
 
 One node. Write a shot plan, drop in your reference stills, queue.
@@ -8,6 +21,15 @@ One node. Write a shot plan, drop in your reference stills, queue.
 > are still registered as deprecated aliases, so **every workflow saved before
 > the rename keeps loading** — they are just hidden from node search. Nothing
 > needs migrating.
+
+> **0.4.1 — 2026-08-30.** The 0.4.0 feature set was built without a browser or a
+> GPU and verified offline only. It has now been run in ComfyUI, and two things
+> were broken: the five new dials were never added to the run panel's widget list
+> (they worked, but rendered as raw dials on the node body), and a dry run
+> returned a 1×1 placeholder image that **libx264 cannot encode** — so every dry
+> run wired to `SaveVideo`, which is what the Starter ships, died in
+> `avcodec_open2`. Both fixed. The Starter now also ships the seam report wired.
+> Measurements are in [`docs/DEVLOG.md`](docs/DEVLOG.md) section 21.
 
 **Writing for it:** [PROMPTING.md](PROMPTING.md) is the authoring guide — the rules that come from what this model actually does, not from taste. [prompt_pack/](prompt_pack/) has a copy-paste prompt that gets a language model to write plans for you.
 
@@ -313,9 +335,14 @@ renders the new hops. The plan is not truncated: shot 4 still knows it is shot
 4, keeps its own seed, and keys the same way it will in the full run.
 
 `quality=draft` forces 0.3 MP and 6 steps — enough to read blocking, camera and
-whether a join lands, fast enough to iterate on. Resolution and steps are both
-in the cache key, so a draft never overwrites the final it stands in for; the
-two simply cost two entries.
+whether a join lands. Resolution and steps are both in the cache key, so a draft
+never overwrites the final it stands in for; the two simply cost two entries.
+
+Treat it as a **fidelity** lever rather than a speed one. Measured at ~42 s/hop
+against ~45 s/hop at 7 steps: if you already render at 0.3 MP and 6–8 steps —
+the regime this pack targets — draft saves almost nothing, and `dry_run` is the
+fast button. Draft earns its place when your final is genuinely heavier, 1.0 MP
+at 14 steps.
 
 ## Contact sheet
 
@@ -366,6 +393,25 @@ the anchor onto that hop, which is how a scene that is genuinely darker from
 here on stops being fought for the rest of the film.
 
 Set `tone_anchor` to 0 to get plain frame_shift back.
+
+**Measured** on three hops from one seed and one cache — the hop store writes
+before the tone stage runs, so flipping the mode re-grades the same renders and
+only the correction differs:
+
+| `tone_anchor` | drift across the chain | worst seam |
+|---|---|---|
+| off | 13.4/255 | 1.9/255 |
+| 0.15 | 7.4 | 1.0 |
+| 0.35 | 5.1 | 1.6 |
+| 0.60 | 2.9 | 2.1 |
+
+Monotonic, with no knee: each step of strength removes roughly another 16% of
+the drift and costs about 0.5/255 of seam step. Hop 1 is byte-identical in all
+four. **0.35 is the default and stays.**
+
+One caveat the numbers cannot capture: a scene that brightens *for a reason* —
+walking toward a window — is indistinguishable from drift from the inside, and
+anchor will flatten it. That is what the per-shot `tone` field is for.
 
 ## The MODEL wire
 
@@ -429,12 +475,12 @@ Three shots at 10 s with a 0.9 s overlap is about 28 s of master after the overl
 
 ## Nodes
 
-**H3 Ref2VA Chain** — `images`, `audio`, `info` out. Wire `CreateVideo` + `SaveVideo` as in the example workflow, and `info` to a Preview Text node.
+**H3 Ref2VA Chain** — `images`, `audio`, `info`, `contact_sheet` out. Wire `CreateVideo` + `SaveVideo` as in the example workflow, `info` to a Preview Text node, and `contact_sheet` to a Save Image.
 
 **H3 Chain Preview** — a passthrough panel for the IMAGE (and optionally AUDIO) wire, placed **between the chain and `CreateVideo`**. Images and audio come out unchanged, so adding or removing it changes no pixels. It shows the live sample, the seam (the previous hop's last frame beside this hop's first), a chain-wide progress bar, cache hit / seed / steps per hop, **which pin mechanism each hop actually used** — a latent Motion-Context pin or the AddGuide pixel fallback — and end-of-run A/V drift. Drag the grip to resize the stats panel; double-click it to reset.
 
 **H3 Tone Compensate** — `images` out. Corrects a generated segment's tone against the previous one, estimated on the overlap they share. **For hand-built chains only.** It cannot fix `H3 Ref2VA Chain`'s output: that node joins its hops internally and drops each hop's first `overlap` frames at the seam, so the regenerated copies this needs are already gone by the time images leave it. Use the chain node's `tone_compensate` widget instead. Estimator ported from [rkfg/ComfyUI-MiniMaxH3-ToneCompensate](https://github.com/rkfg/ComfyUI-MiniMaxH3-ToneCompensate) (MIT).
 
-**H3 Seam Report** — `report` (STRING) + `chart` (IMAGE). Wire the chain's `images` into it and it measures the brightness step at every join, says whether each is invisible / marginal / visible, and totals the chain's cumulative drift. A single reading includes whatever the scene did across the cut — the frames either side are ~0.9 s apart in scene time — so treat one number as an upper bound; to isolate the seam itself, render twice from the same seed and cache changing only `tone_compensate`, and compare.
+**H3 Seam Report** — `report` (STRING) + `chart` (IMAGE). **Ships wired on the Starter canvas.** Set `hops` to your shot count: it derives hop length from frames, hops and overlap, so a wrong `hops` does not error — it returns a plausible length and puts every seam where no join exists. Wire the chain's `images` into it and it measures the brightness step at every join, says whether each is invisible / marginal / visible, and totals the chain's cumulative drift. A single reading includes whatever the scene did across the cut — the frames either side are ~0.9 s apart in scene time — so treat one number as an upper bound; to isolate the seam itself, render twice from the same seed and cache changing only `tone_compensate`, and compare.
 
 **H3 Continuity State** — `continuity_state` (STRING) out. **Setting only**: `setting_locked` / `setting_context` / `setting_mutable`. Characters belong in `ref_plan`.

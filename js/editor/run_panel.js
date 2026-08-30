@@ -38,8 +38,19 @@ const GROUPS = [
                   "shift_video", "shift_audio"]],
     ["join & pin", ["hop_script", "pin_to_qwen", "ref_image_size",
                     "audio_pin_frames", "pin_renorm", "pin_noise",
-                    "tone_compensate"]],
+                    // tone_anchor sits next to the mode it modifies: it is
+                    // read only when tone_compensate is `anchor`, and split
+                    // across groups nothing says so. Deliberately NOT
+                    // suppressed in the other modes -- suppression only stops
+                    // the panel drawing a dial, and an undrawn dial reappears
+                    // as a raw native widget, which is worse than an inert one.
+                    "tone_compensate", "tone_anchor"]],
     ["cache", ["cache_hops", "cache_budget_gb"]],
+    // Added 2026-08-30. 0.4.0 shipped these five on the Python side and never
+    // touched js/, so all five fell through to native dials -- the documented
+    // fallback doing its job, not a break. Order is the order you reach for
+    // them: prove the plan compiles, pick the fidelity, stop short, look.
+    ["preview", ["dry_run", "quality", "render_through", "contact_sheet"]],
 ];
 
 /**

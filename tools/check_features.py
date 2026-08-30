@@ -1,4 +1,4 @@
-r"""Offline regression tests for the 2026-08-30 feature set (CLAUDE.md section 20).
+r"""Offline regression tests for the 2026-08-30 feature set (docs/DEVLOG.md section 20).
 
 None of these features could be tested in a browser or against a GPU when they
 were written, so this is the only thing standing between them and a silent
@@ -32,6 +32,16 @@ COMFY = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, COMFY)
 
 FAIL = []
+
+
+def encodable(t):
+    """An IMAGE a video encoder can actually open: 4-D, one or more frames,
+    both dimensions even and >= 2. Checked instead of an exact 1x1 shape
+    because the exact shape is what shipped broken."""
+    sh = tuple(t.shape)
+    return (len(sh) == 4 and sh[0] >= 1 and sh[3] == 3
+            and sh[1] >= 2 and sh[2] >= 2
+            and sh[1] % 2 == 0 and sh[2] % 2 == 0)
 
 
 def ck(name, cond, detail=""):
@@ -175,9 +185,13 @@ def main():
     ck("builds text-only (dry run shape)",
        SH.build([{"hop": 1, "first": None, "last": None, "beat": "x",
                   "directives": {}}], "t").shape[1] > 20)
-    ck("empty -> placeholder", tuple(SH.build([]).shape) == (1, 1, 1, 3))
+    ck("empty -> placeholder", encodable(SH.build([])))
     ck("hostile row -> placeholder, no raise",
-       tuple(SH.build([{"hop": 1, "first": "nope", "beat": "x"}]).shape) == (1, 1, 1, 3))
+       encodable(SH.build([{"hop": 1, "first": "nope", "beat": "x"}])))
+    ck("placeholder floors at 2x2, never 1x1",
+       encodable(SH.placeholder(1, 1)) and encodable(SH.placeholder(0, 0)))
+    ck("placeholder rounds odd dimensions down to even",
+       tuple(SH.placeholder(737, 415).shape) == (1, 414, 736, 3))
     ck("small() shrinks a full frame",
        tuple(SH.small(torch.rand(736, 1280, 3)).shape)[0] == SH.THUMB_H)
 
@@ -231,7 +245,13 @@ def main():
     out, _ = run(tone_compensate="anchor", cache_hops="on")
     ck("dry run returns four values", len(out) == 4)
     ck("dry run never reached the sampler", True, "asserted by the traps above")
-    ck("images is the 1x1 placeholder", tuple(out[0].shape) == (1, 1, 1, 3))
+    # Was `== (1, 1, 1, 3)`. A 1x1 frame is inert to SaveImage and fatal to
+    # every video encoder -- libx264 cannot open a yuv420p context on an odd
+    # dimension -- so the Starter's own SaveVideo died on a dry run. The
+    # contract is now "encodable, at the geometry the plan resolved to".
+    ck("dry-run images is one encodable frame", encodable(out[0]))
+    ck("dry-run images carries the planned geometry",
+       tuple(out[0].shape) == (1, 736, 1280, 3), str(tuple(out[0].shape)))
     ck("audio is silent, not None", out[1]["waveform"].abs().max() == 0)
     ck("info carries every compiled prompt", out[2].count("===== hop") == 8)
     ck("contact sheet is built on a dry run", out[3].shape[1] > 100)

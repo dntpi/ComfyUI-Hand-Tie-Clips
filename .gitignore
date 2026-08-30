@@ -5,3 +5,6 @@ __pycache__/
 # version control here. They are working files, not releases.
 *.bak
 *.bak*
+
+# Session handover doc -- working file, never ships
+HANDOVER.md

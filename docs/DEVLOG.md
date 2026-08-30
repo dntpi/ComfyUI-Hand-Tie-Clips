@@ -1022,3 +1022,163 @@ was required -- CLAUDE.md, PROMPTING.md, README twice, and the on-canvas card in
 the Starter workflow via `tools/notes.py`. All corrected. README's existing
 "No dependencies to install" line, which already listed `av`, is now true rather
 than nearly true.
+
+## 24. The panel learns to write its own plans (2026-08-30, ALPHA)
+
+`prompt_pack/README.md` step 7 has said the same thing since the pack shipped:
+
+> If the node rejects the plan, paste the error straight back into the chat --
+> every message names the shot or reference it came from, and one round trip
+> usually fixes it.
+
+Section 22 measured how often that is needed. Two unrelated model families, one
+prompt, and both wrote a beat citing `@kitchen` while the register declared only
+the people -- so `resolve_tags` raised and the queue stopped. Both were fixed by
+one round trip. An instruction that reliable is a feature that has not been
+written yet, so this section writes it.
+
+**What was built.** `llm.py` talks to any OpenAI-compatible server; `planner.py`
+generates, validates with the node's own checkers, feeds any error back, and
+tries again up to three times; `routes.py` gains `GET/POST /h3_ref_chain/llm`
+and `POST /h3_ref_chain/plan`; `js/editor/writer_bar.js` is a collapsed WRITE
+section at the top of the panel. About 900 lines including the tests.
+
+**What was deliberately not built.** The prior art is the author's other pack,
+`PromptMasterLD` -- 52k lines, an LTX shot writer with 47 accents and a dial
+system, driving llama-server through `backend.py`. Three of its decisions were
+copied without re-litigating them, because its comments record why: the LLM
+never runs during a graph execution, `INPUT_TYPES` makes no network call (a GGUF
+scan once fed ComfyUI's *Missing Models* panel and offered to download weights
+for users touching no local file), and there are no API keys anywhere.
+
+Its process management was not copied. `cpld_conn.json` carries `llama_exe`, and
+`backend.py:353` shells out to `lms unload --all`. That pack has no
+`pyproject.toml` and is never scanned; this one was Flagged under
+`python_command_injection_risk` for 0.4.1-0.4.3 and only cleared it in section
+23 by migrating `store.py` off `subprocess.Popen`. Same code, different
+consequence. Every rung of the unload ladder here is HTTP, which leaves four of
+its five. Its `urllib.request` was not copied either -- these calls are awaited
+inside aiohttp handlers, where a blocking read freezes the whole ComfyUI UI for
+the length of a generation.
+
+**The part that matters is the loop, and the part that matters about the loop is
+that it was tested.** `write_plan()` takes its completion function as an
+argument, so `tools/check_planner.py` drives it with a scripted model: attempt 1
+returns the real A/B fault, attempt 2 returns a clean plan, and the test asserts
+that the node's own error text reached the model, that the rejected reply stayed
+in the conversation, and that it converged in exactly two attempts. It also
+asserts the loop **gives up rather than returning an unvalidated plan**. No
+server, no GPU, 25 assertions.
+
+That test immediately earned itself. `validate()` first passed an empty set as
+`wired_slots`, so no ref was ever *active* on any hop and `resolve_tags`
+rejected `@kitchen` -- a tag that was declared correctly. Every good plan looked
+broken, and the failure was indistinguishable from the bug the loop exists to
+fix. `wired` is now derived from the file list, which is what the node does with
+files it actually decoded.
+
+**Three LM Studio facts found by running it.** First, `/v1/models` lists what is
+*installed*, not what is loaded: the first live call picked a model straight off
+that list and came back `HTTP 400: Model unloaded by user or API request`. The
+dropdown now reads `/api/v0/models` for a `state` field, marks loaded models
+`●`, sorts them first, and the 400 is translated into a sentence naming the fix.
+Second, `ttl` is still not sent, for the reason recorded in `backend.py:791` --
+handing lifetime to LM Studio unloaded a 26B model thirty seconds after the
+prompt finished, while the panel still said the writer was warm.
+
+Third, and this one nearly shipped as a wrong diagnosis. `max_tokens` started at
+4096 and every live run came back with an empty `content`, so the code announced
+*"this model answers with reasoning only and ignores both thinking switches"*.
+It was wrong. Measured against the shipped prompt:
+
+| max_tokens | finish_reason | completion | of which reasoning | content |
+|---|---|---|---|---|
+| 4096 | `length` | 4096 | 4093 | **0 chars** |
+| 12288 | `stop` | 8868 | 8010 | 2958 chars |
+
+The model was not refusing to answer, it was still thinking when the budget ran
+out. A short prompt to the same model returns `content` and `reasoning_content`
+together, which is what proved it. `MAX_TOKENS` is now 12288, and an empty
+`content` is split three ways: `finish_reason == "length"` names the truncation
+and the token counts, a clean finish with reasoning still triggers the
+`/no_think` retry, and neither is reported as the other.
+
+**The A/B, re-run through the loop.** Section 22 graded these two models by
+hand and gave gemma the win on 2 FAIL against qwen's 4. Through the repair loop
+that verdict inverts, and then stops mattering -- 3 trials each, same brief,
+same 31-file reference folder:
+
+| model | converged | attempts | wall clock |
+|---|---|---|---|
+| gemma4-26b-a4b | 3/3 | always 2 | 58-97 s |
+| qwen3.8-27b | 3/3 | always 1 | 105-130 s |
+
+qwen writes an acceptable plan first time and is slower doing it; gemma is
+roughly twice as fast per attempt and reliably spends the saving on one repair.
+Both land in about the same place. **The loop is what makes the model choice
+uninteresting**, which is the strongest argument for it -- section 22's careful
+grading was work that no longer has to be done by a person.
+
+gemma's repair is not one fixed mistake: across runs it put `join` at shot level
+instead of inside `directives`, and invented `hallway_window.jpg` against a
+folder whose real names are `jFJ7P.jpg` and `h3_stress_kitchen_1.jpg`. The
+second is worth naming -- the invented-filename error used to print all 31
+available names inside every retry turn, burying the one sentence that said what
+to do. It now shows twelve and a count.
+
+**Known limits, all documented rather than discovered.** A headless or
+API-submitted run gets no plan writer, which is the price of keeping the model
+off the execution path. Structured output degrades to plain-text extraction on
+llama.cpp builds that reject `response_format`. And the loop only catches what
+the parsers can decide -- a beat that is merely bad still passes, so the WARN
+tier is shown and never auto-retried.
+
+## 25. The seam report had the sign backwards (2026-08-30)
+
+Two 2-hop renders of the same kitchen scene at 736x416, 7 steps, seed fixed:
+one at 5 s (124f) with `tone_compensate=frame_shift`, one at 8 s (192f) with
+`anchor`. The seam reports called them `invisible` and `marginal`. Both were
+wrong, and not in the direction the docs already warned about.
+
+| run | seam report | true per-hop drift (hop cache) |
+| --- | --- | --- |
+| 5 s, frame_shift | -0.31/255 `invisible` | **+2.17/255** |
+| 8 s, anchor | -1.05/255 `marginal` | **+2.63/255** |
+
+`CLAUDE.md`'s tone notes record that seam readings come in about a third low,
+because the frames either side of a cut are ~0.9 s apart in scene time and the
+content change partly cancels the drift. On this scene it does not partly cancel it --
+it **reverses** it. The beat has the cook set a knife down and turn toward a
+window, so the scene darkens across the cut by more than the generator's
++2.6/255 brightening, and the seam lands negative. `invisible` was sitting on
+top of the largest per-hop drift measured on this scene.
+
+So the existing rule is not conservative enough. "Never use a single seam
+reading to decide" is right; the reason is stronger than stated, because the
+error is not bounded in magnitude *or* direction. `tone_probe` against the hop
+cache stays the only honest instrument, and its standing caveat applies --
+`temp/` is wiped on ComfyUI start, so probe before restarting.
+
+**`anchor` behaved exactly as specified, on the scene type that had never
+tested it.** Shot 1 was `camera=hold` -- the case section 21 named as "the run that would
+justify moving off 0.35", open ever since. Logged: `anchor r-0.0050 g-0.0047
+b-0.0053 (gap -3.6/255, ramp 48f)`. The arithmetic closes -- 3.6/255 x 0.35 =
+1.26/255 = 0.0049 against the logged 0.0050 -- so the strength is doing what it
+says and the held camera did not perturb it.
+
+**Nothing here argues for moving off 0.35, and a 2-hop chain never could.**
+Both drift figures sit in family with the measurement behind the linear model in
+`CLAUDE.md` (~5/255 by hop 3, ~10/255 by hop 5). At two hops there is not
+enough cumulative drift for the strength to matter; a 35% pull on a 3.6/255 gap
+is ample. The test that could decide it is **4-5 hops**, where cumulative
+reaches 8-13/255 and an under-strength anchor would visibly fail to keep up.
+
+One thing that makes that test cheap: `tone_compensate` is in neither
+`chain_salt` nor the per-hop key. Re-queueing the same graph with a different
+mode cache-hits every hop -- no DiT load, no resample -- and yields a master
+differing *only* in the correction. That is the same-seed-same-cache condition
+`CLAUDE.md` demands, and it costs about 18 s rather than a full render.
+
+The probe itself needed fixing before any of this could be read: with both runs
+in the cache it differenced across renders and reported `-30.37/255`. See the
+`tone_probe` commit.

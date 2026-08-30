@@ -50,6 +50,18 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > also has its tooltips back — it read them from `widget.options`, where this
 > frontend does not keep them. Section 22 of the devlog has the A/B.
 
+> **0.4.5 — 2026-08-30.** The hop cache no longer needs `ffmpeg` on PATH. It
+> used to shell out to an ffmpeg binary to write its lossless FFV1, so the
+> feature that makes a tone A/B cost 14 seconds instead of 164 raised a
+> `RuntimeError` for anyone who did not happen to have ffmpeg installed —
+> which ComfyUI itself never requires. It now encodes in process through PyAV,
+> which ComfyUI already depends on. **The format is unchanged** (ffv1 /
+> `rgb48le` / level 3), verified bit-exact in both directions, so caches
+> written by the old path still read and a resumed chain still matches an
+> uninterrupted one. This also clears the Comfy registry's security scan,
+> which flags every `subprocess` call in a custom node regardless of how it is
+> invoked. Section 23 of the devlog.
+
 **Writing for it:** [PROMPTING.md](PROMPTING.md) is the authoring guide — the rules that come from what this model actually does, not from taste. [prompt_pack/](prompt_pack/) has a copy-paste prompt that gets a language model to write plans for you.
 
 Each hop is native **MiniMax H3 Reference-to-Video**. Hops after the first are guided by the **previous hop's sampler AV latent** via `ComfyUI-H3-Motion-Context` when that pack is installed (22 picture frames + 24-frame end-aligned audio). Stock `MiniMaxH3AddGuide` is the fallback when Motion-Context is missing or the previous hop was a pixel cache hit. Voice stays as a reference every hop. Identity stills ride hop 1; later hops use the pin for wardrobe and room unless a ref lists those hops in `shots`. A 5 s hop drops the airlock on a continuous join — validate seams at 8 s or 15 s.
@@ -133,7 +145,6 @@ The two example graphs are in `workflows/` inside the pack folder -- open them w
 - ComfyUI new enough to include **Add Guide for MiniMax H3** (`MiniMaxH3AddGuide`)
 - A **ref2va** (or hybrid ref2va) checkpoint — fl2va has no reference rows
 - Video VAE + audio VAE + MiniMax text encoder
-- `ffmpeg` on PATH, if you turn `cache_hops` on
 - **Optional but recommended:** [ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context). Hops after the first are guided by the previous hop's sampler AV latent through it. Without it the node falls back to stock `MiniMaxH3AddGuide`, which still works and still chains -- it is a different join, so a seam you are comparing against someone else's render may not be the same code path. The node detects it at runtime and prints which one it took.
 
 The two shipped workflows wire the **turbo stack** this node is actually run with, because an example without it is not the graph anyone uses:
@@ -335,7 +346,7 @@ The key **chains** — each hop's key includes the previous hop's — because ho
 
 That last one is worth knowing about. The node cannot read the settings on your LoRA and attention nodes, so instead it fingerprints what they *did* to the model — which weight keys were patched, at what strengths, and the attention overrides. Change a LoRA strength and the cache correctly invalidates. Two different LoRAs touching exactly the same keys at exactly the same strengths would look identical to it; that is the one gap.
 
-Set `locked: true` on a shot to pin it to its last render regardless. Needs `ffmpeg` on PATH.
+Set `locked: true` on a shot to pin it to its last render regardless.
 
 ## Reading a plan before you render it
 

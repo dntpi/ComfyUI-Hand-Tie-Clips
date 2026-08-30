@@ -519,8 +519,9 @@ Eight hops in, hop 6 is wrong and the other seven are fine. `cache_hops` is how
 you fix 6 without re-rendering 1 through 5.
 
 Turn it **on before the first run of a plan** -- it is `off` by default, and a
-hop that was never cached cannot be reused. It needs `ffmpeg` on PATH; without
-it the node raises rather than quietly carrying on without a cache.
+hop that was never cached cannot be reused. It needs nothing installed --
+the lossless FFV1 encode runs in process through PyAV, which ComfyUI already
+ships.
 
 ### Editing a hop invalidates that hop and everything after it
 

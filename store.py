@@ -24,10 +24,9 @@ and concatenates once at the end.
 import hashlib
 import json
 import os
-import shutil
-import subprocess
 import time
 
+import av
 import numpy as np
 import torch
 
@@ -38,15 +37,28 @@ AUDIO_EXT = ".npy"
 META_EXT = ".json"
 LATENT_EXT = ".latent.pt"
 
-
-def _ffmpeg():
-    exe = shutil.which("ffmpeg")
-    if not exe:
-        raise RuntimeError(
-            f"{TAG}: ffmpeg is not on PATH. The hop store needs it to write "
-            f"lossless FFV1. Install ffmpeg or set cache to off."
-        )
-    return exe
+# FFV1 through PyAV, in process. This used to shell out to an `ffmpeg` binary
+# on PATH, which cost two things:
+#
+#   1. The cache -- the feature that makes a tone A/B 14 seconds instead of
+#      164 -- hard-failed with a RuntimeError for anyone who did not happen to
+#      have ffmpeg installed. ComfyUI itself never needs it on PATH, so that is
+#      most users, and the failure landed on the pack's fastest path.
+#   2. The Comfy registry's YARA scan flags every `subprocess` call in a custom
+#      node (`python_command_injection_risk`, "detects ALL os.system and
+#      subprocess usage") with no taint analysis, so a static argument list with
+#      shell=False still flagged all three published versions.
+#
+# `av` is a hard dependency of ComfyUI itself -- SaveVideo and CreateVideo are
+# built on it -- so this trades an optional external binary for a library that
+# is already guaranteed present.
+#
+# The format is deliberately UNCHANGED: ffv1 / rgb48le / level 3 / coder 1 /
+# context 1, in matroska. Verified bit-exact in both directions, so caches
+# written by the old path stay readable and a resumed chain still matches an
+# uninterrupted one.
+FFV1_OPTIONS = {"level": "3", "coder": "1", "context": "1"}
+PIX_FMT = "rgb48le"
 
 
 def tensor_digest(t):
@@ -115,32 +127,35 @@ class HopStore:
         past hop 1.
         """
         n, hgt, wid = int(imgs.shape[0]), int(imgs.shape[1]), int(imgs.shape[2])
+        # The .part suffix defeats extension-based format detection, so the
+        # muxer is named explicitly. Writing to .part and renaming on success
+        # keeps a killed render from leaving a half-file that `has()` trusts.
         vid_tmp = self._p(key, VIDEO_EXT + ".part")
-        cmd = [
-            _ffmpeg(), "-y", "-v", "error",
-            "-f", "rawvideo", "-pix_fmt", "rgb48le",
-            "-s", f"{wid}x{hgt}", "-r", str(self.fps),
-            "-i", "-",
-            "-c:v", "ffv1", "-level", "3", "-coder", "1", "-context", "1",
-            "-pix_fmt", "rgb48le",
-            # The .part suffix defeats extension-based format detection, so the
-            # muxer is named explicitly. Writing to .part and renaming on success
-            # keeps a killed render from leaving a half-file that `has()` trusts.
-            "-f", "matroska", vid_tmp,
-        ]
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
-            # Frame at a time: never materialise a second full-size copy.
-            for i in range(n):
-                f = (imgs[i].clamp(0, 1) * 65535.0).round().to(torch.int32)
-                proc.stdin.write(f.numpy().astype("<u2").tobytes())
-            proc.stdin.close()
-        except BrokenPipeError:
-            pass
-        err = proc.stderr.read().decode(errors="replace")
-        if proc.wait() != 0:
-            raise RuntimeError(f"{TAG}: FFV1 encode failed for hop {key}: {err.strip()}")
+            container = av.open(vid_tmp, mode="w", format="matroska")
+            try:
+                stream = container.add_stream("ffv1", rate=self.fps)
+                stream.width, stream.height = wid, hgt
+                stream.pix_fmt = PIX_FMT
+                stream.options = dict(FFV1_OPTIONS)
+                # Frame at a time: never materialise a second full-size copy.
+                for i in range(n):
+                    f = (imgs[i].clamp(0, 1) * 65535.0).round().to(torch.int32)
+                    frame = av.VideoFrame.from_ndarray(
+                        f.numpy().astype("<u2"), format=PIX_FMT)
+                    for packet in stream.encode(frame):
+                        container.mux(packet)
+                for packet in stream.encode():          # flush the encoder
+                    container.mux(packet)
+            finally:
+                container.close()
+        except Exception as e:                          # noqa: BLE001
+            # Leave no .part behind for the next run to trip over.
+            try:
+                os.remove(vid_tmp)
+            except OSError:
+                pass
+            raise RuntimeError(f"{TAG}: FFV1 encode failed for hop {key}: {e}") from e
         os.replace(vid_tmp, self._p(key, VIDEO_EXT))
 
         np.save(self._p(key, AUDIO_EXT),
@@ -203,25 +218,31 @@ class HopStore:
         with open(self._p(key, META_EXT), encoding="utf-8") as fh:
             info = json.load(fh)
         n, hgt, wid = int(info["frames"]), int(info["height"]), int(info["width"])
-        cmd = [
-            _ffmpeg(), "-v", "error", "-i", self._p(key, VIDEO_EXT),
-            "-f", "rawvideo", "-pix_fmt", "rgb48le", "-",
-        ]
-        want = n * hgt * wid * 3 * 2
-        # communicate(), not sequential reads: draining stdout to EOF while
-        # stderr is an unread pipe deadlocks the moment ffmpeg emits more than
-        # the pipe buffer on stderr -- which is exactly what a corrupt FFV1
-        # does, i.e. the one case where the error actually matters.
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        raw, err_raw = proc.communicate()
-        err = err_raw.decode(errors="replace")
-        if proc.returncode != 0:
-            raise RuntimeError(f"{TAG}: FFV1 decode failed for hop {key}: {err.strip()}")
-        if len(raw) != want:
+        # Decoded straight into one preallocated array rather than a list of
+        # frames: the meta file already states the geometry, so the destination
+        # is known up front and there is never a second full-size copy to stack.
+        arr = np.empty((n, hgt, wid, 3), dtype=np.uint16)
+        seen = 0
+        try:
+            container = av.open(self._p(key, VIDEO_EXT))
+            try:
+                for frame in container.decode(container.streams.video[0]):
+                    if seen >= n:                      # more frames than meta
+                        seen += 1
+                        break
+                    arr[seen] = frame.to_ndarray(format=PIX_FMT)
+                    seen += 1
+            finally:
+                container.close()
+        except Exception as e:                         # noqa: BLE001
+            raise RuntimeError(f"{TAG}: FFV1 decode failed for hop {key}: {e}") from e
+        if seen != n:
+            # Same contract as the old byte-count check: a truncated or
+            # over-long cache entry is a hard error, not a short clip, because
+            # a hop silently missing its tail would poison every hop after it.
             raise RuntimeError(
-                f"{TAG}: cached hop {key} is {len(raw)} bytes, expected {want}. "
+                f"{TAG}: cached hop {key} decoded {seen} frame(s), expected {n}. "
                 f"Delete the cache entry and re-render.")
-        arr = np.frombuffer(raw, dtype="<u2").reshape(n, hgt, wid, 3)
         imgs = torch.from_numpy(arr.astype(np.float32) / 65535.0)
         wav = torch.from_numpy(np.load(self._p(key, AUDIO_EXT)))
         os.utime(self._p(key, VIDEO_EXT), None)  # LRU touch

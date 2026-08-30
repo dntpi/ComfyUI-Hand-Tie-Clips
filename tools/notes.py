@@ -350,7 +350,7 @@ write negations. Skim the beats before queueing.
 ## Fixing one hop without re-rendering the rest
 
 Set **`cache_hops` to `on` before your first run.** It is off by default, and a
-hop that was never cached cannot be reused. Needs `ffmpeg` on PATH.
+hop that was never cached cannot be reused. Nothing to install.
 
 The cache key **chains**, so editing shot 5 of 8 re-renders 5 to 8 and reuses 1
 to 4 off disk. Hop 6 was rendered *from* hop 5, so it has to. **Edit the

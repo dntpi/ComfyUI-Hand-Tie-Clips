@@ -969,3 +969,56 @@ trip and says the two spellings are one string; `refs.py` rejects an `@tag` in
 `name`, `locked` or `context`. Not fixed, because it is a brief-writing lesson
 rather than a bug: ending a chain in a location no plate describes earns the
 place-handoff warning, and that was the brief's fault, not either model's.
+
+## 23. The hop cache stops shelling out (2026-08-30)
+
+The Comfy registry flagged all three published versions. The reason is not in
+the web UI and `status_detail` on the node is empty; it is behind
+`https://api.comfy.org/versions?nodeId=<id>&include_status_reason=true`, which
+returns the actual findings:
+
+    scanner      yara_scan
+    issue_type   python_command_injection_risk
+    file_path    store.py   lines 131 and 215
+    description  "Detects all os.system and subprocess usage"
+    severity     info
+    recommendation  null
+    admin_tags   any-code-execute
+
+Two findings, both the `subprocess.Popen` calls that ran `ffmpeg` for the FFV1
+hop cache. The rule does no taint analysis, so a static argument list built from
+`shutil.which` and run with `shell=False` matches exactly as hard as a shell
+injection would. Its 95% confidence is confidence that the call *is* a
+subprocess call, not that it is exploitable.
+
+Appealing looked like the wrong move. `plaguekind-nodes` -- 22.5k downloads --
+has 1.3.8 through 1.4.0 flagged with the same two findings and 1.4.1 onward
+`Active` with `status_reason` = **"Passed automated checks"**, the string the
+scanner writes when it finds nothing. That is a code change, not an admin
+override.
+
+**But the registry is the weakest reason to have done this.** `_ffmpeg()` raised
+if no ffmpeg binary was on PATH, and ComfyUI never requires one -- so the
+feature that makes a tone A/B cost 14 s instead of 164 s hard-failed for a large
+share of users, on the pack's fastest path, at the exact moment a CivitAI post
+would send new people at it.
+
+PyAV is a hard dependency of ComfyUI itself (SaveVideo and CreateVideo are built
+on it) and its ffv1 encoder lists `rgb48le` among 61 pixel formats, so the
+format did not have to change: ffv1 / rgb48le / level 3 / coder 1 / context 1,
+in matroska. Verified before writing any of it, and again through the real
+`HopStore`:
+
+- PyAV encode -> PyAV decode: **bit exact**, including 0, 65535 and midpoints
+- **ffmpeg encode -> PyAV decode: bit exact** -- existing caches on disk still
+  read, which is the part that protects users
+- file sizes within 44 bytes of each other (145,780 vs 145,824)
+- a frame-count mismatch still raises rather than returning a short clip
+
+The decode path also got slightly better on the way: it decodes into one
+preallocated `(n, h, w, 3)` array instead of building a list of frames and
+stacking, so there is no second full-size copy. Five documents claimed ffmpeg
+was required -- CLAUDE.md, PROMPTING.md, README twice, and the on-canvas card in
+the Starter workflow via `tools/notes.py`. All corrected. README's existing
+"No dependencies to install" line, which already listed `av`, is now true rather
+than nearly true.

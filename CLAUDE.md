@@ -93,7 +93,7 @@ Fixes two real bugs:
 
 ### 4. Hop store (`store.py`)
 
-Lossless FFV1 (`rgb48le`) video + a float32 `.npy` waveform + a `.latent.pt` sidecar per hop under ComfyUI's temp dir, enabled by `cache_hops`, LRU-evicted above `cache_budget_gb`. **Needs `ffmpeg` on PATH** or it raises.
+Lossless FFV1 (`rgb48le`) video + a float32 `.npy` waveform + a `.latent.pt` sidecar per hop under ComfyUI's temp dir, enabled by `cache_hops`, LRU-evicted above `cache_budget_gb`. Encoded in process with PyAV, which ComfyUI already depends on -- no `ffmpeg` binary on PATH is needed, and nothing here shells out.
 
 **The latent sidecar is what makes the cache useful past hop 1** (added 2026-08-27). It stores this hop's sampler output so a hit can seed the *next* hop's Motion-Context pin. Without it, a hit left `prev_sampled` empty, the next hop predicted the AddGuide fallback, and because the mechanism is in the per-hop key that key no longer matched what was on disk -- so **nothing past hop 1 could ever hit, and the hop after a hit was joined by the weaker mechanism.** `cache_hops=on` was measurably worse than off. Verified in-browser: hop 1 hit, hop 2 logged `previous hop has no sampler latent (cache hit); AddGuide pixel pin`, hops 2-3 re-rendered.
 

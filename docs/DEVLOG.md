@@ -1211,3 +1211,78 @@ The 3-hop chain's luma rose 4.7%, so whole-frame mid read `x1.084` when the
 texture part was `n1.035`. Both columns are printed now. The head box was
 unaffected either way -- the brightening was in the background -- which is
 exactly the kind of thing a single whole-frame number cannot tell you.
+
+## 27. The band lever, and why the old one could never have worked (2026-09-01)
+
+Built after §26's correction, on the finding that the ratchet is a step at the
+join: +4.2% mid-band, twice, identically, on a 3-hop chain. Two identical steps
+is already a model -- constant multiplicative step per join, geometric in hop
+count. It predicts hop 3 at 1.042^2 = 1.086 against 1.079 measured. So the
+shape did not need a 4-5 hop run to pin down, which matters: those runs are
+expensive enough that the user does not do them.
+
+`pin_renorm` is now `["off", "sigma", "band"]`. `"on"` maps to `"sigma"`, so
+pre-0.5 workflows keep their behaviour, and the combo keeps its widget slot --
+adding options is safe, adding widgets is not.
+
+### The old lever is a no-op, provably
+
+The statistic that drifts is the high-band **fraction**, hi_sigma / sigma. A
+fraction is invariant under uniform rescaling, and a uniform rescale is the
+entirety of what `sigma` mode does. Driven end to end through
+`_condition_pin_latent` with a 12.74% band drift planted in hop 2:
+
+    mode=off     ratio after 0.3526 (anchor 0.3128)  err +12.74%
+    mode=sigma   ratio after 0.3526 (anchor 0.3128)  err +12.74%   x0.9651 applied
+    mode=band    ratio after 0.3127 (anchor 0.3128)  err  -0.04%   hi x0.8339
+
+`sigma` applied a real scale factor and moved the drift by nothing at all. This
+is stronger than §26's "corrects the wrong way": there is no gain, no strength
+knob and no anchor choice that makes a scale-invariant statistic respond to a
+scale. The lever was mis-specified, not mis-tuned. It is kept only for the
+workflows that saved it.
+
+### The fixed point that nearly shipped
+
+`match_band` first computed `k = target * sigma / hi_sigma`. That is wrong in a
+way that hides: scaling the high band changes the sigma it is a fraction of, so
+the target moves while you apply it. It landed at 0.3331 against a 0.3168
+target -- 5% short, in the right direction, which is the worst possible
+signature because it looks like it works.
+
+Now it solves the orthogonal fixed point in closed form,
+`k = r*L / (H*sqrt(1-r^2))`, then refines two or three passes against the
+statistic as actually measured, because a difference of Gaussians is not an
+exact projection. Lands at 0.3167 against 0.3168.
+
+### The fixture was also wrong, and would have hidden it
+
+The first test used `torch.randn` for the latent. White noise has a high-band
+fraction of **0.966** -- pinned against its ceiling of 1.0, where lifting the
+high band moves the statistic by 0.6% and the clamp does all the "correcting".
+Every assertion about the lever would have been measuring the clamp. Real
+latents sit at 0.3643, so the fixture is now built to land near there and an
+assertion holds it in that regime.
+
+The safety property is asserted as "the entire change lies along the high band"
+(cosine with `hi` > 0.99), not as "the low band is unchanged" -- re-splitting
+the result does not hand back the same `lo`, because the split is not a
+projection. The first version asserted the false one and failed correctly.
+
+### One cache key narrowed
+
+`pin_cond` was in every hop's key including hop 1, which has no pin --
+`_pin_mech_for` returns `"none"` at index 0 and the conditioning branch is
+`elif i > 0`. So flipping a lever discarded a byte-identical cached hop 1 and
+re-rendered it. That is a third of the cost of every lever A/B, on the one hop
+that provably could not have changed. Now keyed only from hop 2.
+
+### Still unknown
+
+The latent's band fraction moved 1.6% across the chain while the picture's mid
+band moved 8%. The decode is nonlinear so they are not expected to be
+proportional, but a full match to hop 1's fraction may therefore under-correct
+the picture. That is one A/B to find out, and it is readable off a 3-hop run:
+`texture_probe` reports each join separately, so two joins is two data points.
+If `band` shrinks the +4.2% step but does not close it, the next move is a gain
+above 1.0, fitted -- not guessed.

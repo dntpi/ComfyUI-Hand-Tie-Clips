@@ -628,77 +628,115 @@ def _rebuild_latent_samples(x, parts):
     return _latents.rebuild(x, parts)
 
 
-def _condition_pin_latent(lat, anchor_std, renorm=False, noise=0.0, seed=0):
+def _condition_pin_latent(lat, anchor, mode="off", noise=0.0, seed=0):
     """Anti-ratchet preprocessing for the latent handed to Motion-Context.
 
     MiniMaxH3MotionContext.apply() takes `context_latent` as-is and exposes no
-    hook, so both levers have to be applied to the latent before it goes in.
+    hook, so every lever has to be applied to the latent before it goes in.
 
-    `renorm` rescales this pin so its standard deviation matches hop 2's. The
-    pin's own sigma climbs hop over hop, and because that inflated pin is what
-    conditions the next hop the growth compounds upstream of anything a master
-    pass can reach. A scalar rescale moves no structure, so it cannot blur
-    detail. `noise` mixes in a seeded perturbation, which attacks the same
-    ratchet from the other side; measured gains reverse above 0.10, hence the
-    widget cap.
+    Two rescale modes, and the difference between them is the whole point.
+
+    `sigma` rescales the pin so its standard deviation matches the anchor hop's.
+    This is the original lever and **it is measurably the wrong statistic.** On
+    a 3-hop chain the pin's total sigma FELL (1.0414 -> 1.0289) while the
+    picture's mid-band energy climbed 8% and its high-band fraction rose 1.6%.
+    Matching sigma there scales the whole latent UP by 1.2%, lifting a high
+    band that was already too hot. Kept because it is what shipped, and old
+    workflows say "on".
+
+    `band` splits each spatial component into low and high and rescales only the
+    high part, so the *ratio* between them returns to the anchor hop's. That
+    ratio is what the ratchet actually moves. Still a scalar per band, so it
+    moves no structure and cannot blur or invent detail -- the property that
+    made `sigma` safe to run blind, kept.
+
+    `noise` mixes in a seeded perturbation, attacking the same ratchet from the
+    other side; measured gains reverse above 0.10, hence the widget cap.
 
     **Per component, not per latent** (fixed 2026-08-27). Video and audio are
-    two tensors in one NestedTensor and their sigmas drift independently, so
+    two tensors in one NestedTensor and their statistics drift independently, so
     each carries its own anchor. Before this, `.std()` raised on the nested
-    object and both levers were dead -- the failure announced itself once per
-    hop as `pin conditioning skipped` and was easy to read as routine noise.
-    A single global scale would also have been wrong on its own terms, letting
-    the much larger video component dictate the audio's correction.
+    object and every lever was dead -- announced once per hop as `pin
+    conditioning skipped`, which read as routine noise.
 
-    Returns `(latent, new_anchor_std)` where the anchor is a list, one sigma
-    per component -- hop 2 establishes what hops 3+ are matched against. Both
-    levers default off, in which case the latent is returned untouched.
+    Returns `(latent, anchor)` where `anchor` is a list, one dict per component
+    -- the first pinned hop establishes what later hops are matched against.
+    Every lever defaults off, in which case the latent is returned untouched.
     """
     if not isinstance(lat, dict) or "samples" not in lat:
-        return lat, anchor_std
+        return lat, anchor
     x = lat["samples"]
     parts = _latent_parts(x)
     if parts is None:
         print(f"[{TAG}] pin conditioning skipped: unrecognised latent "
               f"({type(x).__name__})", flush=True)
-        return lat, anchor_std
+        return lat, anchor
+    mode = str(mode)
+    if mode == "on":                       # pre-2026-09-01 workflows
+        mode = "sigma"
     try:
-        cur = [float(t.float().std()) for t in parts]
+        cur = []
+        for t in parts:
+            sig = float(t.float().std())
+            cur.append({"sigma": sig, "ratio": _latents.band_ratio(t)})
     except Exception as e:  # noqa: BLE001
         print(f"[{TAG}] pin conditioning skipped ({e!r})", flush=True)
-        return lat, anchor_std
-    if not all(c == c and c for c in cur):  # zero or NaN in any stream
-        return lat, anchor_std
-    if anchor_std is None:
-        anchor_std = cur
-    if len(anchor_std) != len(cur):
+        return lat, anchor
+    if not all(c["sigma"] == c["sigma"] and c["sigma"] for c in cur):
+        return lat, anchor                 # zero or NaN in any stream
+    if anchor is None:
+        anchor = cur
+    if len(anchor) != len(cur):
         # Stream count changed mid-chain. Nothing sensible to match against.
         print(f"[{TAG}] pin conditioning skipped: latent has {len(cur)} "
-              f"component(s), anchor has {len(anchor_std)}", flush=True)
-        return lat, anchor_std
-    if not renorm and noise <= 0.0:
-        return lat, anchor_std
+              f"component(s), anchor has {len(anchor)}", flush=True)
+        return lat, anchor
+
+    # Always report the drift, even with every lever off. This is the number
+    # that says whether a lever is needed and whether one worked, and it costs
+    # nothing to read -- the alternative is inferring it from the master after
+    # a decode, which is how the wrong statistic went unnoticed for a release.
+    for i, (c, a) in enumerate(zip(cur, anchor)):
+        if c["ratio"] is not None and a["ratio"]:
+            print(f"[{TAG}] pin drift[{i}]: sigma {c['sigma']:.4f} "
+                  f"(x{c['sigma'] / a['sigma']:.4f} vs anchor)  "
+                  f"high-band fraction {c['ratio']:.4f} "
+                  f"(x{c['ratio'] / a['ratio']:.4f})", flush=True)
+
+    if mode not in ("sigma", "band") and noise <= 0.0:
+        return lat, anchor
+
     out_parts, notes = [], []
-    for idx, (t, c, a) in enumerate(zip(parts, cur, anchor_std)):
+    for idx, (t, c, a) in enumerate(zip(parts, cur, anchor)):
         o = t
-        if renorm:
-            scale = a / c
+        if mode == "sigma":
+            scale = a["sigma"] / c["sigma"]
             o = o * scale
-            notes.append(f"renorm[{idx}] x{scale:.4f} (sigma {c:.4f} -> {a:.4f})")
+            notes.append(f"sigma[{idx}] x{scale:.4f}")
+        elif mode == "band":
+            o, k = _latents.match_band(o, a["ratio"])
+            if k is None:
+                # An audio component has no bands; leaving it alone is correct,
+                # not a fallback -- `sigma` on it would be a different lever
+                # applied silently under this one's name.
+                notes.append(f"band[{idx}] skipped (no spatial extent)")
+            else:
+                notes.append(f"band[{idx}] hi x{k:.4f} "
+                             f"(fraction {c['ratio']:.4f} -> {a['ratio']:.4f})")
         if noise > 0.0:
             # Per component: `.shape` on the nested object reports only the
             # first component's shape, so one draw for the whole latent would
             # size its noise to the video and broadcast that onto the audio.
             g = torch.Generator(device="cpu").manual_seed((int(seed) + idx) & 0x7FFFFFFF)
             n = torch.randn(o.shape, generator=g, dtype=torch.float32)
-            o = o + n.to(dtype=o.dtype, device=o.device) * (float(noise) * a)
+            o = o + n.to(dtype=o.dtype, device=o.device) * (float(noise) * a["sigma"])
             notes.append(f"noise[{idx}] {float(noise):.3f}")
         out_parts.append(o)
     if notes:
         print(f"[{TAG}] pin conditioning: " + ", ".join(notes), flush=True)
     new = dict(lat)
     new["samples"] = _rebuild_latent_samples(x, out_parts)
-    return new, anchor_std
+    return new, anchor
 
 
 def _pin_mech_for(hop_index, overlap_n, prev_sampled):
@@ -1124,15 +1162,24 @@ class HandTieClips:
                         "follows the overlap widget."
                     ),
                 }),
-                "pin_renorm": (["off", "on"], {
+                "pin_renorm": (["off", "sigma", "band"], {
                     "default": "off",
                     "tooltip": (
-                        "Rescale each pinned latent so its spread matches hop 1's. "
-                        "The pin's own sigma climbs every hop and that inflated pin "
-                        "conditions the next one, so texture ratchets up along a "
-                        "long chain. A scalar rescale moves no structure, so it "
-                        "cannot blur detail. Off reproduces chain_00038 exactly; "
-                        "turn it on for chains of 3+ hops."
+                        "Rescale each pinned latent back toward the first pinned "
+                        "hop's, to fight the texture ratchet -- measured at +4.2% "
+                        "mid-band per join, flat inside each hop. Both modes are "
+                        "scalar rescales, so neither moves structure or can blur "
+                        "detail. "
+                        "band: match the HIGH-BAND FRACTION, the statistic the "
+                        "ratchet actually moves. "
+                        "sigma: match total spread -- the original lever, kept "
+                        "for old workflows, and measurably the wrong statistic: "
+                        "total sigma FALLS across a chain whose picture is "
+                        "baking, so it corrects the wrong way. Saved as `on` "
+                        "before 0.5. "
+                        "off reproduces chain_00038 exactly. The log prints "
+                        "`pin drift` every hop either way, so you can read the "
+                        "ratchet without changing anything."
                     ),
                 }),
                 "pin_noise": ("FLOAT", {
@@ -1513,13 +1560,16 @@ class HandTieClips:
         pbar = comfy.utils.ProgressBar(n)
 
         hop_store = None
-        pin_renorm_on = str(pin_renorm) == "on"
+        # "on" is what pre-0.5 workflows saved for what is now "sigma".
+        pin_renorm_mode = {"on": "sigma"}.get(str(pin_renorm), str(pin_renorm))
+        if pin_renorm_mode not in ("sigma", "band"):
+            pin_renorm_mode = "off"
         pin_noise_v = max(0.0, min(0.10, float(pin_noise)))
         audio_ctx = int(audio_pin_frames) if int(audio_pin_frames) > 0 else int(overlap_n)
-        pin_anchor_std = None   # hop 2's pin sets the sigma hops 3+ match
-        if pin_renorm_on or pin_noise_v > 0.0:
+        pin_anchor = None   # the first pinned hop sets what 3+ match
+        if pin_renorm_mode != "off" or pin_noise_v > 0.0:
             print(f"[{TAG}] pin conditioning enabled: "
-                  f"renorm={'on' if pin_renorm_on else 'off'} "
+                  f"renorm={pin_renorm_mode} "
                   f"noise={pin_noise_v:.3f}", flush=True)
         tone_mode = str(tone_compensate)
         tone_on = tone_mode != "off" and tone_mode in _tone.MODES
@@ -1753,7 +1803,15 @@ class HandTieClips:
                     # has no sampler latent and falls back to AddGuide, which
                     # is a different render of the same inputs.
                     "pin_mech": pin_mech_pred,
-                    "pin_cond": (pin_renorm_on, round(pin_noise_v, 4), audio_ctx),
+                    # Only from hop 2. Hop 1 has no pin -- `_pin_mech_for`
+                    # returns "none" for index 0 and the conditioning branch is
+                    # `elif i > 0` -- so its frames cannot depend on these
+                    # levers, and keying them in threw away a byte-identical
+                    # cached hop 1 every time one was flipped. That is a third
+                    # of the cost of every lever A/B, on the one hop nobody
+                    # needed to re-render.
+                    "pin_cond": ((pin_renorm_mode, round(pin_noise_v, 4), audio_ctx)
+                                 if i > 0 else None),
                 })
                 # A locked shot reuses its last render even though its inputs
                 # changed -- that is the point of locking. The content key would
@@ -1804,9 +1862,9 @@ class HandTieClips:
                 elif i > 0:
                     pin_latent = prev_sampled
                     if pin_latent is not None:
-                        pin_latent, pin_anchor_std = _condition_pin_latent(
-                            pin_latent, pin_anchor_std,
-                            renorm=pin_renorm_on, noise=pin_noise_v,
+                        pin_latent, pin_anchor = _condition_pin_latent(
+                            pin_latent, pin_anchor,
+                            mode=pin_renorm_mode, noise=pin_noise_v,
                             seed=(int(seed) + i))
                     cond, pin_mech_used = _pin_continue(
                         cond, latent, vae, audio_vae, overlap_n,

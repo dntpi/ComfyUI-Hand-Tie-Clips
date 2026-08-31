@@ -188,6 +188,71 @@ def main():
     ck("rebuild round-trips a plain tensor",
        torch.equal(lat.rebuild(t, [t]), t))
 
+    print()
+    print("latents.match_band -- the lever undoes a known tilt")
+    g = torch.Generator().manual_seed(3)
+    # Latent-SHAPED, not white noise. Plain randn has a high-band fraction of
+    # 0.966 -- pinned against its ceiling of 1.0, where lifting the high band
+    # barely moves the statistic and the clamp does the "correcting". Real
+    # latents measured 0.3643, so the fixture is built to land near there, and
+    # the first assertion holds it there.
+    w = torch.randn((2, 4, 46, 80), generator=g)
+    smooth = lat.band_split(w, 4.0)[0]
+    rough = torch.randn((2, 4, 46, 80), generator=g)
+    base = smooth / smooth.std() + rough / rough.std() * 0.30
+    r0 = lat.band_ratio(base)
+    ck("the fixture sits where real latents sit", 0.20 < r0 < 0.50,
+       "ratio %.4f (measured on a real chain: 0.3643)" % r0)
+
+    # Bake it: lift the high band the way a hop's pin drifts.
+    lo, hi = lat.band_split(base)
+    baked = lo + hi * 1.25
+    r1 = lat.band_ratio(baked)
+    ck("lifting the high band raises the fraction", r1 > r0 * 1.10,
+       "%.4f -> %.4f" % (r0, r1))
+    fixed, k = lat.match_band(baked, r0)
+    r2 = lat.band_ratio(fixed)
+    ck("match_band restores it to the anchor", abs(r2 / r0 - 1.0) < 0.005,
+       "%.4f vs %.4f (k=%.4f)" % (r2, r0, k))
+    ck("and scales the high band down to do it", k < 1.0, "k=%.4f" % k)
+
+    # The safety property -- but NOT "the low band is unchanged". Re-splitting
+    # the result does not hand back the same lo, because a difference of
+    # Gaussians is not an exact projection. What is true, and what makes this
+    # safe to run blind, is that the entire change lies along the high band:
+    # no structure is added, one scalar is moved.
+    d = (fixed - baked).reshape(-1)
+    hf = hi.reshape(-1)
+    cos = float((d * hf).sum() / (d.norm() * hf.norm()))
+    ck("the entire change lies along the high band", abs(cos) > 0.99,
+       "cos %.4f" % cos)
+    ck("an audio-shaped component is skipped, not sigma-matched",
+       lat.match_band(torch.randn(2, 1024), 0.4)[1] is None)
+    ck("a zero target is a no-op", lat.match_band(base, 0.0)[1] is None)
+
+    # The measured case reproduced: sigma FALLS while the fraction RISES, so
+    # the two levers disagree about which way to correct. This is the whole
+    # argument for `band` over `sigma` -- on the real chain, matching sigma
+    # would have scaled a pin UP whose high band was already too hot.
+    shrunk = baked * (0.99 * float(base.std()) / float(baked.std()))
+    ck("sigma and band disagree in DIRECTION on this signal",
+       float(shrunk.std()) < float(base.std())
+       and lat.band_ratio(shrunk) > r0 * 1.10,
+       "sigma x%.4f but fraction x%.4f"
+       % (float(shrunk.std()) / float(base.std()),
+          lat.band_ratio(shrunk) / r0))
+
+    # And the reason `sigma` cannot be rescued by tuning: the fraction is a
+    # RATIO, so it is invariant under any uniform rescale. Whatever scale a
+    # sigma match picks, it leaves this statistic exactly where it found it.
+    # That makes `sigma` a no-op on the texture ratchet by construction, not
+    # merely a weak correction -- measured end to end through the node, drift
+    # stayed at +12.74% under `sigma` and went to -0.04% under `band`.
+    for factor in (0.5, 0.9651, 2.0):
+        ck("a uniform x%.4g rescale does not move the fraction" % factor,
+           abs(lat.band_ratio(baked * factor) / r1 - 1.0) < 1e-4,
+           "%.6f vs %.6f" % (lat.band_ratio(baked * factor), r1))
+
     print("\nhopcache.chains -- two renders stay two renders")
     mk = lambda hops: [(h, "k%d" % i, {"written": float(i)})
                        for i, h in enumerate(hops)]

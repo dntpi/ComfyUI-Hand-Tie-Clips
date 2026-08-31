@@ -1022,3 +1022,118 @@ was required -- CLAUDE.md, PROMPTING.md, README twice, and the on-canvas card in
 the Starter workflow via `tools/notes.py`. All corrected. README's existing
 "No dependencies to install" line, which already listed `av`, is now true rather
 than nearly true.
+
+## 26. The texture metric everyone reaches for is the wrong one (2026-08-31)
+
+*Numbered 26 because 24 and 25 are on the `llm-plan-writer` branch, which is on
+hold. Nothing here depends on them.*
+
+A user running H3 chains on a different rig -- `MiniMaxH3SongMaskedAVContext`,
+`source_latent`, `context_length 39` -- reported "saturation and overbaking on
+close shots": skin blotchy, hair frizzed into noise, the face restructuring by
+segment 4. They came with a measured report over 81 chained clips and a
+fixed-seed harness, and with a question aimed at this pack: *is the latent
+hand-off amplifying high-frequency energy, or is the sampler over-sharpening
+the generated region to match the sharpened context it was handed?*
+
+Their metric was mean `|Laplacian|` over the frame, end of last segment over
+start of first. It gave 1.060 / 1.180 / 1.204 for 2 / 3 / 4 hops.
+
+**On the two clips they sent, that metric reads 0.961 and 0.973.** Both faces
+are visibly destroyed by the end -- frame 5 against frame 1045 is not a
+close call. The metric says one of them got slightly *better*.
+
+It is confounded twice.
+
+It is an **area average**. A face is about 6% of a 736x1312 portrait frame, and
+these clips are a talking head against wood panelling, a fleece throw and two
+sconces. The background does not change; it outvotes the face roughly sixteen
+to one.
+
+It **sums every spatial frequency into one number**, so energy moving between
+bands cancels. Measured on the same clips:
+
+| | luma | global sigma | fine <1px | mid 1-2.5px | coarse 2.5-6px |
+|---|---|---|---|---|---|
+| TEA2 | 92.2 -> 90.1 | 59.7 -> 58.0 | x1.09 | **x1.17** | x1.03 |
+| TEA3 | 106.0 -> 104.1 | 56.9 -> 54.4 | x1.33 | **x1.35** | x1.30 |
+
+Global contrast **falls** while mid-band energy **rises**. No single scalar can
+represent that, and a correction tuned against one is tuned against noise.
+
+Three things follow, and each changes what a fix should do.
+
+**The band is mid, not high.** "Blotchy skin" is mottle at 1-2.5 px, not grain.
+A fix aimed at high-frequency sharpening aims past it.
+
+**The climb is continuous, with no step at the joins.** TEA2's background
+mid-band, in 60-frame bins: 1.57 1.55 1.56 1.56 1.57 1.60 1.68 1.66 1.61 1.64
+1.71 1.71 1.72 1.77 1.85 1.85 1.93. A ramp, not a staircase. So the hop
+boundary is not where the damage is injected -- it is the ratchet pawl. It
+carries the degraded state forward instead of resetting it, and
+`h3_ref_chain.py` hands forward `imgs[-tail_n:]`, which by this finding is the
+most degraded stretch of the hop. Every hop is seeded from the worst frames
+available to it.
+
+**It is global, not face-local.** TEA2's background ratcheted *more* than the
+head (x1.21 vs x1.17). The face is where it becomes objectionable, not where it
+happens -- we are simply far better at reading skin than wood. So a correction
+can be global, but the measurement must still report a subject box, because
+that is where the acceptance threshold lives.
+
+Their exposure anchoring was on and working: luma holds at 92 -> 90 across 44
+seconds. The texture ratchet is independent of it. That matches the table --
+coarse band roughly flat, mid climbing -- and it is why the existing tone work
+never touched this.
+
+### What got built
+
+`tools/texture_probe.py`. Three Gaussian-difference bands, a subject box against
+a background control, and the within-hop slope as well as the per-hop step. It
+reads the hop cache's pre-correction FFV1 frames, or any video via `--video`,
+which is what makes it usable on someone else's rig. It prints mean
+`|Laplacian|` next to its own numbers, because "the head gained 34% mid-band
+and the Laplacian says 0.973" is a better argument against that metric than a
+paragraph is.
+
+`tools/check_texture.py` drives it against a synthetic cache with a ratchet of
+**known** amplitude injected. This is not ceremony. §21's instrument shipped a
+confident wrong number for weeks because nothing had ever read it against a
+signal whose answer was known in advance, and this one caught two defects while
+being written: `slope_pct` reported percent-per-frame under a per-100-frame
+label -- a hop that doubled read as "+2.4%" -- and the first fixture's
+"mid-only" injection was a full-window difference of Gaussians whose tails
+landed squarely in the coarse band, so the test was measuring its own spectral
+hygiene rather than the probe's.
+
+`tools/hopcache.py` now holds the cache reader and the chain segmentation,
+shared with `tone_probe` instead of copied. That segmentation is precisely what
+was wrong in §21; it must not exist in two places. `latents.py` lifts the
+NestedTensor shim out of `h3_ref_chain.py` so a tool can read a cached latent
+without importing ComfyUI -- the same reason `plan.py` and `tone.py` have no
+ComfyUI imports.
+
+### What is deliberately not built yet
+
+The lever. `_condition_pin_latent`'s `pin_renorm` matches one scalar sigma per
+latent component, and the pixel evidence says sigma and the damaged band move in
+opposite directions -- so a band-aware rescale is the obvious next move. But
+that is an argument about pixels, and the lever acts on latents. Whether the
+*latent's* band structure drifts the way the pixels' does is unmeasured, and
+`texture_probe` now prints exactly that (`latent [0] sigma ... hi ...`) from a
+cached hop.
+
+Measure first. A 4-5 hop chain with `cache_hops=on`, probed before the restart
+that wipes `temp/`. Two hops cannot show this: the reporter's own numbers only
+separate at three.
+
+### Also found, by reading
+
+`_condition_pin_latent` is applied to `pin_latent = prev_sampled`, which only
+the `motion_context` branch of `_pin_continue` consumes. The `addguide_pixels`
+fallback takes raw `prev_imgs` and gets **no conditioning at all** -- and a
+cache hit whose latent did not serialise lands there silently. AddGuide also
+re-encodes decoded pixels, which is the decode/re-encode round trip the reporter
+measured at 1.530, "much worse", on their own rig. A chain that quietly fell
+back has both levers dead and the worse hand-off. The log says which pin ran;
+it is worth reading before trusting any A/B.

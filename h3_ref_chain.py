@@ -70,6 +70,7 @@ from . import store as _store
 from . import media as _media
 from . import tone as _tone
 from . import sheet as _sheet
+from . import latents as _latents
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -618,30 +619,13 @@ def _motion_context_cls():
 
 
 def _latent_parts(x):
-    """The component tensors inside a sampler `samples`, as a flat list.
-
-    H3 hands back a `comfy.nested_tensor.NestedTensor` -- the video and audio
-    latents in one object -- and it is not a Tensor. It has no `.std()`, and
-    the attributes it *does* expose are traps: `.shape` returns
-    `tensors[0].shape`, i.e. the video component's shape while silently
-    speaking for both. Reading the components is the only honest way to touch
-    the numbers. Returns None for anything unrecognised, which callers treat as
-    "leave this latent alone".
-    """
-    if isinstance(x, torch.Tensor):
-        return [x]
-    if getattr(x, "is_nested", False) and hasattr(x, "unbind"):
-        parts = list(x.unbind())
-        if parts and all(isinstance(t, torch.Tensor) for t in parts):
-            return parts
-    return None
+    """-> list of component tensors, or None. See latents.parts for the why."""
+    return _latents.parts(x)
 
 
 def _rebuild_latent_samples(x, parts):
     """Put conditioned components back into the container they came from."""
-    if isinstance(x, torch.Tensor):
-        return parts[0]
-    return type(x)(parts)
+    return _latents.rebuild(x, parts)
 
 
 def _condition_pin_latent(lat, anchor_std, renorm=False, noise=0.0, seed=0):

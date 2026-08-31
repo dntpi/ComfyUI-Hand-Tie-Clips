@@ -24,6 +24,26 @@ import types
 _COMFY_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 DEFAULT_ROOT = os.path.join(_COMFY_ROOT, "temp", "h3_ref_chain_hops")
+COMFY_ROOT = _COMFY_ROOT
+
+
+def enable_latent_reads():
+    """Put the ComfyUI root on sys.path so a cached latent will unpickle.
+
+    A hop's `.latent.pt` holds a `comfy.nested_tensor.NestedTensor`, and
+    `torch.load` has to import that class to rebuild it. Without this the load
+    raises ModuleNotFoundError, `store._get_latent` swallows it and prints
+    "cached latent unreadable ... falling back to the pixel pin", and a probe
+    reports "no latent cached" for every hop -- which reads as "the render did
+    not store one" rather than "this process cannot open it". The two need
+    telling apart: one is a render to redo, the other is a path entry.
+
+    Only a path entry. Nothing is imported here, and `comfy/nested_tensor.py`
+    imports nothing but torch when pickle does reach for it -- no CUDA, no
+    model management. Safe to call while a render is queued.
+    """
+    if _COMFY_ROOT not in sys.path:
+        sys.path.append(_COMFY_ROOT)
 
 
 def load_store():

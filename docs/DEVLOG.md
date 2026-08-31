@@ -1137,3 +1137,77 @@ re-encodes decoded pixels, which is the decode/re-encode round trip the reporter
 measured at 1.530, "much worse", on their own rig. A chain that quietly fell
 back has both levers dead and the worse hand-off. The log says which pin ran;
 it is worth reading before trusting any A/B.
+
+### Correction, 2026-09-01: it is a staircase, not a ramp
+
+The section above says the climb is continuous with no step at the joins. That
+was wrong, and it was wrong in the way that matters most -- it is the claim
+that decides where a correction belongs.
+
+It came from binning the reporter's master at 60 frames **without knowing where
+their joins were**. A step function sampled that way, with content noise on
+top, reads as a ramp if you want it to. The inference was under-determined and
+I did not say so.
+
+The hop cache settles it, because there the boundaries are known. A 3 x 243f
+chain, 736x1280, overlap 22, Motion-Context pin, `pin_renorm off`, head box,
+mid band, with the regenerated overlap frames excluded:
+
+    hop 1   0.00985 0.00976 0.00963 0.00992 0.00981    last/first 0.996
+    hop 2   0.01050 0.01025 0.01029 0.01033 0.01053    last/first 1.003
+    hop 3   0.01058 0.01025 0.01044 0.01058 0.01076    last/first 1.018
+
+    join 1 -> 2   tail 0.01006 -> body start 0.01048   x1.042
+    join 2 -> 3   tail 0.01068 -> body start 0.01113   x1.042
+
+Flat inside every hop. **The same +4.2% at both joins.** Those two frames are
+adjacent in scene time -- hop N+1's frame 22 continues from hop N's last -- so
+it is a genuine discontinuity and not a gap the scene moved through.
+
+Re-reading the reporter's bins with this in hand, theirs is a staircase too:
+1.57 1.55 1.56 1.56 1.57 | 1.60 1.68 1.66 1.61 1.64 | 1.71 1.71 1.72 1.77 |
+1.85 1.85 1.93 -- four plateaus at ~1.56, ~1.64, ~1.73, ~1.88, stepping +5%,
++6%, +9%, on a chain they told us was four hops. Both rigs agree. I had the
+right data and read it wrong.
+
+This is better news than the original reading. "Self-conditioning drift inside
+the generation" could only ever be damped; a step injected at the hand-off can
+be removed at the hand-off, and the hand-off copies are conditioning-only.
+
+### And the latent measurement, which was the point
+
+From the same cache, per hop: component [0] sigma `1.0414 -> 1.0376 -> 1.0289`,
+its high band `0.3794 -> 0.3811 -> 0.3809`.
+
+Sigma **falls 1.2%** while the pixel mid band climbs 8%. The high-band
+*fraction* -- hi/sigma -- goes `0.3643 -> 0.3673 -> 0.3702`, up 1.6% and
+monotone. So the latent does carry the tilt, and total sigma does not see it.
+
+`pin_renorm=on` would have multiplied this pin by `1.0414/1.0289 = x1.012`,
+scaling every band up uniformly, on a latent whose high band was already 1.6%
+too hot. **On this chain the shipped lever pushes the wrong way.** That is not
+a small correction to it; it is the wrong statistic, and Phase 2a's band-matched
+rescale is now evidenced rather than assumed.
+
+One caveat kept in view: 1.6% in the latent against 8% in pixels. The VAE
+decode is nonlinear, so the two are not expected to be proportional, but the
+gap is large enough that the lever's gain will have to be fitted against
+measured output rather than derived from the latent ratio.
+
+### Two probe defects the real data exposed
+
+**Cached latents did not load at all.** `torch.load` has to import
+`comfy.nested_tensor` to rebuild the object; without the ComfyUI root on
+`sys.path`, `store._get_latent` caught the ModuleNotFoundError and the probe
+printed "none cached for this hop" -- reporting a path problem as an absent
+latent. `hopcache.enable_latent_reads()` appends the root and nothing else;
+the module imports only torch when pickle reaches for it, so it is safe to run
+beside a queued render.
+
+**Band energy was not exposure-normalised.** The probe's own docstring claimed
+band-pass output "does not care about the local mean", which is true of an
+offset and false of a scale: brighten a frame 5% and every band grows with it.
+The 3-hop chain's luma rose 4.7%, so whole-frame mid read `x1.084` when the
+texture part was `n1.035`. Both columns are printed now. The head box was
+unaffected either way -- the brightening was in the background -- which is
+exactly the kind of thing a single whole-frame number cannot tell you.

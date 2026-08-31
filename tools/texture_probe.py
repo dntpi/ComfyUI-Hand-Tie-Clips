@@ -100,6 +100,13 @@ def bands(gray, torch):
         "fine": (gray - b1).abs().mean(dim=(1, 2)),
         "mid": (b1 - b2).abs().mean(dim=(1, 2)),
         "coarse": (b2 - b3).abs().mean(dim=(1, 2)),
+        # This box's own mean level, carried so the row can normalise by it.
+        # A band-pass removes the LOCAL mean, which is why it ignores a
+        # brightness offset -- but it is not scale-free: brighten a picture by
+        # 5% and every band amplitude grows about 5% with it, texture
+        # unchanged. On a chain whose exposure also drifts, the raw ratio and
+        # the normalised one answer different questions and both are wanted.
+        "_luma": gray.mean(dim=(1, 2)),
     }
 
 
@@ -183,13 +190,19 @@ def measure(gray, torch, boxes):
 
 def _row(label, per_band, ref, slopes):
     bits = []
+    lum = float(per_band["_luma"].mean())
     for b in BANDS:
         v = float(per_band[b].mean())
         if ref is None:
-            bits.append(f"{b} {v:.4f}        ")
+            bits.append(f"{b} {v:.4f}              ")
         else:
             r = v / ref[b] if ref[b] else float("nan")
-            bits.append(f"{b} {v:.4f} x{r:.3f}")
+            # n = the same ratio with exposure divided out. Where n and x
+            # disagree, the difference is the scene getting brighter, not
+            # rougher -- and only n is the texture ratchet.
+            rn = ((v / lum) / (ref[b] / ref["_luma"])
+                  if ref[b] and lum and ref["_luma"] else float("nan"))
+            bits.append(f"{b} {v:.4f} x{r:.3f} n{rn:.3f}")
     tail = ""
     if slopes is not None:
         tail = "   slope/100f " + " ".join(
@@ -283,13 +296,15 @@ def run_video(args, torch, stride):
 
     for name in ("head", "bg", "whole"):
         vals = per[name]
-        ref = {b: float(vals[b][edges[0]:edges[1]].mean()) for b in BANDS}
+        ref = {b: float(vals[b][edges[0]:edges[1]].mean())
+               for b in tuple(BANDS) + ("_luma",)}
         print(f"  [{name}]")
         for i in range(segs):
             a, z = edges[i], edges[i + 1]
             if z - a < 2:
                 continue
-            print(_row(f"seg {i + 1}", {b: vals[b][a:z] for b in BANDS},
+            print(_row(f"seg {i + 1}",
+                       {b: vals[b][a:z] for b in tuple(BANDS) + ("_luma",)},
                        None if i == 0 else ref, None))
         print()
 
@@ -306,6 +321,9 @@ def run_video(args, torch, stride):
 
 
 def run_cache(args, torch, stride):
+    # Before select(): the store reads latents during get(), and an
+    # unimportable NestedTensor is reported as an absent one.
+    hopcache.enable_latent_reads()
     store, hops, report = hopcache.select(args.root, args.chain)
     if report:
         print(report)
@@ -332,7 +350,8 @@ def run_cache(args, torch, stride):
         g = luma(imgs, torch)
         per = measure(g, torch, boxes)
         if ref is None:
-            ref = {k: {b: float(per[k][b].mean()) for b in BANDS} for k in per}
+            ref = {k: {b: float(per[k][b].mean()) for b in tuple(BANDS) + ("_luma",)}
+               for k in per}
         print(f"hop {hop} ({key[:8]}): {imgs.shape[0]} sampled frames of "
               f"{w}x{h}   luma {float(g.mean()):.4f}")
         for name in ("head", "bg", "whole"):

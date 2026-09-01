@@ -1576,6 +1576,13 @@ A subjects-only repair overlays the last register; if that still comes back
 empty, name/locked are filled from each ref's `desc` so the draft is not
 thrown away. The panel shows a partial draft on give-up.
 
+The next live run tagged the rows correctly, then a repair that re-emitted
+the refs without `desc` and with `subjects: {}` wiped the describe-this-photo
+and current-standing-state boxes. Empty values no longer win a merge.
+Pinned writes now require `desc` on every ref and `name`/`locked`/`context`
+on every subject -- those three fields are the point of attaching the stills,
+not optional flavour.
+
 ## 30. Which nine seconds? (2026-09-01)
 
 The soundtrack shipped and worked, and using it for ten minutes found the hole.

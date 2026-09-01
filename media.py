@@ -52,7 +52,7 @@ JPEG_QUALITY = 88
 # photos as vision tokens would crowd a 27B's context; 768 is enough to
 # read a face and a room. Not stored in any widget -- pixels still never
 # travel as base64 in `ref_plan`.
-VISION_SIDE = 768
+VISION_SIDE = 1024
 
 
 def kind_of(name):

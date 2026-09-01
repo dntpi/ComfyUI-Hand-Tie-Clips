@@ -208,14 +208,18 @@ def main():
     ck("a subject without continuity text is an error",
        any("subject 1" in e and "locked" in e for e in errs),
        "; ".join(errs[:1]))
+    ck("and asks for context too",
+       any("context" in e for e in errs), "; ".join(errs[:1]))
 
     pinned = [{"tag": "ref_1", "file": "cook_face.png"},
               {"tag": "ref_2", "file": "kitchen.png"}]
     rail = {
         "refs": [{"tag": "ref_1", "file": "cook_face.png", "subject": 1,
-                  "retention": "fully_preserved"},
+                  "retention": "fully_preserved",
+                  "desc": "a woman facing the camera, dark hair tied back"},
                  {"tag": "ref_2", "file": "kitchen.png",
-                  "retention": "reference"}],
+                  "retention": "reference",
+                  "desc": "a kitchen counter and window in daylight"}],
         "subjects": GOOD_REFS["subjects"],
     }
     rail_shots = [
@@ -244,6 +248,24 @@ def main():
                           pinned=pinned)
     ck("a pinned rail rejects extra tags",
        any("hallway" in e for e in errs), "; ".join(errs[:1]))
+
+    nodesc = json.loads(json.dumps(rail))
+    nodesc["refs"][0]["desc"] = ""
+    errs, _ = PL.validate(json.dumps(rail_shots), json.dumps(nodesc),
+                          hops=2, known_files=[p["file"] for p in pinned],
+                          pinned=pinned)
+    ck("a pinned row needs a desc",
+       any("desc" in e and "@ref_1" in e for e in errs), "; ".join(errs[:1]))
+
+    kept = PL._merge_register(
+        json.dumps({"refs": [{"tag": "ref_1", "file": "a.jpg",
+                              "desc": "a woman in green"}],
+                    "subjects": {}}),
+        json.dumps({"refs": [{"tag": "ref_1", "file": "a.jpg",
+                              "subject": 1}],
+                    "subjects": {}}))
+    ck("a later turn does not wipe desc",
+       json.loads(kept)["refs"][0]["desc"] == "a woman in green")
 
     turn = PL.build_user_turn("she talks about life", 2, FILES)
     ck("empty rail lists the folder", "cook_face.png" in turn

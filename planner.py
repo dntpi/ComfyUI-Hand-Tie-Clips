@@ -182,11 +182,13 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None):
     # attempt -- otherwise Accept writes an empty subject card.
     for num in sorted({r["subject"] for r in refs if r.get("subject") is not None}):
         info = subs.get(num) or {}
-        if not (info.get("name") or "").strip() or not (info.get("locked") or "").strip():
+        missing = [k for k in ("name", "locked", "context")
+                   if not (info.get(k) or "").strip()]
+        if missing:
             errors.append(
-                f"subject {num} has pictures but no continuity text. Fill "
-                f"subjects.{num} with `name` and `locked` from the person in "
-                f"the photograph -- prose, never an @tag.")
+                f"subject {num} is missing {', '.join(missing)}. Fill from "
+                f"the photograph -- prose, never an @tag. `context` is "
+                f"wardrobe and pose as they stand now.")
 
     pinned_rows = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned_rows:
@@ -211,6 +213,10 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None):
             if want_file and got != want_file:
                 errors.append(
                     f"@{r['tag']} must keep file '{want_file}', not '{got}'.")
+            if not (r.get("desc") or "").strip():
+                errors.append(
+                    f"@{r['tag']} needs `desc`: one sentence of what the "
+                    f"photograph shows.")
 
     # A named picture that is not on disk stops the queue, so an invented
     # filename is a model error worth retrying rather than a user problem.
@@ -363,11 +369,14 @@ def build_user_turn(brief, hops, files, pinned=None):
                   "gets retention reference and no subject.",
                   "",
                   "If any ref has \"subject\": N, subjects MUST contain that "
-                  "N with `name` and `locked` in prose from the photograph. "
-                  "An empty \"subjects\": {} is a rejected plan. Example:",
+                  "N with `name`, `locked`, and `context` in prose from the "
+                  "photograph. Every ref needs `desc` (what the photograph "
+                  "shows). An empty \"subjects\": {} is a rejected plan. "
+                  "Example:",
+                  '  "desc": "a young woman in a green top, facing the camera"',
                   '  "subjects": {"1": {"name": "the young woman", '
                   '"locked": "the same face, the same long dark hair", '
-                  '"context": "a white blouse"}}']
+                  '"context": "a green blouse, standing at the counter"}}']
         for p in pinned:
             bit = f"  - @{p.get('tag')}  file={p.get('file')}"
             if p.get("subject") is not None:
@@ -422,27 +431,48 @@ def _is_subjects_patch(ref_text):
     return bool(subs) and not refs
 
 
-def _merge_subjects(base_text, patch_text):
-    """Keep base refs, overlay patch subjects. Used when a repair returns only
-    the missing subjects block instead of rewriting the register."""
+def _filled(v):
+    return v not in (None, "", [], {})
+
+
+def _merge_dict(base, patch):
+    """Overlay patch onto base; empty values do not wipe filled ones."""
+    out = dict(base or {})
+    for k, v in (patch or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _merge_dict(out[k], v)
+        elif _filled(v):
+            out[k] = v
+    return out
+
+
+def _merge_register(base_text, patch_text):
+    """Keep tags/files/desc already won; overlay new non-empty fields.
+
+    A repair that re-emits the refs without `desc`, or `subjects: {}`, used
+    to replace the previous register and blank the rail's describe/context
+    boxes. Empty does not win.
+    """
     base = _parse_obj(base_text) or {}
     patch = _parse_obj(patch_text) or {}
     if isinstance(patch.get("ref_plan"), dict):
         patch = patch["ref_plan"]
-    subs = dict(base.get("subjects") or {})
-    incoming = patch.get("subjects") if isinstance(patch, dict) else None
-    if isinstance(incoming, dict):
-        for k, v in incoming.items():
-            if isinstance(v, dict):
-                subs[str(k)] = v
-    refs = base.get("refs") or []
-    if isinstance(patch, dict) and patch.get("refs"):
-        refs = patch["refs"]
+    by_tag = {}
+    for src in (base.get("refs") or []), (patch.get("refs") or []):
+        for r in src:
+            if not isinstance(r, dict) or not r.get("tag"):
+                continue
+            tag = r["tag"]
+            by_tag[tag] = _merge_dict(by_tag.get(tag) or {}, r)
+    refs = list(by_tag.values()) if by_tag else (base.get("refs") or [])
+    subs = _merge_dict(base.get("subjects") or {}, patch.get("subjects") or {})
     return json.dumps({"refs": refs, "subjects": subs}, indent=2)
 
 
-def _only_subject_gaps(errors):
-    return bool(errors) and all("continuity text" in e for e in errors)
+def _only_register_prose_gaps(errors):
+    return bool(errors) and all(
+        "is missing" in e or "needs `desc`" in e or "continuity text" in e
+        for e in errors)
 
 
 def _subjects_repair(errors):
@@ -451,16 +481,17 @@ def _subjects_repair(errors):
         m = re.search(r"subject (\d+)", e)
         if m and m.group(1) not in nums:
             nums.append(m.group(1))
-    example = {n: {"name": "the person",
-                   "locked": "the same face, the same hair",
-                   "context": ""}
+    example = {n: {"name": "the young woman",
+                   "locked": "the same face, the same long dark hair",
+                   "context": "a green blouse, standing at the counter"}
                for n in (nums or ["1"])}
     return (
-        "The shot_plan and the refs list are fine. Do not change tags or "
-        "files. subjects is empty, which is why the node rejected the plan. "
-        "Return the FULL ref_plan -- the same refs, with subjects filled. "
-        "An empty subjects object is rejected.\n\n"
-        "Fill this from the photographs, in prose, never an @tag:\n"
+        "The shot_plan is fine. Do not change tags or files. Do not drop a "
+        "desc you already wrote. Fill every ref's `desc` (what the photograph "
+        "shows) and every subject's `name`, `locked`, and `context` "
+        "(wardrobe and pose as they stand now). An empty subjects object "
+        "is rejected. Return the full ref_plan.\n\n"
+        "Shape, filled from the photographs, prose never an @tag:\n"
         + json.dumps({"subjects": example}, indent=2)
         + "\n\nThe missing fields:\n"
         + "\n".join(f"- {e}" for e in errors)
@@ -468,8 +499,8 @@ def _subjects_repair(errors):
 
 
 def _stub_missing_subjects(ref_text):
-    """Last resort: name/locked from the ref's own desc so a usable draft is
-    not thrown away because the model left subjects empty."""
+    """Last resort: name/locked/context/desc so a usable draft is not thrown
+    away because the model left the prose boxes empty."""
     try:
         plan = _refs.parse_ref_plan(ref_text)
     except Exception:
@@ -478,20 +509,24 @@ def _stub_missing_subjects(ref_text):
     subs = dict(plan.get("subjects") or {})
     changed = False
     for r in refs:
+        if not (r.get("desc") or "").strip():
+            r["desc"] = "the reference photograph"
+            changed = True
         n = r.get("subject")
         if n is None:
             continue
         info = dict(subs.get(n) or {})
-        if (info.get("name") or "").strip() and (info.get("locked") or "").strip():
-            continue
         desc = (r.get("desc") or "").strip()
         if not (info.get("name") or "").strip():
             info["name"] = "the person"
+            changed = True
         if not (info.get("locked") or "").strip():
-            info["locked"] = desc or "the same face and hair"
-        info.setdefault("context", "")
+            info["locked"] = desc if desc != "the reference photograph" else "the same face and hair"
+            changed = True
+        if not (info.get("context") or "").strip():
+            info["context"] = "as they stand in the photograph"
+            changed = True
         subs[n] = info
-        changed = True
     if not changed:
         return ref_text
     out_refs = []
@@ -542,10 +577,10 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         if new_shots:
             shot_text = new_shots
         if new_refs:
-            # A repair that returns only {"subjects": {...}} must overlay the
-            # last register, not wipe the refs the previous turn got right.
-            if ref_text and shot_text and _is_subjects_patch(new_refs):
-                ref_text = _merge_subjects(ref_text, new_refs)
+            # A later turn that re-emits refs without desc, or subjects: {},
+            # must not wipe the register the previous turn already filled.
+            if ref_text:
+                ref_text = _merge_register(ref_text, new_refs)
             else:
                 ref_text = new_refs
         if not shot_text:
@@ -567,7 +602,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         # turn matters: without it the model re-derives the plan from scratch
         # and reliably reintroduces a different fault.
         messages.append({"role": "assistant", "content": reply})
-        if _only_subject_gaps(last_errors):
+        if _only_register_prose_gaps(last_errors):
             # qwen left "subjects": {} three times when asked to rewrite the
             # whole plan. Ask only for the missing block.
             repair = _subjects_repair(last_errors)
@@ -583,7 +618,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
 
     # A usable script with empty subjects is not a throw-away. Fill name/locked
     # from each ref's own desc so Accept has something, and say so.
-    if shot_text and ref_text and _only_subject_gaps(last_errors):
+    if shot_text and ref_text and _only_register_prose_gaps(last_errors):
         stub = _stub_missing_subjects(ref_text)
         errs, warns = validate(
             shot_text, stub, hops=hops, known_files=files, pinned=pinned)

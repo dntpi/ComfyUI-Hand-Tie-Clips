@@ -124,7 +124,7 @@ def split_reply(raw):
 
 # -- validation ------------------------------------------------------------
 
-def validate(shot_text, ref_text, *, hops=None, known_files=None):
+def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None):
     """Run the node's own checkers. Returns (errors, warnings).
 
     `errors` are what the node would REJECT -- they go back to the model.
@@ -165,6 +165,42 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None):
             errors.append(
                 f"shot {i + 1}: duration {dur!r} is not a valid label. "
                 f"Use one of: {', '.join(DURATION_FRAMES)}")
+
+    # A person with pictures but no continuity text still *renders*, which is
+    # why `refs.check` only warns. The writer is the one place that can fill
+    # the box, so missing name/locked is an error here and gets another
+    # attempt -- otherwise Accept writes an empty subject card.
+    for num in sorted({r["subject"] for r in refs if r.get("subject") is not None}):
+        info = subs.get(num) or {}
+        if not (info.get("name") or "").strip() or not (info.get("locked") or "").strip():
+            errors.append(
+                f"subject {num} has pictures but no continuity text. Fill "
+                f"subjects.{num} with `name` and `locked` from the person in "
+                f"the photograph -- prose, never an @tag.")
+
+    pinned_rows = [p for p in (pinned or []) if isinstance(p, dict)]
+    if pinned_rows:
+        want = {str(p.get("tag") or "").lstrip("@") for p in pinned_rows}
+        by_tag = {str(p.get("tag") or "").lstrip("@"): str(p.get("file") or "")
+                  for p in pinned_rows}
+        have_tags = {r["tag"] for r in refs}
+        missing = sorted(want - have_tags)
+        extra = sorted(have_tags - want)
+        if missing:
+            errors.append(
+                "the rail already has "
+                + ", ".join("@" + t for t in missing)
+                + ". Keep those tags; do not replace them.")
+        if extra:
+            errors.append(
+                "do not add references that are not on the rail: "
+                + ", ".join("@" + t for t in extra) + ".")
+        for r in refs:
+            want_file = by_tag.get(r["tag"])
+            got = (r.get("file") or "").strip()
+            if want_file and got != want_file:
+                errors.append(
+                    f"@{r['tag']} must keep file '{want_file}', not '{got}'.")
 
     # A named picture that is not on disk stops the queue, so an invented
     # filename is a model error worth retrying rather than a user problem.
@@ -297,13 +333,34 @@ def _clean(exc):
 
 # -- the loop --------------------------------------------------------------
 
-def build_user_turn(brief, hops, files):
+def build_user_turn(brief, hops, files, pinned=None):
     """The one user message. Names the files that actually exist, so the model
-    schedules pictures it has rather than inventing plausible filenames."""
+    schedules pictures it has rather than inventing plausible filenames.
+
+    `pinned` is the REFERENCES rail: those tags and files are locked. The
+    folder listing is the fallback for a brief-only write with an empty rail.
+    """
     lines = [(brief or "").strip() or "A short scene of your choosing.",
              "",
              f"Write exactly {int(hops)} hop(s)."]
-    if files:
+    pinned = [p for p in (pinned or []) if isinstance(p, dict)]
+    if pinned:
+        lines += ["",
+                  "These pictures are already on the rail. Keep these tags "
+                  "and filenames. Fill `retention`, `subject`, `desc`, and "
+                  "`subjects` from the brief and the pictures. Do not add "
+                  "other files. Do not rename tags."]
+        for p in pinned:
+            bit = f"  - @{p.get('tag')}  file={p.get('file')}"
+            if p.get("subject") is not None:
+                bit += f"  subject={p['subject']}"
+            if p.get("retention"):
+                bit += f"  retention={p['retention']}"
+            lines.append(bit)
+        lines += ["",
+                  "Stills of those rows are attached below, labelled with "
+                  "their @tag. Look at them."]
+    elif files:
         lines += ["",
                   "These reference files are on disk. Use these exact "
                   "filenames, and only these:"]
@@ -315,7 +372,22 @@ def build_user_turn(brief, hops, files):
     return "\n".join(lines)
 
 
+def attach_images(text, images):
+    """Wrap a user turn with OpenAI image_url parts. No images -> the text."""
+    images = [im for im in (images or []) if (im or {}).get("data_url")]
+    if not images:
+        return text
+    parts = [{"type": "text", "text": text}]
+    for im in images:
+        tag = str(im.get("tag") or "").lstrip("@")
+        parts.append({"type": "text", "text": f"@{tag} is this picture:"})
+        parts.append({"type": "image_url",
+                      "image_url": {"url": im["data_url"]}})
+    return parts
+
+
 async def write_plan(brief, hops, *, complete_fn, files=None,
+                     pinned=None, images=None,
                      attempts=MAX_ATTEMPTS, use_schema=True, on_step=None):
     """Generate a plan and repair it until the node would accept it.
 
@@ -324,12 +396,18 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     is the only proof the repair path works that does not need a GPU, a server
     and a person watching.
 
+    `pinned` locks rail tags and filenames. `images` are data-URLs attached
+    to the first user turn only; repair turns stay text.
+
     Never returns an unvalidated plan: if it does not converge, `ok` is False
     and `errors` holds the last set, for the person to fix by hand.
     """
-    files = list(files or [])
+    pinned = [p for p in (pinned or []) if isinstance(p, dict)]
+    files = ([p.get("file") for p in pinned if p.get("file")]
+             if pinned else list(files or []))
+    text = build_user_turn(brief, hops, files, pinned=pinned)
     messages = [{"role": "system", "content": system_prompt()},
-                {"role": "user", "content": build_user_turn(brief, hops, files)}]
+                {"role": "user", "content": attach_images(text, images)}]
     sch = schema() if use_schema else None
 
     last_errors, warnings = [], []
@@ -346,7 +424,8 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                            "JSON blocks and nothing else."]
         else:
             last_errors, warnings = validate(
-                shot_text, ref_text, hops=hops, known_files=files)
+                shot_text, ref_text, hops=hops, known_files=files,
+                pinned=pinned)
         if not last_errors:
             return {"ok": True, "shot_plan": shot_text, "ref_plan": ref_text,
                     "attempts": attempt, "errors": [], "warnings": warnings}

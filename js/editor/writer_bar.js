@@ -16,7 +16,8 @@
  * the feature legible rather than magic, and it is also the thing that teaches
  * the format to someone reading it.
  */
-import { el, button } from "./widget_utils.js";
+import { el, button, widgetByName } from "./widget_utils.js";
+import { parseRefPlan } from "./ref_rail.js";
 
 const LLM_URL = "/h3_ref_chain/llm";
 const PLAN_URL = "/h3_ref_chain/plan";
@@ -38,9 +39,9 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const brief = el("input", "h3e-writer-brief");
     brief.type = "text";
     brief.placeholder = "a cook plates a dish, then walks out into the hallway";
-    brief.title = "Describe the scene in plain language. The reference files "
-        + "already in your h3_refs folder are sent along, so name what you want "
-        + "to happen rather than which picture goes where.";
+    brief.title = "Describe the scene in plain language. Pictures already in "
+        + "the REFERENCES rail are the ones that get used; the model looks at "
+        + "them. With the rail empty, files in h3_refs are listed by name.";
     row.appendChild(brief);
 
     const hops = el("input", "h3e-writer-hops");
@@ -321,6 +322,20 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         }
     }
 
+    function railRefs() {
+        const plan = parseRefPlan(widgetByName(node, "ref_plan")?.value);
+        if (!plan) return [];
+        return (plan.refs || [])
+            .filter((r) => String(r.file || "").trim())
+            .map((r) => ({
+                tag: String(r.tag || "").replace(/^@/, ""),
+                file: String(r.file || "").trim(),
+                subject: r.subject == null ? null : Number(r.subject),
+                retention: String(r.retention || ""),
+                desc: String(r.desc || ""),
+            }));
+    }
+
     async function run() {
         if (busy) return;                       // one generation at a time
         setBusy(true);
@@ -333,6 +348,7 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                 body: JSON.stringify({
                     brief: brief.value,
                     hops: Number(hops.value) || 3,
+                    refs: railRefs(),
                 }),
             });
             const j = await r.json();

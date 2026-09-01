@@ -389,11 +389,7 @@ async def complete(base_url, model, messages, *, schema=None,
             note = str(first)
 
             if note == "__REASONING_ONLY__":
-                nudged = [dict(m) for m in messages]
-                for m in reversed(nudged):
-                    if m.get("role") == "user":
-                        m["content"] = str(m.get("content") or "") + " /no_think"
-                        break
+                nudged = _nudge_no_think(messages)
                 print(f"[{TAG}] reply was reasoning only; retrying with "
                       f"/no_think", flush=True)
                 data = await _post(
@@ -422,6 +418,52 @@ async def complete(base_url, model, messages, *, schema=None,
                 return _content(data)
 
             raise
+
+
+def has_images(messages):
+    """True when any turn carries an OpenAI image_url part."""
+    for m in messages or []:
+        c = m.get("content")
+        if isinstance(c, list) and any(
+                (p or {}).get("type") == "image_url" for p in c):
+            return True
+    return False
+
+
+def text_only(messages):
+    """Drop image parts, concatenating remaining text. Used when a server 400s
+    on vision (a text-only model in the dropdown)."""
+    out = []
+    for m in messages or []:
+        nm = dict(m)
+        c = nm.get("content")
+        if isinstance(c, list):
+            nm["content"] = "\n".join(
+                str(p.get("text") or "") for p in c
+                if (p or {}).get("type") == "text").strip()
+        out.append(nm)
+    return out
+
+
+def _nudge_no_think(messages):
+    """Append /no_think to the last user text, including a multimodal turn."""
+    nudged = [dict(m) for m in messages]
+    for m in reversed(nudged):
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            m["content"] = [dict(p) for p in c]
+            for p in reversed(m["content"]):
+                if p.get("type") == "text":
+                    p["text"] = str(p.get("text") or "") + " /no_think"
+                    break
+            else:
+                m["content"].append({"type": "text", "text": "/no_think"})
+        else:
+            m["content"] = str(c or "") + " /no_think"
+        break
+    return nudged
 
 
 def shares_this_gpu(base_url):
@@ -600,6 +642,30 @@ def configured():
         return False
 
 
+def _run_coro(factory):
+    """Run `factory()` (which returns a coroutine) to completion.
+
+    `asyncio.run` is correct when nothing is looping, which is the offline
+    checkers and a sync worker thread. ComfyUI's execute path is async, so
+    `run()` is already inside a running loop and `asyncio.run` refuses to
+    nest -- that is the RuntimeError keep_warm + Queue hit, plus the
+    'coroutine never awaited' warning from the expression
+    `asyncio.run(unload_all(...))`.
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _in_thread():
+        return asyncio.run(factory())
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_in_thread).result()
+
+
 def free_for_render(settle_sleep=None):
     """Evict the writer and wait for the card. Blocking. -> note or "".
 
@@ -607,17 +673,16 @@ def free_for_render(settle_sleep=None):
     it is.** The rule in the docstring at the top -- never block -- is about
     aiohttp handlers: they run on ComfyUI's event loop, and a stalled handler
     freezes the whole UI, canvas included, for the length of a generation. This
-    function is called from the node's `run()`, which is the execution worker
-    thread. Nothing is waiting on it except the render, and the render is what
-    the VRAM is being freed FOR. An async version would have to be awaited by a
-    sync caller, which means a loop, which is what this already is.
+    function is called from the node's `run()`. Nothing is waiting on it except
+    the render, and the render is what the VRAM is being freed FOR. ComfyUI
+    may already be inside a running loop when it gets here, so the wait is
+    `_run_coro`, not a nested `asyncio.run`.
 
     Never raises. A writer that was never configured, a server that is not
     running, one on another machine, one with no unload endpoint: all ordinary,
     all silent. The single unacceptable outcome is that a courtesy to the GPU
     takes down a render the user has been waiting minutes for.
     """
-    import asyncio
     import time
 
     if not configured():
@@ -626,7 +691,13 @@ def free_for_render(settle_sleep=None):
     if not conn.get("unload_on_run"):
         return ""
     try:
-        n, note = asyncio.run(unload_all(conn["server_url"], conn["model"]))
+        # ComfyUI's execute path is async: node.run() is reached from a
+        # running event loop. asyncio.run() then raises RuntimeError and the
+        # unload coroutine is never awaited -- keep_warm + Queue left the 27B
+        # resident and printed that error. A side thread with its own loop is
+        # the same block this function already promised, just not nested.
+        n, note = _run_coro(
+            lambda: unload_all(conn["server_url"], conn["model"]))
     except Exception as exc:  # noqa: BLE001
         print(f"[{TAG}] could not free the writer's VRAM: {exc!r}", flush=True)
         return ""

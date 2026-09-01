@@ -1550,6 +1550,25 @@ not one anybody should run.
 draft converged. A plan silently rewritten under you is worse than no plan, so
 the bar now holds the JSON until Accept. Discard leaves the cards as they were.
 The route is unchanged; only the last inch of the panel moved.
+
+**`asyncio.run` cannot nest.** ComfyUI's execute path is async, so `run()` is
+already inside a running loop when it calls `free_for_render`. `asyncio.run
+(unload_all(...))` then raised `RuntimeError` and left the coroutine un-awaited
+-- keep_warm + Queue printed that, and the 27B stayed resident. `_run_coro`
+uses a side thread with its own loop; the function is still blocking, just not
+on the UI loop. Proven in `check_planner.py` by calling `free_for_render` from
+inside `asyncio.run`.
+
+**The rail is the scene.** Write plan used to POST only `{brief, hops}` and
+then list every file in `h3_refs`, so a user who had already put two pictures
+in the boxes got a register full of files they never chose and an empty
+subject card -- the model never saw the stills. The bar now sends the filled
+rows; those tags and filenames are locked; the stills ride the first user turn
+as vision parts (768 px JPEG, executor, not a widget). A text-only model that
+400s on `image_url` falls back to filenames and says so. Missing
+`subjects.{n}.name`/`locked` is an error for the writer, so the repair loop
+fills the box instead of Accept writing an empty one.
+
 ## 30. Which nine seconds? (2026-09-01)
 
 The soundtrack shipped and worked, and using it for ten minutes found the hole.

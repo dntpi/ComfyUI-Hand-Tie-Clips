@@ -62,6 +62,35 @@ MAX_UPLOAD_FILES = 32
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 
 
+def _pinned_refs(raw, limit):
+    """Rail rows from the Write-plan POST. Only rows with a tag and a file."""
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
+        tag = str(r.get("tag") or "").lstrip("@").strip()
+        fname = str(r.get("file") or "").strip()
+        if not tag or not fname:
+            continue
+        subj = r.get("subject")
+        try:
+            subj = int(subj) if subj not in (None, "", False) else None
+        except (TypeError, ValueError):
+            subj = None
+        out.append({
+            "tag": tag,
+            "file": fname,
+            "subject": subj,
+            "retention": str(r.get("retention") or ""),
+            "desc": str(r.get("desc") or ""),
+        })
+        if len(out) >= int(limit):
+            break
+    return out
+
+
 def _payload():
     from .h3_ref_chain import DURATION_FRAMES, OVERLAP_FRAMES, CANVAS, FPS
 
@@ -357,6 +386,7 @@ def register():
         try:
             from . import llm as _llm
             from . import planner as _planner
+            from . import refs as _refs
         except Exception as exc:
             return web.json_response(
                 {"ok": False, "error": f"the plan writer failed to load: {exc}"})
@@ -367,25 +397,64 @@ def register():
                 {"ok": False, "error": "no model is selected -- open Settings "
                                        "in the panel and pick one."})
 
-        # Only the files actually on disk. The model then schedules pictures
-        # that exist instead of inventing plausible filenames, which is the
-        # difference between a plan that queues and one that stops at the
-        # missing-picture check.
-        files = [f["name"] for f in _media.listing({"image", "video"})]
+        pinned = _pinned_refs(body.get("refs"), _refs.MAX_REF_IMAGES)
+        # A filled rail is the scene. The folder listing is only the fallback
+        # for a brief-only write with empty boxes -- that listing is what made
+        # the model pick files the user never chose.
+        if pinned:
+            files = [p["file"] for p in pinned]
+        else:
+            files = [f["name"] for f in _media.listing({"image", "video"})]
+
+        import asyncio
+        images = []
+        if pinned:
+            def encode():
+                out = []
+                for p in pinned:
+                    url = _media.vision_data_url(p["file"])
+                    if url:
+                        out.append({"tag": p["tag"], "data_url": url})
+                return out
+            try:
+                images = await asyncio.get_running_loop().run_in_executor(
+                    None, encode)
+            except Exception as exc:
+                print(f"[{TAG}] could not attach rail stills: {exc!r}",
+                      flush=True)
+                images = []
+
+        vision_notes = []
 
         async def complete_fn(messages, schema=None):
-            return await _llm.complete(
-                conn["server_url"], conn["model"], messages,
-                schema=schema, temperature=conn["temperature"])
+            try:
+                return await _llm.complete(
+                    conn["server_url"], conn["model"], messages,
+                    schema=schema, temperature=conn["temperature"])
+            except _llm.LLMError as exc:
+                if _llm.has_images(messages) and "HTTP 4" in str(exc):
+                    print(f"[{TAG}] server rejected the attached stills; "
+                          f"retrying from filenames only", flush=True)
+                    vision_notes.append(
+                        "the model could not look at the pictures; "
+                        "the draft used filenames only")
+                    return await _llm.complete(
+                        conn["server_url"], conn["model"],
+                        _llm.text_only(messages),
+                        schema=schema, temperature=conn["temperature"])
+                raise
 
         try:
             out = await _planner.write_plan(
-                brief, hops, complete_fn=complete_fn, files=files)
+                brief, hops, complete_fn=complete_fn, files=files,
+                pinned=pinned, images=images)
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:
             print(f"[{TAG}] plan route failed: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)})
+        if vision_notes:
+            out["warnings"] = list(out.get("warnings") or []) + vision_notes
 
         # Stay resident by default. The render is where the card is actually
         # contended, and the node evicts there (`llm.free_for_render`), so

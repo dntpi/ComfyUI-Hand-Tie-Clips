@@ -48,6 +48,11 @@ ALL_EXTS = IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS
 MAX_SIDE = 2048
 MAX_PIXELS = 1_500_000
 JPEG_QUALITY = 88
+# Short-edge cap for a still attached to a Write-plan turn. Two 12 MP phone
+# photos as vision tokens would crowd a 27B's context; 768 is enough to
+# read a face and a room. Not stored in any widget -- pixels still never
+# travel as base64 in `ref_plan`.
+VISION_SIDE = 768
 
 
 def kind_of(name):
@@ -77,6 +82,38 @@ def refs_dir(create=False):
     if create:
         os.makedirs(d, exist_ok=True)
     return d
+
+
+def vision_data_url(name, max_side=VISION_SIDE):
+    """JPEG data-URL of a still, for one chat-completion turn. -> str or None.
+
+    Prefix-checked through `resolve`. A video is skipped (no frame extract).
+    Failure is None, never a raise -- the writer can still name the file.
+    """
+    path = resolve(name, kinds={"image"})
+    if path is None:
+        return None
+    try:
+        import base64
+        import io
+        from PIL import Image, ImageOps  # noqa: PLC0415
+        with Image.open(path) as im:
+            im = ImageOps.exif_transpose(im)
+            w, h = im.size
+            if max(w, h) > int(max_side) > 0:
+                scale = int(max_side) / float(max(w, h))
+                im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))),
+                               Image.Resampling.LANCZOS)
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=False)
+        return "data:image/jpeg;base64," + base64.b64encode(
+            buf.getvalue()).decode("ascii")
+    except Exception as exc:
+        print(f"[{TAG}] could not attach {os.path.basename(path)}: {exc!r}",
+              flush=True)
+        return None
 
 
 def resolve(name, kinds=None):

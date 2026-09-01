@@ -17,11 +17,15 @@ stopped. That is the fault attempt 1 makes below.
 Covers:
   * split_reply     -- structured output, two fences, one bare object
   * validate        -- accepts a good plan; catches the tag mismatch, a bad
-                       duration label, an invented filename, a hop-count miss
+                       duration label, an invented filename, a hop-count miss,
+                       a missing subject box, a rail tag the model dropped
   * write_plan      -- repairs on attempt 2, reports warnings, and never
-                       returns an unvalidated plan when it cannot converge
+                       returns an unvalidated plan when it cannot converge;
+                       a pinned rail locks tags; stills ride only attempt 1
   * unload_all      -- the killswitch refuses to evict a writer that is not on
                        this machine, without opening a connection to find out
+  * free_for_render -- quiet when unconfigured; does not raise from inside a
+                       running event loop (ComfyUI's async execute path)
 """
 from __future__ import annotations
 
@@ -193,6 +197,58 @@ def main():
     ck("the log prefix is stripped for the model",
        errs and not errs[0].startswith("HandTieClips"), errs[0][:44])
 
+    nosub = json.loads(json.dumps(GOOD_REFS))
+    nosub["subjects"] = {}
+    errs, _ = PL.validate(json.dumps(GOOD_SHOTS), json.dumps(nosub),
+                          hops=3, known_files=FILES)
+    ck("a subject without continuity text is an error",
+       any("subject 1" in e and "locked" in e for e in errs),
+       "; ".join(errs[:1]))
+
+    pinned = [{"tag": "ref_1", "file": "cook_face.png"},
+              {"tag": "ref_2", "file": "kitchen.png"}]
+    rail = {
+        "refs": [{"tag": "ref_1", "file": "cook_face.png", "subject": 1,
+                  "retention": "fully_preserved"},
+                 {"tag": "ref_2", "file": "kitchen.png",
+                  "retention": "reference"}],
+        "subjects": GOOD_REFS["subjects"],
+    }
+    rail_shots = [
+        {"id": "s1", "beat": "@ref_1 looks up in @ref_2 and speaks.",
+         "directives": {}},
+        {"id": "s2", "beat": "She sets the knife down and looks out.",
+         "directives": {"tail": "settle"}},
+    ]
+    errs, _ = PL.validate(json.dumps(rail_shots), json.dumps(rail),
+                          hops=2, known_files=[p["file"] for p in pinned],
+                          pinned=pinned)
+    ck("a rail-pinned plan passes", not errs, "; ".join(errs[:2]))
+
+    stolen = json.loads(json.dumps(rail))
+    stolen["refs"][0]["file"] = "apron.png"
+    errs, _ = PL.validate(json.dumps(rail_shots), json.dumps(stolen),
+                          hops=2, known_files=[p["file"] for p in pinned],
+                          pinned=pinned)
+    ck("a pinned row cannot change file",
+       any("cook_face.png" in e for e in errs), "; ".join(errs[:1]))
+
+    extra = json.loads(json.dumps(rail))
+    extra["refs"].append({"tag": "hallway", "file": "apron.png"})
+    errs, _ = PL.validate(json.dumps(rail_shots), json.dumps(extra),
+                          hops=2, known_files=[p["file"] for p in pinned],
+                          pinned=pinned)
+    ck("a pinned rail rejects extra tags",
+       any("hallway" in e for e in errs), "; ".join(errs[:1]))
+
+    turn = PL.build_user_turn("she talks about life", 2, FILES)
+    ck("empty rail lists the folder", "cook_face.png" in turn
+       and "These reference files are on disk" in turn)
+    turn = PL.build_user_turn("she talks about life", 2, FILES, pinned=pinned)
+    ck("a filled rail does not dump the folder",
+       "@ref_1" in turn and "apron.png" not in turn
+       and "already on the rail" in turn)
+
     # ------------------------------------------------------------- write_plan
     print("\nplanner.write_plan -- the repair loop")
     fn = scripted([fence(GOOD_SHOTS, BAD_REFS),      # attempt 1: the A/B fault
@@ -238,6 +294,24 @@ def main():
     ck("an empty reply is reported as such",
        out["ok"] is False and any("no JSON" in e for e in out["errors"]),
        "; ".join(out["errors"][:1]))
+
+    # Stills ride the first user turn only. Repair stays text so attempt 2
+    # does not re-send two JPEGs.
+    fn = scripted([fence(rail_shots, rail)])
+    out = asyncio.run(
+        PL.write_plan("she talks about life", 2, complete_fn=fn,
+                      pinned=pinned,
+                      images=[{"tag": "ref_1",
+                               "data_url": "data:image/jpeg;base64,xx"}],
+                      use_schema=False))
+    ck("a pinned write converges", out["ok"] is True, "; ".join(out["errors"][:1]))
+    first = fn.seen[0][1]["content"]
+    ck("attempt 1 is multimodal",
+       isinstance(first, list)
+       and any((p or {}).get("type") == "image_url" for p in first))
+    ck("the still is labelled with its tag",
+       any("@ref_1 is this picture" in str((p or {}).get("text") or "")
+           for p in first))
 
     # ------------------------------------------------------- the killswitch
     # Only the parts that need no server. `unload_all` short-circuits on a
@@ -296,6 +370,27 @@ def main():
         _slept.clear()
         ck("unload_on_run off does nothing at all",
            LM.free_for_render(settle_sleep=_slept.append) == "" and not _slept)
+
+        LM.save_conn({"model": "some-model",
+                      "server_url": "http://192.0.2.1:1234",
+                      "unload_on_run": True})
+        _slept.clear()
+
+        async def _from_loop():
+            return LM.free_for_render(settle_sleep=_slept.append)
+
+        nested = asyncio.run(_from_loop())
+        ck("free_for_render from a running loop does not raise",
+           nested == "" and not _slept, repr(nested))
+
+        ck("text_only drops image parts",
+           LM.text_only([{"role": "user", "content": [
+               {"type": "text", "text": "hello"},
+               {"type": "image_url", "image_url": {"url": "data:,"}},
+           ]}])[0]["content"] == "hello")
+        ck("has_images sees a vision turn",
+           LM.has_images([{"role": "user", "content": [
+               {"type": "image_url", "image_url": {"url": "data:,"}}]}]))
 
         ck("the settle is capped",
            LM.save_conn({"vram_settle_s": 9999})["vram_settle_s"] == 60.0)

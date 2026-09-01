@@ -1,11 +1,12 @@
-/* WRITE -- have a local chat model fill in both JSON boxes.
+/* WRITE -- have a local chat model draft both JSON boxes.
  *
  * Optional in the strongest sense: with no server configured this section is a
  * one-line hint pointing at the manual recipe in `prompt_pack/README.md`, and
- * nothing it does can affect a render. The button writes into `shot_plan` and
- * `ref_plan` exactly as a paste would, so the cards, the lint badges and the
- * JSON escape hatch all keep working with no knowledge of where the text came
- * from. Queueing reads the widgets; the model is never in the execution path.
+ * nothing it does can affect a render. A successful draft is held here until
+ * Accept, which writes into `shot_plan` and `ref_plan` exactly as a paste
+ * would. Discard leaves the cards alone. A plan silently rewritten under you
+ * is worse than no plan; the model is a drafting aid, not the store.
+ * Queueing reads the widgets; the model is never in the execution path.
  *
  * The status line is the point of the design, not decoration. The server-side
  * loop generates, validates with the node's own checkers, and feeds any error
@@ -50,8 +51,9 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     hops.title = "How many hops to write.";
     row.appendChild(hops);
 
-    const go = button("Write plan", "Generate a plan and repair it until the "
-        + "node accepts it", () => run());
+    const go = button("Write plan", "Draft a plan and repair it until the "
+        + "node accepts it. Your cards do not change until you press Accept.",
+        () => run());
     row.appendChild(go);
 
     // In the main row on purpose. This is the button you reach for when a
@@ -65,6 +67,22 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const status = el("div", "h3e-note h3e-writer-status");
     status.style.display = "none";
     body.appendChild(status);
+
+    const draft = el("div", "h3e-writer-draft");
+    draft.style.display = "none";
+    const draftList = el("div", "h3e-writer-draft-list");
+    draft.appendChild(draftList);
+    const draftBtns = el("div", "h3e-writer-row");
+    const acceptBtn = button("Accept",
+        "Put this draft on the shot and reference cards, replacing what is there.",
+        () => acceptDraft());
+    const discardBtn = button("Discard",
+        "Throw the draft away. The cards stay as they are.",
+        () => discardDraft());
+    draftBtns.appendChild(acceptBtn);
+    draftBtns.appendChild(discardBtn);
+    draft.appendChild(draftBtns);
+    body.appendChild(draft);
 
     /* -- settings ------------------------------------------------------ */
     const cog = el("details", "h3e-writer-conn");
@@ -123,6 +141,58 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     /* -- state --------------------------------------------------------- */
     let busy = false;
     let conn = null;
+    let pending = null;     // {shot, ref} waiting on Accept, or null
+
+    function summarise(shotJson, refJson) {
+        let shots = [];
+        try {
+            const p = JSON.parse(shotJson || "null");
+            shots = Array.isArray(p) ? p : (p?.shots || []);
+        } catch (_) { shots = []; }
+        let refs = [];
+        try {
+            const r = JSON.parse(refJson || "null");
+            refs = (r?.refs || []).map((x) =>
+                "@" + String(x.tag || "").replace(/^@/, ""));
+        } catch (_) { refs = []; }
+        return { shots, refs };
+    }
+
+    function showDraft(shotJson, refJson) {
+        pending = { shot: shotJson || "", ref: refJson || "" };
+        draftList.textContent = "";
+        const { shots, refs } = summarise(pending.shot, pending.ref);
+        if (!shots.length) {
+            draftList.appendChild(el("div", "h3e-note",
+                "The draft has no shots. Discard it and try a different brief."));
+        } else {
+            shots.forEach((s, i) => {
+                const beat = String(s.beat || "").replace(/\s+/g, " ").trim();
+                const short = beat.length > 110 ? `${beat.slice(0, 107)}…` : beat;
+                draftList.appendChild(el("div", "h3e-writer-draft-line",
+                    `${i + 1}. ${short || "(empty beat)"}`));
+            });
+        }
+        if (refs.length) {
+            draftList.appendChild(el("div", "h3e-count", refs.join("  ")));
+        }
+        draft.style.display = "";
+    }
+
+    function discardDraft() {
+        pending = null;
+        draft.style.display = "none";
+        draftList.textContent = "";
+    }
+
+    function acceptDraft() {
+        if (!pending) return;
+        const shot = pending.shot;
+        const ref = pending.ref;
+        discardDraft();
+        onWritten?.(shot, ref);
+        say("Accepted. On the cards now.", "hint");
+    }
 
     function say(text, kind) {
         status.style.display = text ? "" : "none";
@@ -136,6 +206,8 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         go.disabled = on;
         // Unloading mid-generation would evict the model answering the prompt.
         freeBtn.disabled = on;
+        acceptBtn.disabled = on;
+        discardBtn.disabled = on;
         go.textContent = on ? "Writing…" : "Write plan";
     }
 
@@ -276,11 +348,12 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                     : (j.error || "the plan writer failed"), "error");
                 return;
             }
-            onWritten?.(j.shot_plan || "", j.ref_plan || "");
+            showDraft(j.shot_plan || "", j.ref_plan || "");
             const warn = (j.warnings || []).slice(0, 3)
                 .map((w) => `• ${w}`).join("\n");
-            say(`Wrote ${hops.value} hop(s) in ${j.attempts} attempt(s).`
-                + (warn ? `\n\nWorth a look before you queue:\n${warn}` : ""),
+            say(`Draft of ${hops.value} hop(s) in ${j.attempts} attempt(s). `
+                + `Accept to put it on the cards, or Discard to keep what you have.`
+                + (warn ? `\n\nWorth a look before you accept:\n${warn}` : ""),
                 // Lints are shown but never auto-retried: a model asked to fix
                 // a lint it disagrees with rewrites the parts that were fine.
                 // "warn" is the absence of both modifiers -- a bare .h3e-note

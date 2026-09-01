@@ -131,9 +131,9 @@ function mountEditor(node) {
         onChange: () => node.graph?.setDirtyCanvas?.(true, true),
     });
 
-    // A written plan lands in the two widgets and then goes through the same
-    // reload path a hand-paste does, so nothing downstream needs to know a
-    // model was involved. Collapsed by default and inert until opened: this is
+    // Accept, not Write plan, lands the two strings in the widgets and then
+    // goes through the same reload path a hand-paste does. Write plan only
+    // holds a draft. Collapsed by default and inert until opened: this is
     // an accelerator for the manual recipe, not a step in it.
     const writer = createWriterBar(node, {
         hopCount,

@@ -1227,3 +1227,8 @@ crash.
 nothing slept. It also redirects `_conn_path` at a temp file first -- a checker
 that overwrites the user's real writer settings as a side effect of passing is
 not one anybody should run.
+
+**Suggest, don't set.** `2450d96` wrote `shot_plan` and `ref_plan` the moment a
+draft converged. A plan silently rewritten under you is worse than no plan, so
+the bar now holds the JSON until Accept. Discard leaves the cards as they were.
+The route is unchanged; only the last inch of the panel moved.

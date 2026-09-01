@@ -935,3 +935,16 @@
     padding: 4px 0;
 }
 .h3e-writer-conn > summary:hover { color: var(--h3-muted); }
+
+.h3e-writer-draft {
+    border: 1px solid var(--h3-line);
+    border-radius: var(--h3-radius-sm);
+    padding: 6px 8px;
+    margin: var(--h3-gap-sm) 0;
+}
+.h3e-writer-draft-line {
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-muted);
+    line-height: 1.4;
+    margin-bottom: 4px;
+}

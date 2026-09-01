@@ -183,8 +183,10 @@ Simple mode clears `shot_plan` (stashing it in `node.properties.h3_plan_backup` 
 
 Optional, off until configured, and **never** on the execution path. The panel's
 WRITE section posts a brief to `POST /h3_ref_chain/plan`; the route generates,
-validates, repairs and returns two JSON strings that land in `shot_plan` and
-`ref_plan` exactly as a paste would. `run()` is untouched, there is no new
+validates, repairs and returns two JSON strings. The bar **holds them as a
+draft** until Accept, which then writes `shot_plan` and `ref_plan` exactly as
+a paste would. Discard leaves the cards alone. A plan silently rewritten under
+you is worse than no plan. `run()` is untouched, there is no new
 `INPUT_TYPES` entry and no `IS_CHANGED` change, so a queued graph stays
 deterministic and renders with the network unplugged.
 

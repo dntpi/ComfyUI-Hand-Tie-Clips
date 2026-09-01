@@ -11,9 +11,14 @@ Everything needed to have a language model write plans for this node.
 
 ## Using it in LM Studio (or any local chat app)
 
-1. Load a model and set its **context length to 16384 or more**. The system
-   prompt is ~4,700 tokens and the reply is another 1,000-2,000; a small window
-   truncates the rules and you get invented directive names.
+1. Load a model and set its **context length to 16384 or more** — and to
+   **32768 if the model reasons**. The system prompt is ~4,700 tokens and the
+   reply is another 1,000-2,000; a small window truncates the rules and you get
+   invented directive names. A reasoning model adds far more than that on top:
+   gemma4-26b measured 8,010 tokens of thinking before 858 tokens of JSON, and
+   at a 4,096 reply budget it produced *no answer at all* — 4,093 tokens of
+   reasoning and an empty message, which looks like a refusal and is really a
+   budget that ran out mid-thought.
 2. Open `SYSTEM_PROMPT.md`, select all, paste it into the **System Prompt** box
    in LM Studio's right-hand sidebar. Nothing else goes in that box.
 3. Set **temperature 0.3-0.5**. Higher and the JSON starts growing trailing
@@ -40,6 +45,45 @@ Everything needed to have a language model write plans for this node.
 
 Want it to match a particular shape? Paste `EXAMPLE_6_HOP.md` as a second
 message before describing your scene.
+
+## Or let the panel do it — ALPHA
+
+The steps above are the supported route and are not going anywhere. They work
+with any chat model, hosted or local, and need nothing running.
+
+The **WRITE** section at the top of the node's panel automates them against a
+local OpenAI-compatible server. Open it, open **Settings**, point it at LM
+Studio (`http://127.0.0.1:1234`), pick a **loaded** model — the dropdown marks
+loaded ones with `●`, because LM Studio lists everything installed — and Save.
+Then type the scene in one line, set the hop count, and press **Write plan**.
+
+What it does that the copy-paste route cannot: it runs step 7 for you. The plan
+comes back, the node's own validators check it, and any error is fed back to the
+model for another attempt — up to three. The status line names each repair as it
+happens, so a fixed `@tag` mismatch reads as
+
+    attempt 2/3 — fixing: shot 1: the beat uses @kitchen but the reference
+    register does not declare it.
+
+rather than happening invisibly. Lints that do not stop a queue are shown but
+never retried; read them before you queue.
+
+Notes and limits:
+
+* **Nothing here runs during a render.** The button fills the two JSON boxes and
+  stops. Queueing reads the boxes, so a graph still renders with the network
+  unplugged and an API-submitted workflow is unaffected — it also means a
+  headless run gets no plan writer.
+* **Settings live on this machine**, in a gitignored `htc_llm.json` beside the
+  node, never in the workflow. A shared `.json` cannot point at your server.
+* **Unload after writing** is on by default. A 27B and an H3 render do not fit
+  on one card. It is skipped when the server is on another machine.
+* **Free VRAM** unloads everything the writer is holding, on demand. Reach for
+  it before queueing if a render just ran out of memory: the automatic unload
+  only hands back the model configured here, and LM Studio may have loaded a
+  different one on its own.
+* No API keys, no cloud providers, no model downloading — local servers only.
+* This is **alpha**. The manual recipe above is the one to fall back on.
 
 Small local models (7B-8B) hold the JSON schema fine but drift on the prose
 rules — they will write negations. Read the plan before queueing; a beat that

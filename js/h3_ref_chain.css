@@ -925,3 +925,81 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 }
 
 .h3e-tpl-row > .h3e-btn { flex: 0 0 auto; }
+
+/* -- WRITE: the optional plan writer -------------------------------------
+ *
+ * A <details> wearing .h3e-section, like RUN, so it keeps the panel chrome
+ * whether it is open or shut. Collapsed by default and it stays that way for
+ * anyone who writes their JSON by hand -- opening it is what first reaches the
+ * configured server, so a shut section costs nothing on canvas load.
+ */
+.h3e-writer > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    cursor: pointer;
+    list-style: none;
+    min-height: var(--h3-row-h);
+}
+.h3e-writer > summary::-webkit-details-marker { display: none; }
+.h3e-writer > summary::after {
+    content: "▸";
+    margin-left: auto;
+    color: var(--h3-faint);
+    font-size: var(--h3-fs-sm);
+}
+.h3e-writer[open] > summary::after { content: "▾"; }
+.h3e-writer > summary:hover .h3e-title { color: var(--h3-text); }
+
+.h3e-writer-body { padding-top: var(--h3-gap); }
+
+.h3e-writer-row {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    margin-bottom: var(--h3-gap-sm);
+    /* The brief, the hop count and two buttons do not fit a narrow node at
+       one line. Wrap rather than squeezing the brief down to nothing. */
+    flex-wrap: wrap;
+}
+.h3e-writer-row button { flex: 0 0 auto; }
+.h3e-writer-brief { flex: 1 1 auto; min-width: 0; }
+.h3e-writer-hops  { flex: 0 0 56px; text-align: center; }
+.h3e-writer-url   { flex: 1 1 auto; min-width: 0; }
+.h3e-writer-model { flex: 1 1 auto; min-width: 0; }
+
+/* The status line carries the repair log, so it has to keep the newlines the
+ * script puts in it -- one bullet per validator error. Collapsing them onto
+ * one line is what makes an automated fix look like a black box. */
+.h3e-writer-status { white-space: pre-wrap; }
+
+.h3e-writer-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--h3-muted);
+    font-size: var(--h3-fs-sm);
+    cursor: pointer;
+}
+.h3e-writer-check input { margin: 0; }
+
+.h3e-writer-conn > summary {
+    cursor: pointer;
+    color: var(--h3-faint);
+    font-size: var(--h3-fs-sm);
+    padding: 4px 0;
+}
+.h3e-writer-conn > summary:hover { color: var(--h3-muted); }
+
+.h3e-writer-draft {
+    border: 1px solid var(--h3-line);
+    border-radius: var(--h3-radius-sm);
+    padding: 6px 8px;
+    margin: var(--h3-gap-sm) 0;
+}
+.h3e-writer-draft-line {
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-muted);
+    line-height: 1.4;
+    margin-bottom: 4px;
+}

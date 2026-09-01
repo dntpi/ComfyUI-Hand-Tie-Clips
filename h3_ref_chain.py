@@ -1464,6 +1464,23 @@ class HandTieClips:
             reference_video_start_s=0.0, reference_video_end_s=0.0,
             music_start_s=0.0, music_end_s=0.0,
             unique_id=None):
+        # First thing, before a single model is touched: hand the writer's VRAM
+        # back. The plan writer stays resident between plans now, which is the
+        # right trade everywhere except here -- a 27B and an H3 render do not
+        # share a card, and "write a plan, then queue" would OOM in a way that
+        # reads as this node's fault.
+        #
+        # This BLOCKS, deliberately. `run()` is the execution worker thread, not
+        # the aiohttp event loop that `llm.py`'s no-blocking rule protects, and
+        # the render is precisely what the VRAM is being freed for. Costs
+        # nothing when the writer was never configured or nothing is resident,
+        # which is almost every render; see `llm.free_for_render`.
+        try:
+            from . import llm as _llm
+            _llm.free_for_render()
+        except Exception as _le:  # noqa: BLE001
+            print(f"[{TAG}] writer unload skipped ({_le!r})", flush=True)
+
         dry = str(dry_run) == "on"
         draft = str(quality) == "draft"
         want_sheet = str(contact_sheet) == "on" or dry

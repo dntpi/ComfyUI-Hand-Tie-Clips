@@ -148,7 +148,7 @@ Hop 2+ carries **no identity header at all**. `_assemble_next` has no `identity_
 
 ### 6. The editor (`js/editor/*`, `routes.py`)
 
-The node is driven by a DOM panel, not by hand-written JSON. Five files:
+The node is driven by a DOM panel, not by hand-written JSON. Six files:
 
 | file | job |
 |---|---|
@@ -157,6 +157,7 @@ The node is driven by a DOM panel, not by hand-written JSON. Five files:
 | `js/editor/plan_editor.js` | Simple/Shots toggle, shot cards, JSON escape hatch |
 | `js/editor/ref_rail.js` | reference register rows and subject blocks |
 | `js/editor/run_panel.js` | the shot-independent dials, grouped (added 2026-08-27) |
+| `js/editor/writer_bar.js` | the optional LLM plan writer, collapsed (added 2026-08-30, ALPHA) |
 
 **`shot_plan` and `ref_plan` remain the only source of truth.** The panel reads them and writes straight back, so a workflow authored in the editor and one typed by hand are the same file. Never add a parallel store.
 
@@ -177,6 +178,61 @@ Two recipes here are load-bearing and both are ported from `PromptMasterLD/js/cl
 **Dropdown options come from `routes.py`, never from a copy in JS.** `GET /h3_ref_chain/vocab` serves `directives.VOCAB` *with its prose*, so hovering an option shows the exact sentence it will put in the prompt. A second copy in JavaScript would defeat the reason `directives.py` exists. The route is read-only — no writes, no filesystem; the reference-upload route is a separate unbuilt thing.
 
 Simple mode clears `shot_plan` (stashing it in `node.properties.h3_plan_backup` first) so `run()` cannot silently prefer a stale plan over the visible prompt.
+
+### 6b. The plan writer (`llm.py`, `planner.py`) — ALPHA
+
+Optional, off until configured, and **never** on the execution path. The panel's
+WRITE section posts a brief to `POST /h3_ref_chain/plan`; the route generates,
+validates, repairs and returns two JSON strings. The bar **holds them as a
+draft** until Accept, which then writes `shot_plan` and `ref_plan` exactly as
+a paste would. Discard leaves the cards alone. A plan silently rewritten under
+you is worse than no plan. `run()` is untouched, there is no new
+`INPUT_TYPES` entry and no `IS_CHANGED` change, so a queued graph stays
+deterministic and renders with the network unplugged.
+
+Four rules, each of which cost something to learn:
+
+- **No subprocess, ever.** 0.4.1–0.4.3 were registry-Flagged under
+  `python_command_injection_risk` until `store.py` moved off `subprocess.Popen`.
+  PromptMasterLD's unload ladder ends in `lms unload --all`; that rung is
+  deliberately absent here and the four HTTP ones are enough. `unload_all` is
+  the killswitch that rung existed for: it lists loaded models over HTTP and
+  walks each through the same ladder. `unload` alone was not enough, because
+  it only ever targets the configured model -- and the three cases that
+  actually OOM a render are the ones where that is not what is resident (the
+  checkbox was off, the write failed early, or JIT loaded something else). The sibling pack
+  can afford it because it has no `pyproject.toml` and is never scanned.
+- **No blocking I/O.** These functions are awaited inside aiohttp handlers, so
+  `urllib.request` — which is what PromptMasterLD uses from its worker thread —
+  would freeze ComfyUI's event loop for the length of a generation.
+- **`validate()` re-runs the real checkers.** `parse_plan`, `parse_ref_plan`,
+  `resolve_tags`, the duration table, `check_coherence`, `check_place_handoff`,
+  `check_over_delivery`, `refs.check`. A second copy of the rules is a second
+  thing to get wrong. Errors are what the node would *reject* and go back to the
+  model; warnings are lints, shown but never retried — a model asked to fix a
+  lint rewrites the parts that were fine.
+- **`wired` is derived from the file list, not left empty.** A ref whose picture
+  is not wired is not active on any hop, so `resolve_tags` then rejects a tag
+  that was perfectly declared. Getting this wrong makes every good plan look
+  broken; `tools/check_planner.py` caught exactly that.
+
+`write_plan()` takes its completion function as an **argument** so the loop runs
+against a scripted fake with no server. That is the whole of
+`tools/check_planner.py`, and it is the only proof the repair path works that
+does not need a GPU, a server and someone watching. The fault it plants is the
+real one from the A/B: a beat citing `@kitchen` that the register never declares.
+
+Two LM Studio specifics worth not rediscovering: `/v1/models` lists what is
+*installed*, not what is in memory, so the dropdown reads `/api/v0/models` for a
+`state` field and marks loaded models `●` — otherwise the first Write plan fails
+with `HTTP 400: Model unloaded by user or API request`, which the list implied
+was impossible. And a reasoning model returns the plan in `reasoning_content`
+with an **empty** `content`; both payload switches are sent, and a `/no_think`
+retry covers builds that ignore them.
+
+Settings live in a gitignored `htc_llm.json` beside the node — a machine
+property, never a widget, so a shared workflow cannot point at someone else's
+server. No API keys: local servers only.
 
 ### 7. Tone compensation (`tone.py`)
 
@@ -226,7 +282,7 @@ Three facts follow, and they are the justification for the feature. It is **achr
 
 The cost is `frame_shift`'s alone: **dark clipping tripled, 0.32% -> 0.96%**, because subtracting a flat 5.26/255 pushes near-black pixels through zero. That is the crushed-blacks endgame already visible at hop 3. A gain-only mode anchored at black (`out = g * mean(src)/mean(tgt)`, no bias term) would fix it without introducing a fitted slope, and is the obvious next mode if long chains ever need one.
 
-**Seam measurements understate it by about a third, so never use them to decide.** `tools/seam_probe.py` on the same master reads `+1.56/255` and `+1.83/255` (sum `+3.39/255`) against the cache's `+5.18/255`: the frames either side of a cut are ~0.9 s apart in scene time and the content change partly cancels the drift. Earlier estimates of `≈2/255` from `chain_00047`/`00050`/`00051` were this same floor, mistaken for the value. Seam numbers are still the right *after* instrument -- `tone_probe` reads the cache, which stores raw pre-correction hops by design -- but only as an A/B between two masters from the same seed and cache, where the contamination is identical in both and cancels. **Note `temp/` is wiped on ComfyUI start, so probe before restarting.**
+**Seam measurements do not just understate it, they can invert it, so never use them to decide.** `tools/seam_probe.py` on the same master reads `+1.56/255` and `+1.83/255` (sum `+3.39/255`) against the cache's `+5.18/255`: the frames either side of a cut are ~0.9 s apart in scene time and the content change partly cancels the drift. Earlier estimates of `≈2/255` from `chain_00047`/`00050`/`00051` were this same floor, mistaken for the value. Seam numbers are still the right *after* instrument -- `tone_probe` reads the cache, which stores raw pre-correction hops by design -- but only as an A/B between two masters from the same seed and cache, where the contamination is identical in both and cancels. **Note `temp/` is wiped on ComfyUI start, so probe before restarting.** **Measured 2026-08-30 (DEVLOG 25): two 2-hop kitchen renders read `-0.31/255` and `-1.05/255` at the seam -- labelled `invisible` and `marginal` -- against true per-hop drift of `+2.17/255` and `+2.63/255` from the cache. The scene darkened across the cut by more than the generator brightened, so the sign flipped. "About a third low" is the benign case; the error is bounded in neither magnitude nor direction.**
 
 Offline results (`frame_shift`, synthetic): recovers a planted additive shift to <1e-5; `gain_bias` recovers 0.92/+0.04 as 1.0870/−0.0435 exactly. A simulated 4-hop chain drifts +1.95/255 uncorrected and −0.13/255 corrected, with each hop's fitted shift staying at the planted per-hop bias rather than accumulating. That validates the mechanism, not the real-world magnitude.
 

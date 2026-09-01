@@ -446,7 +446,7 @@ def _merge_dict(base, patch):
     return out
 
 
-def _merge_register(base_text, patch_text):
+def _merge_register(base_text, patch_text, keep=None):
     """Keep tags/files/desc already won; overlay new non-empty fields.
 
     A repair that re-emits the refs without `desc`, or `subjects: {}`, used
@@ -464,9 +464,85 @@ def _merge_register(base_text, patch_text):
                 continue
             tag = r["tag"]
             by_tag[tag] = _merge_dict(by_tag.get(tag) or {}, r)
+    if keep:
+        # On the pinned path a tag that is not on the rail is not a reference,
+        # it is a leftover from an attempt that renamed things. Carrying it
+        # forward made every later attempt fail on the FIRST attempt's names.
+        by_tag = {t: r for t, r in by_tag.items() if t in keep}
     refs = list(by_tag.values()) if by_tag else (base.get("refs") or [])
     subs = _merge_dict(base.get("subjects") or {}, patch.get("subjects") or {})
     return json.dumps({"refs": refs, "subjects": subs}, indent=2)
+
+
+def _remap_pinned_tags(shot_text, ref_text, pinned):
+    """Rename invented tags back to the rail's, matching on `file`.
+
+    The rail pins a tag to a picture. A model that has just looked at that
+    picture names it for what it saw -- `@girl_face` for a row the user called
+    `@ref_1`, whose file is `cafe_floral_9x16.jpg`. That is the better name and
+    the wrong one: Accept writes back onto rail rows keyed by tag, so a renamed
+    row lands nowhere.
+
+    The filename is the identity, so a ref whose `file` matches a rail row IS
+    that row whatever it calls itself. Rewriting here, before the merge and the
+    validate, turns three attempts spent arguing about names into one that only
+    has to fill prose. The shot plan is rewritten in the same pass or the tag
+    round trip at the bottom of `validate` would break on the way past.
+    """
+    rows = [p for p in (pinned or []) if isinstance(p, dict)]
+    if not rows:
+        return shot_text, ref_text, {}
+
+    by_file = {}
+    for p in rows:
+        f = str(p.get("file") or "").strip()
+        t = str(p.get("tag") or "").lstrip("@").strip()
+        if f and t:
+            by_file.setdefault(f, t)
+    rail = {str(p.get("tag") or "").lstrip("@").strip() for p in rows}
+
+    obj = _parse_obj(ref_text)
+    if not obj:
+        return shot_text, ref_text, {}
+    wrapped = isinstance(obj.get("ref_plan"), dict)
+    reg = obj["ref_plan"] if wrapped else obj
+    refs = reg.get("refs")
+    if not isinstance(refs, list):
+        return shot_text, ref_text, {}
+
+    have = {str(r.get("tag") or "").lstrip("@").strip()
+            for r in refs if isinstance(r, dict)}
+    mapping = {}
+    for r in refs:
+        if not isinstance(r, dict):
+            continue
+        tag = str(r.get("tag") or "").lstrip("@").strip()
+        want = by_file.get(str(r.get("file") or "").strip())
+        if not tag or not want or tag in rail or want == tag:
+            continue
+        # Do not collide with a row that already carries the rail name.
+        if want in have or want in mapping.values():
+            continue
+        mapping[tag] = want
+        r["tag"] = want
+        have.discard(tag)
+        have.add(want)
+
+    if not mapping:
+        return shot_text, ref_text, {}
+
+    ref_out = json.dumps({"ref_plan": reg} if wrapped else reg, indent=2)
+    shot_out = _sub_tags(shot_text, mapping)
+    return shot_out, ref_out, mapping
+
+
+def _sub_tags(text, mapping):
+    """Rewrite @tag citations anywhere in a block, prose and beat alike."""
+    if not text or not mapping:
+        return text
+    return re.sub(r"@([A-Za-z0-9_]+)",
+                  lambda m: "@" + mapping.get(m.group(1), m.group(1)),
+                  text)
 
 
 def _only_register_prose_gaps(errors):
@@ -560,6 +636,8 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     files = ([p.get("file") for p in pinned if p.get("file")]
              if pinned else list(files or []))
+    rail_tags = {str(p.get("tag") or "").lstrip("@").strip()
+                 for p in pinned if p.get("tag")}
     text = build_user_turn(brief, hops, files, pinned=pinned)
     messages = [{"role": "system", "content": system_prompt()},
                 {"role": "user", "content": attach_images(text, images)}]
@@ -574,13 +652,24 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                      "errors": last_errors})
         reply = await complete_fn(messages, schema=sch)
         new_shots, new_refs = split_reply(reply)
+        # A model that looked at the stills names the rows for what it saw.
+        # Map those back onto the rail by filename before anything else reads
+        # them, so the merge stays keyed on rail tags and the repair turn is
+        # free to spend its budget on the prose that is actually missing.
+        if new_refs:
+            new_shots, new_refs, renamed = _remap_pinned_tags(
+                new_shots or shot_text, new_refs, pinned)
+            if renamed:
+                print(f"[{TAG}] rail tags restored by filename: "
+                      + ", ".join(f"@{k} -> @{v}"
+                                  for k, v in renamed.items()), flush=True)
         if new_shots:
             shot_text = new_shots
         if new_refs:
             # A later turn that re-emits refs without desc, or subjects: {},
             # must not wipe the register the previous turn already filled.
             if ref_text:
-                ref_text = _merge_register(ref_text, new_refs)
+                ref_text = _merge_register(ref_text, new_refs, keep=rail_tags)
             else:
                 ref_text = new_refs
         if not shot_text:

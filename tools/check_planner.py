@@ -257,6 +257,53 @@ def main():
     ck("a pinned row needs a desc",
        any("desc" in e and "@ref_1" in e for e in errs), "; ".join(errs[:1]))
 
+    # The live failure of 2026-09-02: a model that looked at the stills named
+    # the rows for what it saw. The files were right; only the names moved.
+    renamed = {
+        "refs": [{"tag": "girl_face", "file": "cook_face.png", "subject": 1,
+                  "retention": "fully_preserved",
+                  "desc": "a woman facing the camera, dark hair tied back"},
+                 {"tag": "kitchen", "file": "kitchen.png",
+                  "retention": "reference",
+                  "desc": "a kitchen counter and window in daylight"}],
+        "subjects": GOOD_REFS["subjects"],
+    }
+    renamed_shots = [
+        {"id": "s1", "beat": "@girl_face looks up in @kitchen and speaks.",
+         "directives": {}},
+        {"id": "s2", "beat": "She sets the knife down and looks out.",
+         "directives": {"tail": "settle"}},
+    ]
+    st, rt, mapping = PL._remap_pinned_tags(
+        json.dumps(renamed_shots), json.dumps(renamed), pinned)
+    ck("an invented tag is mapped back by filename",
+       mapping.get("girl_face") == "ref_1"
+       and mapping.get("kitchen") == "ref_2", repr(mapping))
+    ck("the beat is rewritten with it",
+       "@ref_1 looks up in @ref_2" in st, st[:90])
+    ck("no @girl_face survives the rewrite",
+       "girl_face" not in st and "girl_face" not in rt)
+    errs, _ = PL.validate(st, rt, hops=2,
+                          known_files=[p["file"] for p in pinned],
+                          pinned=pinned)
+    ck("and the remapped plan validates clean", not errs, "; ".join(errs[:2]))
+
+    ck("a rail row that kept its name is left alone",
+       PL._remap_pinned_tags(json.dumps(rail_shots), json.dumps(rail),
+                             pinned)[2] == {})
+    ck("an unpinned write is never remapped",
+       PL._remap_pinned_tags(json.dumps(renamed_shots), json.dumps(renamed),
+                             [])[2] == {})
+
+    # A ref whose file is not on the rail has no identity to map to, so the
+    # name stands and validate still calls it out.
+    invented = json.loads(json.dumps(renamed))
+    invented["refs"].append({"tag": "hallway", "file": "nowhere.png",
+                             "desc": "a hallway"})
+    ck("a file the rail never had is not remapped",
+       "hallway" not in PL._remap_pinned_tags(
+           json.dumps(renamed_shots), json.dumps(invented), pinned)[2].values())
+
     kept = PL._merge_register(
         json.dumps({"refs": [{"tag": "ref_1", "file": "a.jpg",
                               "desc": "a woman in green"}],
@@ -340,6 +387,30 @@ def main():
     ck("the still is labelled with its tag",
        any("@ref_1 is this picture" in str((p or {}).get("text") or "")
            for p in first))
+
+    # End to end on the live fault. Attempt 1 renames every row and never
+    # takes it back; before the remap this could not converge at all, because
+    # the merge carried attempt 1's names into every later register.
+    fn = scripted([fence(renamed_shots, renamed)])
+    out = asyncio.run(
+        PL.write_plan("she talks about her day", 2, complete_fn=fn,
+                      pinned=pinned, use_schema=False))
+    ck("a write that renames the rail still converges",
+       out["ok"] is True, "; ".join(out["errors"][:1]))
+    ck("and it converges on the first attempt", out["attempts"] == 1)
+    ck("the accepted register carries the rail's tags",
+       {r["tag"] for r in json.loads(out["ref_plan"])["refs"]}
+       == {"ref_1", "ref_2"}, out["ref_plan"][:120])
+    ck("the accepted beat cites the rail's tags",
+       "@ref_1" in out["shot_plan"] and "girl_face" not in out["shot_plan"])
+
+    # One attempt's invented name must not outlive it. This is what made the
+    # live run fail on `@girl_face` even after the model had corrected itself.
+    stale = PL._merge_register(
+        json.dumps(renamed), json.dumps(rail), keep={"ref_1", "ref_2"})
+    ck("a stale off-rail tag is dropped from the merge",
+       {r["tag"] for r in json.loads(stale)["refs"]} == {"ref_1", "ref_2"},
+       stale[:120])
 
     empty_sub = json.loads(json.dumps(GOOD_REFS))
     empty_sub["subjects"] = {}

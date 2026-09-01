@@ -142,7 +142,10 @@ function validate(plan, wired) {
             problems.set(r, `slot ${r.slot} is already taken by @${seenSlot.get(r.slot).tag}`);
         }
         seenSlot.set(r.slot, r);
-        if (!wired.has(r.slot || 0)) {
+        // The picture, not the slot. `wired` is derived from row index; a
+        // freshly clicked-in row used to have file set and slot unset, so
+        // this branch fired "no picture chosen" over a visible thumbnail.
+        if (!String(r.file || "")) {
             problems.set(r, r.legacy_slot
                 ? `was wired to ref_image_${r.legacy_slot}, which no longer exists `
                   + `— pick its picture to bring this ref back`
@@ -318,7 +321,13 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                     // "was wired to slot N" note has to go with it.
                     if (v) r.legacy_slot = null;
                 },
-                onChange: () => { commit(); render(); },
+                // Rebuild on a later turn. `commit` tears down this <select>
+                // in the middle of its own `change`; the browser then fires
+                // again with value "", which used to wipe `file` and leave
+                // the red "no picture chosen" banner on a row that just
+                // showed a thumbnail. Paste-JSON never hit this because it
+                // never goes through the dropdown.
+                onChange: () => queueMicrotask(() => commit()),
                 title: "The picture this reference stands for. Drop a file, or click to browse.",
             });
             pick.root.classList.add("h3e-slot");

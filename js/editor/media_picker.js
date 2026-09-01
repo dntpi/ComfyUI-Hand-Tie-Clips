@@ -239,6 +239,10 @@ export function createPicker({ kind = "image", get, set, onChange, title } = {})
         take(e.dataTransfer.files);
     });
     picker.addEventListener("change", () => {
+        // A parent that rebuilds its DOM in this handler disconnects us
+        // and some browsers emit a second change with value "". Ignore
+        // that one; the first change already stored the name.
+        if (!root.isConnected) return;
         set(picker.value);
         paint();
         onChange?.();

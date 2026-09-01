@@ -21,6 +21,10 @@ is fine from its worker thread. These functions are awaited directly inside
 aiohttp handlers, so a blocking read would freeze ComfyUI's event loop -- and
 the whole UI with it -- for the length of a generation. On a 27B that is tens of
 seconds of a frozen canvas, indistinguishable from a hang.
+
+The one exception is `free_for_render`, which is called from the node's `run()`
+on the execution worker thread rather than from a handler, and blocks on
+purpose. It is marked as such where it is defined. Nothing else here may.
 """
 
 import json
@@ -63,7 +67,26 @@ CONN = {
     "server_url": DEFAULT_BASE,
     "model": "",
     "temperature": 0.35,
-    "unload_after": True,
+    # Warm between plans; evicted when a render is queued.
+    #
+    # Replaces `unload_after`, which unloaded the moment a plan was written.
+    # That was the safe default before there was anywhere else to put the
+    # eviction, and it made the writer expensive for the way it is actually
+    # used: nobody writes one plan. They write one, read it, change the brief,
+    # write another -- and every one of those paid a full model load, tens of
+    # seconds on a 27B, to hand back VRAM that nothing was waiting for.
+    #
+    # The card is contended at exactly one moment, and it is a moment we can
+    # see coming. So stay resident until then; `unload_on_run` is what makes
+    # that safe rather than merely convenient. See `free_for_render`.
+    "keep_warm": True,
+    "unload_on_run": True,
+    # Seconds to wait after evicting, before a diffusion model loads. The
+    # unload endpoint returns when the server drops its reference, not when the
+    # driver has released the allocation, and on a slower card those are not
+    # the same instant. Settable because 5 is a guess about someone else's
+    # hardware; skipped entirely when nothing was actually unloaded.
+    "vram_settle_s": 5.0,
 }
 _CONN_KEYS = tuple(CONN)
 
@@ -116,8 +139,15 @@ def save_conn(patch):
                 v = max(0.0, min(2.0, float(v)))
             except (TypeError, ValueError):
                 continue
-        elif k == "unload_after":
+        elif k in ("keep_warm", "unload_on_run"):
             v = bool(v)
+        elif k == "vram_settle_s":
+            try:
+                # Capped: this blocks a render, and a settle long enough to
+                # look like a hang is worse than an OOM you can read.
+                v = max(0.0, min(60.0, float(v)))
+            except (TypeError, ValueError):
+                continue
         CONN[k] = v
     try:
         with open(_conn_path(), "w", encoding="utf-8") as fh:
@@ -549,3 +579,69 @@ async def unload_all(base_url, fallback_model=""):
     if guessing:
         note += " (this server does not report what is loaded)"
     return len(done), note
+
+
+def configured():
+    """Has anyone actually set this pack's writer up? -> bool.
+
+    Filesystem only, no network, no import of aiohttp. `free_for_render` is on
+    the critical path of EVERY render, including the overwhelming majority that
+    never touch the plan writer, and those must pay nothing at all -- not a
+    socket, not a DNS lookup, not a 4 s timeout against a port with nothing
+    behind it. A settings file that has never been written is the cheapest
+    possible proof that there is nothing to evict.
+    """
+    import os
+    if not os.path.isfile(_conn_path()):
+        return False
+    try:
+        return bool((load_conn() or {}).get("model"))
+    except Exception:
+        return False
+
+
+def free_for_render(settle_sleep=None):
+    """Evict the writer and wait for the card. Blocking. -> note or "".
+
+    **Blocking is correct here, and this is the one place in this module where
+    it is.** The rule in the docstring at the top -- never block -- is about
+    aiohttp handlers: they run on ComfyUI's event loop, and a stalled handler
+    freezes the whole UI, canvas included, for the length of a generation. This
+    function is called from the node's `run()`, which is the execution worker
+    thread. Nothing is waiting on it except the render, and the render is what
+    the VRAM is being freed FOR. An async version would have to be awaited by a
+    sync caller, which means a loop, which is what this already is.
+
+    Never raises. A writer that was never configured, a server that is not
+    running, one on another machine, one with no unload endpoint: all ordinary,
+    all silent. The single unacceptable outcome is that a courtesy to the GPU
+    takes down a render the user has been waiting minutes for.
+    """
+    import asyncio
+    import time
+
+    if not configured():
+        return ""
+    conn = load_conn()
+    if not conn.get("unload_on_run"):
+        return ""
+    try:
+        n, note = asyncio.run(unload_all(conn["server_url"], conn["model"]))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{TAG}] could not free the writer's VRAM: {exc!r}", flush=True)
+        return ""
+    if not n:
+        # Nothing was resident, so there is nothing to settle. This is the
+        # common path once a user has written a plan earlier in the session and
+        # already rendered once, and it must cost no wall time.
+        return ""
+
+    settle = float(conn.get("vram_settle_s") or 0.0)
+    if settle > 0:
+        # Said out loud, because an unexplained pause before a render looks
+        # exactly like a hang -- and this one lands after the queue button, the
+        # moment the user is most primed to read a stall as a crash.
+        print(f"[{TAG}] freed the writer ({note}); waiting {settle:.1f}s for "
+              f"the driver to release", flush=True)
+        (settle_sleep or time.sleep)(settle)
+    return f"writer unloaded: {note}"

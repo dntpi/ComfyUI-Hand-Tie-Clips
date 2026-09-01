@@ -100,10 +100,12 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const unload = el("input");
     unload.type = "checkbox";
     unloadWrap.appendChild(unload);
-    unloadWrap.appendChild(el("span", null, "Unload after writing"));
-    unloadWrap.title = "Hand the VRAM back when the plan is done. A 27B and an "
-        + "H3 render do not fit on one card, so leaving this off usually means "
-        + "the next queue runs out of memory.";
+    unloadWrap.appendChild(el("span", null, "Keep the writer loaded"));
+    unloadWrap.title = "Stay resident between plans, so writing a second one "
+        + "does not pay a full model load. The VRAM is handed back "
+        + "automatically when you queue a render — a 27B and an H3 render do "
+        + "not fit on one card. Turn this off to unload the moment each plan is "
+        + "written, on a machine too tight to hold the writer at all.";
     optRow.appendChild(unloadWrap);
     optRow.appendChild(el("span", "h3e-spacer"));
     const saveBtn = button("Save", "Remember these settings on this machine",
@@ -177,7 +179,7 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
             return;
         }
         url.value = conn.server_url || "";
-        unload.checked = conn.unload_after !== false;
+        unload.checked = conn.keep_warm !== false;
 
         // Preselect the SAVED model rather than letting the list decide. If the
         // dropdown lands on option[0], the next Save quietly rewrites the
@@ -228,7 +230,7 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     }
 
     async function saveConn() {
-        const patch = { server_url: url.value, unload_after: unload.checked };
+        const patch = { server_url: url.value, keep_warm: unload.checked };
         // Never post a blank model: the server skips blanks, but sending one
         // at all invites the same overwrite bug from the other direction.
         if (model.value) patch.model = model.value;

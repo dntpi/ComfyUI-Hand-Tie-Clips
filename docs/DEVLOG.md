@@ -1182,3 +1182,48 @@ differing *only* in the correction. That is the same-seed-same-cache condition
 The probe itself needed fixing before any of this could be read: with both runs
 in the cache it differenced across renders and reported `-30.37/255`. See the
 `tone_probe` commit.
+
+## 29. The writer stays warm until the render asks for the card (2026-09-01, ALPHA)
+
+*(29 because 26-27 are on `texture-ratchet` and 28 on `soundtrack`, both
+unmerged. Numbers are cheap; renumbering a merged history is not.)*
+
+`unload_after` handed the VRAM back the moment a plan was written. That was
+right when there was nowhere else to put the eviction, and wrong for the way the
+feature is actually used: nobody writes one plan. They write one, read it,
+change the brief and write another -- and every one of those paid a full model
+load, tens of seconds on a 27B, to free memory that nothing was waiting for.
+
+The card is contended at exactly one moment, and it is a moment we can see
+coming. So `keep_warm` is the default now and the eviction moved to the top of
+`run()`, where the render is about to need the memory. `unload_on_run` is what
+makes that safe rather than merely convenient; `keep_warm` off restores the old
+behaviour for a machine too tight to hold the writer at all.
+
+**`free_for_render` blocks, and that is correct.** The rule at the top of
+`llm.py` -- never block -- is about aiohttp handlers, which run on ComfyUI's
+event loop where a stall freezes the entire canvas. `run()` is the execution
+worker thread, nothing waits on it but the render, and the render is what the
+VRAM is being freed FOR. The docstring at the top now names this as the single
+exception, because otherwise the next reader "fixes" it.
+
+**It costs nothing when it does nothing**, which is the majority of renders. The
+first gate is `configured()`: a filesystem check for a settings file that has
+never been written. No socket, no DNS, no 4 s timeout against a port with
+nothing behind it. The settle is skipped whenever the eviction found nothing
+resident, and `shares_this_gpu` still refuses a writer on another machine before
+any of it.
+
+**The settle is a guess about someone else's hardware.** The unload endpoint
+returns when the server drops its reference, not when the driver has released
+the allocation, and on a slower card those are not the same instant. Default 5 s,
+settable, capped at 60 -- a pause long enough to look like a hang is worse than
+an OOM you can read -- and announced in the console, because it lands right
+after the queue button, the moment a user is most primed to read a stall as a
+crash.
+
+`check_planner.py` proves the quiet paths without waiting for any of them:
+`free_for_render` takes a `settle_sleep` callable, so a test can assert that
+nothing slept. It also redirects `_conn_path` at a temp file first -- a checker
+that overwrites the user's real writer settings as a side effect of passing is
+not one anybody should run.

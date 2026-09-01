@@ -260,6 +260,56 @@ def main():
     n, note = asyncio.run(LM.unload_all("", "some-model"))
     ck("no server configured is not an error", n == 0, note)
 
+    # -- the render-time eviction ------------------------------------------
+    #
+    # `free_for_render` runs at the top of run(), so each of its failure modes
+    # is a failure mode of EVERY render -- including the overwhelming majority
+    # that never open the plan writer. When anything is wrong it has exactly one
+    # acceptable behaviour: return quietly and cost no wall time. `settle_sleep`
+    # exists so this file can prove the second half without waiting 5 s for it.
+    #
+    # `_conn_path` is redirected at a temp file first. These cases call
+    # `save_conn`, and a checker that overwrites the user's real writer
+    # settings as a side effect of passing is not a checker anyone should run.
+    import tempfile
+    _saved_path, _saved_conn = LM._conn_path, dict(LM.CONN)
+    _tmp = os.path.join(tempfile.mkdtemp(), "htc_llm.json")
+    LM._conn_path = lambda: _tmp
+    _slept = []
+    try:
+        ck("an unconfigured writer is free, and instant",
+           LM.free_for_render(settle_sleep=_slept.append) == "" and not _slept)
+
+        # Configured, but pointed at TEST-NET-1. `shares_this_gpu` must refuse
+        # it before any eviction, and nothing may sleep: waiting for a driver on
+        # someone else's machine to release memory it never allocated would be
+        # dead time on every single queue.
+        LM.save_conn({"model": "some-model",
+                      "server_url": "http://192.0.2.1:1234",
+                      "unload_on_run": True})
+        _slept.clear()
+        ck("a remote writer costs no settle",
+           LM.free_for_render(settle_sleep=_slept.append) == "" and not _slept,
+           str(_slept))
+
+        LM.save_conn({"unload_on_run": False})
+        _slept.clear()
+        ck("unload_on_run off does nothing at all",
+           LM.free_for_render(settle_sleep=_slept.append) == "" and not _slept)
+
+        ck("the settle is capped",
+           LM.save_conn({"vram_settle_s": 9999})["vram_settle_s"] == 60.0)
+        ck("a nonsense settle is ignored, not stored",
+           LM.save_conn({"vram_settle_s": "soon"})["vram_settle_s"] == 60.0)
+    finally:
+        LM._conn_path = _saved_path
+        LM.CONN.clear()
+        LM.CONN.update(_saved_conn)
+
+    ck("warm/evict/settle are real settings",
+       {"keep_warm", "unload_on_run", "vram_settle_s"} <= set(LM._CONN_KEYS))
+    ck("unload_after is gone", "unload_after" not in LM._CONN_KEYS)
+
     print()
     if FAIL:
         print("%d FAILURE(S): %s" % (len(FAIL), ", ".join(FAIL)))

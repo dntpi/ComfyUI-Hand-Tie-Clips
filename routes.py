@@ -215,7 +215,9 @@ def register():
                 # PromptMasterLD's h3_studio_ui.js:5007.
                 "model": conn["model"],
                 "temperature": conn["temperature"],
-                "unload_after": conn["unload_after"],
+                "keep_warm": conn["keep_warm"],
+                "unload_on_run": conn["unload_on_run"],
+                "vram_settle_s": conn["vram_settle_s"],
                 # [{id, loaded}] -- `loaded` is None on servers with no
                 # native state route. The panel marks the difference, because
                 # picking an unloaded model is picking a 400.
@@ -317,10 +319,14 @@ def register():
             print(f"[{TAG}] plan route failed: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)})
 
-        # Hand the VRAM back before the render that almost certainly follows.
-        # A courtesy, never a failure: `unload` swallows its own errors and
-        # returns False when no endpoint answers.
-        if conn.get("unload_after"):
+        # Stay resident by default. The render is where the card is actually
+        # contended, and the node evicts there (`llm.free_for_render`), so
+        # unloading here only makes the NEXT plan pay a full model load --
+        # and nobody writes exactly one plan. `keep_warm` off restores the old
+        # unload-immediately behaviour for a machine too tight to hold both.
+        # A courtesy either way, never a failure: `unload` swallows its own
+        # errors and returns False when no endpoint answers.
+        if not conn.get("keep_warm"):
             try:
                 await _llm.unload(conn["server_url"], conn["model"])
             except Exception:

@@ -27,9 +27,15 @@ function blankRef(existing) {
     let n = existing.length + 1;
     const tags = new Set(existing.map((r) => r.tag));
     while (tags.has(`ref_${n}`)) n += 1;
-    // No slot: the ordinal is the row's position now, and the picture is
-    // chosen in the row itself.
-    return { tag: `ref_${n}`, file: "", subject: null, retention: "", desc: "" };
+    // slot is the row's position, same as parseRefPlan / refs.py. Leaving it
+    // unset made a freshly added row with a picture still fail validate
+    // (`wired.has(undefined)`), so the rail showed "no picture chosen" over
+    // the thumbnail that was just picked.
+    return { tag: `ref_${n}`, file: "", slot: n, subject: null, retention: "", desc: "" };
+}
+
+function reindex(plan) {
+    (plan.refs || []).forEach((r, i) => { r.slot = i + 1; });
 }
 
 export function parseRefPlan(text) {
@@ -136,7 +142,7 @@ function validate(plan, wired) {
             problems.set(r, `slot ${r.slot} is already taken by @${seenSlot.get(r.slot).tag}`);
         }
         seenSlot.set(r.slot, r);
-        if (!wired.has(r.slot)) {
+        if (!wired.has(r.slot || 0)) {
             problems.set(r, r.legacy_slot
                 ? `was wired to ref_image_${r.legacy_slot}, which no longer exists `
                   + `— pick its picture to bring this ref back`
@@ -162,6 +168,7 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
     head.appendChild(button("+ ref", "Add a reference row", () => {
         const plan = getPlan();
         plan.refs.push(blankRef(plan.refs));
+        reindex(plan);
         setPlan(plan);
         render();
         onChange?.();
@@ -254,6 +261,7 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
         if (document.activeElement !== jsonArea) jsonArea.value = getRaw?.() ?? "";
         const plan = getPlan();
         if (!plan) return;
+        reindex(plan);
         if (isBad?.()) {
             jsonWrap.open = true;
             list.appendChild(el("div", "h3e-note h3e-note-error",

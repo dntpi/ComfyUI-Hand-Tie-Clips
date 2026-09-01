@@ -38,6 +38,21 @@ function reindex(plan) {
     (plan.refs || []).forEach((r, i) => { r.slot = i + 1; });
 }
 
+/** Drop subject blocks no remaining row claims.
+ *
+ *  × on the last ref used to leave `subjects` behind, so the JSON box
+ *  stayed populated with a cook who no longer had a picture. */
+function pruneSubjects(plan) {
+    const used = new Set(
+        (plan.refs || [])
+            .filter((r) => r.subject != null)
+            .map((r) => String(r.subject)),
+    );
+    for (const k of Object.keys(plan.subjects || {})) {
+        if (!used.has(String(k))) delete plan.subjects[k];
+    }
+}
+
 export function parseRefPlan(text) {
     // A widget value is not guaranteed to be a string. ComfyUI restores
     // `widgets_values` POSITIONALLY, so a node whose widget list changed can
@@ -399,6 +414,8 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
             row.appendChild(button("×", "Remove this reference", () => {
                 const p = getPlan();
                 p.refs.splice(p.refs.indexOf(r), 1);
+                pruneSubjects(p);
+                reindex(p);
                 setPlan(p);
                 onChange?.();
                 render();

@@ -1335,6 +1335,65 @@ class HandTieClips:
                         "are set."
                     ),
                 }),
+                # Trim windows, appended 2026-09-01 -- LAST, per the note at
+                # the top of this block. Six floats rather than one JSON blob
+                # because these three slots are fixed and named, the same
+                # reason `voice_file` is its own widget. The rail's references
+                # are a LIST, which is why their per-item settings live in
+                # `ref_plan` instead.
+                #
+                # An end of 0.0 is the sentinel for "to the end of the file",
+                # so the default pair (0, 0) is untrimmed and costs nothing.
+                # media.clip_window is the single definition of what they mean.
+                "voice_start_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": (
+                        "Trim window into the voice reference, in seconds. Leave both at 0 for "
+                        "the whole file; an end of 0 always means "
+                        "'to the end', so a longer replacement file "
+                        "still plays out. "
+                        "Worth setting: H3 encodes the WHOLE voice file into the "
+                        "conditioning with no cap, and every latent frame of it "
+                        "is attended over on every step of every hop. A "
+                        "three-minute take is a large invisible tax."
+                    ),
+                }),
+                "voice_end_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "End of the voice window. 0 = to the end of the file.",
+                }),
+                "reference_video_start_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": (
+                        "Trim window into the reference clip, in seconds. Leave both at 0 for "
+                        "the whole file; an end of 0 always means "
+                        "'to the end', so a longer replacement file "
+                        "still plays out. "
+                        "H3 already truncates the clip to the hop length, but "
+                        "only from frame 0 -- so without this there is no way to "
+                        "point at the motion you actually want."
+                    ),
+                }),
+                "reference_video_end_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "End of the reference clip window. 0 = to the end.",
+                }),
+                "music_start_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": (
+                        "Trim window into the soundtrack, in seconds. Leave both at 0 for "
+                        "the whole file; an end of 0 always means "
+                        "'to the end', so a longer replacement file "
+                        "still plays out. "
+                        "The window is cut from the TRACK first; music_fit then "
+                        "loops or trims that to the chain. Without it a mastered "
+                        "track always starts the chain on its intro."
+                    ),
+                }),
+                "music_end_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "End of the soundtrack window. 0 = to the end.",
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1396,6 +1455,9 @@ class HandTieClips:
             contact_sheet="off", tone_anchor=_tone.ANCHOR_STRENGTH,
             soundtrack=None, music_gain_db=-14.0, music_duck=0.6,
             music_fit="loop", music_fade_s=1.0, soundtrack_file="",
+            voice_start_s=0.0, voice_end_s=0.0,
+            reference_video_start_s=0.0, reference_video_end_s=0.0,
+            music_start_s=0.0, music_end_s=0.0,
             unique_id=None):
         dry = str(dry_run) == "on"
         draft = str(quality) == "draft"
@@ -1496,9 +1558,13 @@ class HandTieClips:
         # before anything expensive starts. Each returns exactly what the socket
         # it replaced delivered, so everything downstream is unchanged.
         start_image = _media.load_image(start_image_file) if start_image_file else None
-        reference_video = (_media.load_video(reference_video_file)
-                           if reference_video_file else None)
-        voice = _media.load_audio(voice_file) if voice_file else None
+        reference_video = (_media.load_video(
+            reference_video_file,
+            start=float(reference_video_start_s), end=float(reference_video_end_s))
+            if reference_video_file else None)
+        voice = (_media.load_audio(voice_file,
+                                   start=float(voice_start_s), end=float(voice_end_s))
+                 if voice_file else None)
         for _name, _got in (("start_image", start_image_file and start_image is None),
                             ("reference_video", reference_video_file and reference_video is None),
                             ("voice", voice_file and voice is None),
@@ -1519,7 +1585,7 @@ class HandTieClips:
         for _r in ref_plan_refs:
             if not _r["file"]:
                 continue
-            _im = _media.load_image(_r["file"])
+            _im = _media.load_image(_r["file"], cap_mp=_r.get("mp") or 0.0)
             if _im is not None and _im.shape[0] > 0:
                 slot_images[_r["slot"]] = _im[:1]
         if ref_plan_refs:
@@ -2152,7 +2218,9 @@ class HandTieClips:
         # not, and silently preferring the stale one would be the worse guess.
         _bed = soundtrack
         if _bed is None and soundtrack_file:
-            _bed = _media.load_audio(soundtrack_file)
+            _bed = _media.load_audio(soundtrack_file,
+                                     start=float(music_start_s),
+                                     end=float(music_end_s))
         elif _bed is not None and soundtrack_file:
             print(f"[{TAG}] soundtrack: using the wired socket, not "
                   f"{soundtrack_file!r}", flush=True)

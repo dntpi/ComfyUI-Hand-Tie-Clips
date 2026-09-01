@@ -157,11 +157,80 @@ def _to_tensor(pil):
     return torch.from_numpy(arr).unsqueeze(0)
 
 
-def load_image(name):
+# The shortest window worth honouring. Below this a trim is indistinguishable
+# from a mis-drag, and a zero-length slice would hand the encoder an empty
+# tensor -- which fails deep inside the model with an error naming neither the
+# file nor the widget that caused it.
+MIN_WINDOW_S = 0.05
+
+
+def clip_window(start, end, secs):
+    """`(start, end)` in seconds -> a sane `(lo, hi)` inside `0..secs`.
+
+    THE one definition. Four readers need to agree on what a trim means -- the
+    voice, the reference clip, the soundtrack and the peaks route -- and four
+    copies of this arithmetic would eventually disagree by a rounding rule.
+
+    `end <= 0` is the sentinel for "to the end of the file", so the widget
+    default of 0.0 means untrimmed and a file that is later replaced by a longer
+    one still plays to its new end. Anything incoherent -- reversed, negative,
+    past the end, or shorter than MIN_WINDOW_S -- returns the WHOLE file rather
+    than an empty one. A trim that did not take is a puzzle; a render that dies
+    with an empty tensor is a bug report.
+    """
+    try:
+        secs = float(secs)
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    if secs <= 0:
+        return 0.0, 0.0
+    try:
+        lo = float(start or 0.0)
+    except (TypeError, ValueError):
+        lo = 0.0
+    try:
+        hi = float(end or 0.0)
+    except (TypeError, ValueError):
+        hi = 0.0
+
+    if hi <= 0.0 or hi > secs:
+        hi = secs
+    lo = max(0.0, min(lo, secs))
+    if hi - lo < MIN_WINDOW_S:
+        return 0.0, secs
+    return lo, hi
+
+
+def _mp_cap_size(w, h, cap_mp, multiple=16):
+    """Target size for a still under a megapixel cap. Down only.
+
+    `cap_mp <= 0` is off. Never upscales: H3 itself only ever scales references
+    down (`min(1.0, ...)` in nodes_minimax_h3.py), so a cap above the image's
+    own size would be a dial wired to nothing, and one that pretended to
+    upscale would just cost VRAM for interpolated pixels.
+
+    Edges land on a multiple of 16 because that is H3's canvas grid -- it
+    rounds to it anyway, and doing it here means the size in the log is the
+    size the encoder sees.
+    """
+    cap = float(cap_mp or 0.0) * 1_000_000.0
+    if cap <= 0 or w * h <= cap:
+        return int(w), int(h)
+    scale = (cap / float(w * h)) ** 0.5
+    m = max(1, int(multiple))
+    return (max(m, int(w * scale) // m * m), max(m, int(h * scale) // m * m))
+
+
+def load_image(name, cap_mp=0.0):
     """One still as an IMAGE tensor `[1,H,W,3]`, or None.
 
     Returns what a `Load Image` returns, so `_ref_frames` resizes it and
     `tensor_digest` keys it exactly as before.
+
+    `cap_mp` is the per-reference megapixel budget from the rail. It is a TOKEN
+    dial, not a quality one: every reference becomes `latent_h * latent_w`
+    entries in the DiT payload and is attended over on every step of every hop,
+    so a location plate costing as much as a face is waste. 0 means no cap.
     """
     path = resolve(name, kinds={"image"})
     if path is None:
@@ -171,14 +240,30 @@ def load_image(name):
         with Image.open(path) as im:
             # EXIF orientation: a phone portrait otherwise loads on its side,
             # and the model would be handed a rotated face.
-            return _to_tensor(ImageOps.exif_transpose(im))
+            im = ImageOps.exif_transpose(im)
+            tw, th = _mp_cap_size(im.width, im.height, cap_mp)
+            if (tw, th) != (im.width, im.height):
+                print(f"[{TAG}] {name}: {im.width}x{im.height} -> {tw}x{th} "
+                      f"({float(cap_mp):.2f} MP cap)", flush=True)
+                im = im.resize((tw, th), Image.Resampling.LANCZOS)
+            return _to_tensor(im)
     except Exception as exc:
         print(f"[{TAG}] could not read reference {name!r}: {exc!r}", flush=True)
         return None
 
 
-def load_video(name, max_frames=None):
-    """A clip as an IMAGE batch `[N,H,W,3]`, or None."""
+def load_video(name, max_frames=None, start=0.0, end=0.0):
+    """A clip as an IMAGE batch `[N,H,W,3]`, or None.
+
+    `start`/`end` are the trim window in seconds; see `clip_window`. H3 already
+    truncates a reference video to the hop length, but only from frame 0
+    (`frames[:frame_count]` in nodes_minimax_h3.py), so without this there is no
+    way to point at the segment whose motion you actually want.
+
+    Frames are counted rather than sought. A keyframe seek lands on the nearest
+    I-frame, which can be a second off -- and a bar that says 3.10 s while the
+    clip starts at 4.00 s is worse than no bar.
+    """
     path = resolve(name, kinds={"video"})
     if path is None:
         return None
@@ -189,7 +274,19 @@ def load_video(name, max_frames=None):
 
         frames = []
         with av.open(path) as container:
-            for frame in container.decode(video=0):
+            vs = container.streams.video[0]
+            fps = float(vs.average_rate or 0) or 24.0
+            n_total = int(vs.frames or 0)
+            secs = (n_total / fps) if n_total else float(
+                (vs.duration or 0) * float(vs.time_base or 0) or 0.0)
+            lo, hi = clip_window(start, end, secs) if secs > 0 else (0.0, 0.0)
+            first = int(round(lo * fps))
+            last = int(round(hi * fps)) if hi > 0 else 0
+            for i, frame in enumerate(container.decode(video=0)):
+                if i < first:
+                    continue
+                if last and i >= last:
+                    break
                 frames.append(frame.to_ndarray(format="rgb24"))
                 if max_frames and len(frames) >= int(max_frames):
                     break
@@ -202,7 +299,7 @@ def load_video(name, max_frames=None):
         return None
 
 
-def load_audio(name):
+def load_audio(name, start=0.0, end=0.0):
     """A take as ComfyUI's AUDIO dict, or None.
 
     Shape is `[batch, channels, samples]`, which is what every AUDIO consumer
@@ -218,6 +315,12 @@ def load_audio(name):
 
     `torchaudio` is still used for `functional.resample` in music.py; it is only
     the *decoding* half of that library that is gone.
+
+    `start`/`end` are the trim window in seconds; see `clip_window`. This matters
+    most for the voice: `MiniMaxH3ReferenceToVideo` hands the whole file to
+    `_encode_ref_audio` with no cap, and every latent frame that produces is a
+    token the DiT attends over on every step of every hop. An untrimmed
+    three-minute take is a large, silent, permanent tax on the render.
     """
     path = resolve(name, kinds={"audio"})
     if path is None:
@@ -245,6 +348,11 @@ def load_audio(name):
             print(f"[{TAG}] {name!r} decoded to no audio frames", flush=True)
             return None
         wav = torch.cat(chunks, dim=1)
+        # Slice before the dtype conversion below so a long take is not first
+        # promoted to float32 in full.
+        lo, hi = clip_window(start, end, wav.shape[-1] / float(sr))
+        if hi > lo and (lo > 0.0 or hi < wav.shape[-1] / float(sr)):
+            wav = wav[..., int(round(lo * sr)):int(round(hi * sr))]
         # Integer PCM is scaled by its own full range, not normalised by peak:
         # a quiet take must stay quiet, and dividing by max would silently
         # apply a wildly different gain per file.

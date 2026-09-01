@@ -40,7 +40,19 @@ RETENTION = {
 # and it exists only so the ordinal machinery below did not have to change.
 # A plan from before the sockets were removed carries an authored `slot` and no
 # `file`; that is detected, kept as `legacy_slot`, and reported by check().
-REF_FIELDS = ("tag", "file", "slot", "subject", "retention", "desc", "shots")
+REF_FIELDS = ("tag", "file", "slot", "subject", "retention", "desc", "shots",
+              "mp")
+
+# Per-reference pixel budget, in megapixels. 0 (or absent) means no cap.
+#
+# This is a TOKEN dial, not a quality one. H3 turns each reference into
+# `latent_h * latent_w` entries in the DiT payload and attends over all of them
+# on every step of every hop, so a location plate costing what a face costs is
+# waste. The floor is a picture you can still recognise a room in; there is no
+# ceiling, because H3 only ever scales a reference DOWN
+# (`min(1.0, ...)` in nodes_minimax_h3.py) and a cap above the file's own size
+# would be a dial wired to nothing.
+REF_MP_MIN = 0.3
 
 # Per-subject continuity text -- the half `HTCContinuityState` owned, moved here
 # so it is keyed by the same subject number that owns the picture ordinals.
@@ -147,6 +159,20 @@ def _norm_ref(raw, i):
         _fail(f"{where} (@{tag}): retention '{retention}' is not valid. "
               f"Use one of: {', '.join(sorted(RETENTION))}")
 
+    # Absent and 0 are the same thing -- no cap -- so an author who never
+    # opens the rail is never asked to think about this.
+    mp = raw.get("mp")
+    if mp in (None, "", 0, 0.0):
+        mp = 0.0
+    else:
+        try:
+            mp = float(mp)
+        except (TypeError, ValueError):
+            _fail(f"{where} (@{tag}): mp {mp!r} is not a number")
+        if mp < REF_MP_MIN:
+            _fail(f"{where} (@{tag}): mp {mp:g} is below the {REF_MP_MIN:g} MP "
+                  f"floor. Use 0 for no cap.")
+
     shots = raw.get("shots")
     if shots is not None:
         if not isinstance(shots, (list, tuple)):
@@ -172,6 +198,7 @@ def _norm_ref(raw, i):
         "retention": retention,
         "desc": str(raw.get("desc") or "").strip(),
         "shots": shots,
+        "mp": mp,
     }
 
 

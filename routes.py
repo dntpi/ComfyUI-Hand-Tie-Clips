@@ -24,11 +24,25 @@ import os as _os
 from . import directives as _d
 from . import media as _media
 from . import refs as _refs
+from . import waveform as _waveform
 
 TAG = "HandTieClips"
 ROUTE = "/h3_ref_chain/vocab"
 UPLOAD_ROUTE = "/h3_ref_chain/upload"
 FILES_ROUTE = "/h3_ref_chain/files"
+PEAKS_ROUTE = "/h3_ref_chain/peaks"
+
+# Decoded waveform summaries, keyed (name, mtime, n).
+#
+# mtime is in the key for the same reason `media.stamp` puts it in IS_CHANGED:
+# a filename is a stable input even when the bytes behind it change, and a trim
+# bar drawn from the previous file is a bar that lies about where the beats are.
+#
+# Cleared wholesale rather than evicted one at a time. The entries are ~1.5 KB
+# and the working set is however many references one chain uses, so an LRU would
+# be more machinery than the thing it manages.
+_PEAKS = {}
+_PEAKS_MAX = 48
 
 # A batch of stills is a handful; this is a guard against a runaway multipart
 # body, not a considered product limit.
@@ -97,6 +111,60 @@ def register():
         except Exception as exc:
             print(f"[{TAG}] files route failed: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    @instance.routes.post(PEAKS_ROUTE)
+    async def _peaks(request):
+        """A waveform summary for the trim bar: `{peaks: [...], seconds}`.
+
+        The decode runs in an executor, NOT on this coroutine. These handlers
+        share ComfyUI's event loop, and decoding a three-minute file on it
+        freezes the canvas, the queue and the progress bar together -- the same
+        constraint `llm.py`'s docstring spells out for the writer.
+        """
+        import asyncio
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        name = str((body or {}).get("name") or "").strip()
+        n = (body or {}).get("n") or _waveform.DEFAULT_N
+
+        path = _media.resolve(name, kinds={"audio", "video"})
+        if path is None:
+            # Not an error the panel can act on -- the file is simply gone, and
+            # the picker already says so. A flat line draws an empty bar.
+            return web.json_response({"ok": True, "peaks": [], "seconds": 0.0})
+
+        try:
+            mtime = _os.path.getmtime(path)
+        except OSError:
+            mtime = 0.0
+        key = (name, mtime, int(n))
+        hit = _PEAKS.get(key)
+        if hit is not None:
+            return web.json_response({"ok": True, "peaks": hit[0],
+                                      "seconds": hit[1], "cached": True})
+
+        def work():
+            audio = _media.load_audio(name)
+            if audio is None:
+                # A video with no audio track, or a file PyAV cannot open. The
+                # bar still has to position its grips, so report the duration
+                # even when there is nothing to draw.
+                return [], 0.0
+            return _waveform.peaks(audio, n)
+
+        try:
+            got = await asyncio.get_running_loop().run_in_executor(None, work)
+        except Exception as exc:
+            print(f"[{TAG}] peaks route failed for {name!r}: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+        if len(_PEAKS) >= _PEAKS_MAX:
+            _PEAKS.clear()
+        _PEAKS[key] = got
+        return web.json_response({"ok": True, "peaks": got[0], "seconds": got[1]})
 
     @instance.routes.post(UPLOAD_ROUTE)
     async def _upload(request):

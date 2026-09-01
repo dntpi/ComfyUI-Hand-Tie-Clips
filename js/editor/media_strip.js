@@ -28,7 +28,7 @@ const SLOTS = [
      "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that.",
      "reference_video"],
     ["voice_file", "audio", "voice",
-     "Voice or timbre reference. Rides every hop as <Audio 1>.",
+     "Voice or timbre reference for hop 1 as <Audio 1>. Later hops use the pin.",
      "voice"],
     // Not a reference at all: this one is never shown to the model. It is mixed
     // under the finished chain after the last hop is joined, so it sits here

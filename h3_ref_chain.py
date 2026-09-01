@@ -1201,7 +1201,12 @@ class HandTieClips:
                 }),
                 "voice_file": ("STRING", {
                     "default": "",
-                    "tooltip": "Voice or timbre reference, riding every hop as <Audio 1>. Set in the panel.",
+                    "tooltip": (
+                        "Voice or timbre reference for hop 1, cited as <Audio 1>. "
+                        "Later hops use the audio pin instead -- an uncited "
+                        "timbre clip on a quiet hop fills leftover frames with "
+                        "that recording. Set in the panel."
+                    ),
                 }),
                 # Appended here on 2026-08-29, per the note above: LAST, so
                 # every saved workflow keeps its widget alignment and simply
@@ -1856,6 +1861,26 @@ class HandTieClips:
                       f"state_header {len(hop_state_header)} chars, "
                       f"continuity {len(hop_continuity)} chars)", flush=True)
 
+            # Voice is hop-1 only under hop_script=next. The pin already
+            # carries hop 1's spoken audio; leaving the clip on hop 2 as a
+            # second <Audio 1> with no line to attach to is what put a
+            # 1.35 s male take into the last second of chain_00038 while
+            # the written line still followed the woman's face.
+            hop_voice = voice is not None and (
+                i == 0 or str(hop_script) != "next")
+            if i > 0 and voice is not None and not hop_voice:
+                print(
+                    f"[{TAG}] hop {i + 1}: voice ref stays off this continue "
+                    "(pin carries the spoken audio)",
+                    flush=True,
+                )
+            if hop_voice and "<Audio 1>" not in block:
+                block = (
+                    block.rstrip()
+                    + "\n\nThe speaker's voice follows <Audio 1> as a "
+                      "timbre reference."
+                )
+
             assembled.append((i + 1, block))
 
             # A dry run has everything it came for the moment the block is
@@ -1907,6 +1932,11 @@ class HandTieClips:
                     # is a different render of the same inputs.
                     "pin_mech": pin_mech_pred,
                     "pin_cond": (pin_renorm_on, round(pin_noise_v, 4), audio_ctx),
+                    # Whether this hop actually received the voice tensor.
+                    # chain_salt already digests the file; without this a hop 2
+                    # rendered with the clip on would be served to a later run
+                    # that kept it off.
+                    "voice_on": hop_voice,
                 })
                 # A locked shot reuses its last render even though its inputs
                 # changed -- that is the point of locking. The content key would
@@ -1945,7 +1975,7 @@ class HandTieClips:
                     ref_image_size=ref_image_size,
                     ref_images=hop_images,
                     ref_videos=hop_videos,
-                    ref_audios=ref_audios,
+                    ref_audios=(ref_audios if hop_voice else None),
                 )
                 cond, latent = _result(packed)[0], _result(packed)[1]
 

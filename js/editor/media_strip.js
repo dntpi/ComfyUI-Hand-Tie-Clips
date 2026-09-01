@@ -13,7 +13,7 @@
 
 import { el, widgetByName } from "./widget_utils.js";
 import { createPicker } from "./media_picker.js";
-import { createTrimBar } from "./trim_bar.js";
+import { createTrimBar, forgetPeaks } from "./trim_bar.js";
 
 /* Widget name -> what it is, in the order they are drawn.
  *
@@ -74,6 +74,22 @@ export function createMediaStrip(node, { onChange } = {}) {
     const bars = [];
     let missing = 0;
 
+    function syncCount() {
+        let set = 0;
+        for (const [name] of SLOTS) {
+            if (String(widgetByName(node, name)?.value || "")) set += 1;
+        }
+        count.textContent = set ? `${set} set` : "none set";
+    }
+
+    // The bars and the header, deliberately NOT the pickers: this runs from
+    // inside a picker's own `set`, and re-entering that picker's render in the
+    // middle of its own callback is how you get a control that fights itself.
+    function afterPick() {
+        syncCount();
+        for (const b of bars) b.render();
+    }
+
     for (const [name, kind, label, tip, trim] of SLOTS) {
         const w = widgetByName(node, name);
         if (!w) {
@@ -88,7 +104,16 @@ export function createMediaStrip(node, { onChange } = {}) {
         const pick = createPicker({
             kind,
             get: () => String(w.value || ""),
-            set: (v) => commit(node, w, v),
+            // A pick has to redraw the bar under it. The strip's `onChange` is
+            // only `setDirtyCanvas`, which repaints the litegraph node and not
+            // this DOM, so before this a newly picked file left its bar hidden
+            // until a browser reload rebuilt the strip from scratch.
+            //
+            // `forgetPeaks` because the client cache is keyed by NAME while the
+            // route's is keyed by (name, mtime): re-uploading different audio
+            // under a basename already on the canvas would otherwise draw the
+            // old file's waveform over the new one's duration.
+            set: (v) => { commit(node, w, v); forgetPeaks(v); afterPick(); },
             onChange,
             title: tip,
         });
@@ -124,11 +149,7 @@ export function createMediaStrip(node, { onChange } = {}) {
     }
 
     function render() {
-        let set = 0;
-        for (const [name] of SLOTS) {
-            if (String(widgetByName(node, name)?.value || "")) set += 1;
-        }
-        count.textContent = set ? `${set} set` : "none set";
+        syncCount();
         for (const p of pickers) p.render();
         for (const b of bars) b.render();
     }

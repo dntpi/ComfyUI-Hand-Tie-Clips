@@ -412,6 +412,75 @@ def main():
        {r["tag"] for r in json.loads(stale)["refs"]} == {"ref_1", "ref_2"},
        stale[:120])
 
+    # ------------------------------------------------- the repair-turn schema
+    print()
+    print("planner._tighten_schema")
+    base = PL.schema()
+    ck("the shipped schema loads", isinstance(base, dict))
+    # The permissive shape is deliberate and must stay: a plan with no people
+    # in it is legitimate, so the FIRST attempt may still say subjects: {}.
+    subs0 = base["properties"]["ref_plan"]["properties"]["subjects"]
+    ck("the shipped schema still allows an empty subjects",
+       "minProperties" not in subs0 and not subs0.get("required"))
+    ck("and still leaves desc optional",
+       "desc" not in (base["properties"]["ref_plan"]["properties"]["refs"]
+                      ["items"].get("required") or []))
+
+    tight = PL._tighten_schema(base, ["1"])
+    titem = tight["properties"]["ref_plan"]["properties"]["refs"]["items"]
+    tsubs = tight["properties"]["ref_plan"]["properties"]["subjects"]
+    ck("the repair schema requires desc on every ref",
+       "desc" in titem["required"]
+       and titem["properties"]["desc"]["minLength"] == 1)
+    ck("it requires the subject the errors named",
+       tsubs["required"] == ["1"] and "1" in tsubs["properties"])
+    ck("with name, locked and context all mandatory",
+       tsubs["properties"]["1"]["required"] == ["name", "locked", "context"])
+    ck("and none of the three may be empty",
+       all(tsubs["properties"]["1"]["properties"][k]["minLength"] == 1
+           for k in ("name", "locked", "context")))
+    ck("patternProperties is gone from the repair schema",
+       "patternProperties" not in tsubs)
+    ck("the shipped schema is not mutated",
+       "minProperties" not in
+       base["properties"]["ref_plan"]["properties"]["subjects"]
+       and "desc" not in (base["properties"]["ref_plan"]["properties"]["refs"]
+                          ["items"].get("required") or []))
+    ck("two subjects are both required",
+       PL._tighten_schema(base, ["1", "2"])["properties"]["ref_plan"]
+       ["properties"]["subjects"]["required"] == ["1", "2"])
+    ck("no numbers means no tightening", PL._tighten_schema(base, []) is None)
+    ck("no schema means no tightening", PL._tighten_schema(None, ["1"]) is None)
+
+    # The repair turn must actually be sent the tightened grammar.
+    seen_sch = []
+
+    def sch_recorder(replies):
+        n = {"i": 0}
+
+        async def complete_fn(messages, schema=None):
+            seen_sch.append(schema)
+            n["i"] += 1
+            return replies[min(n["i"], len(replies)) - 1]
+        return complete_fn
+
+    blank = json.loads(json.dumps(rail))
+    blank["subjects"] = {}
+    out = asyncio.run(PL.write_plan(
+        "she talks about life", 2,
+        complete_fn=sch_recorder([fence(rail_shots, blank),
+                                  fence(rail_shots, rail)]),
+        pinned=pinned, attempts=2))
+    ck("the prose repair converges", out["ok"] is True,
+       "; ".join(out["errors"][:1]))
+    ck("attempt 1 gets the shipped schema",
+       seen_sch[0] is not None
+       and "minProperties" not in (seen_sch[0]["properties"]["ref_plan"]
+                                   ["properties"]["subjects"]))
+    ck("attempt 2 gets the tightened one",
+       (seen_sch[1]["properties"]["ref_plan"]["properties"]["subjects"]
+        .get("required")) == ["1"], repr(len(seen_sch)))
+
     empty_sub = json.loads(json.dumps(GOOD_REFS))
     empty_sub["subjects"] = {}
     fn = scripted([

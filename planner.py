@@ -551,12 +551,71 @@ def _only_register_prose_gaps(errors):
         for e in errors)
 
 
-def _subjects_repair(errors):
+def _missing_subject_nums(errors):
     nums = []
-    for e in errors:
+    for e in errors or []:
         m = re.search(r"subject (\d+)", e)
         if m and m.group(1) not in nums:
             nums.append(m.group(1))
+    return nums
+
+
+def _tighten_schema(base, nums):
+    """The repair turn's schema, with the empty path removed. -> dict or None.
+
+    Three byte-identical replies proved the point: while the grammar allows
+    `"subjects": {}` and a ref without `desc`, that is the cheapest legal
+    completion and no amount of repair prose outvotes it. The model was not
+    ignoring the instruction, it was following a stronger one.
+
+    So the repair turn gets a grammar where the missing fields are structurally
+    mandatory. This is deliberately NOT the shipped schema: a plan with no
+    people in it is legitimate, and `minProperties` on subjects would forbid
+    it. Here we already know a ref claimed subject N, because `validate` said
+    so, so requiring N is a fact about this reply rather than a house rule.
+
+    `patternProperties` is dropped in favour of explicit `properties`; every
+    required key is spelled out, which is the shape a GBNF converter handles
+    most predictably.
+    """
+    if not base or not nums:
+        return None
+    try:
+        sch = json.loads(json.dumps(base))
+        reg = sch["properties"]["ref_plan"]["properties"]
+        item = sch["properties"]["ref_plan"]["properties"]["refs"]["items"]
+        req = list(item.get("required") or [])
+        if "desc" not in req:
+            req.append("desc")
+        item["required"] = req
+        item.setdefault("properties", {}).setdefault("desc", {})
+        item["properties"]["desc"]["type"] = "string"
+        item["properties"]["desc"]["minLength"] = 1
+
+        subs = reg["subjects"]
+        one = (subs.get("patternProperties") or {}).get("^[0-9]+$")
+        one = json.loads(json.dumps(one or {"type": "object"}))
+        one["required"] = ["name", "locked", "context"]
+        for k in ("name", "locked", "context"):
+            one.setdefault("properties", {}).setdefault(k, {"type": "string"})
+            one["properties"][k]["type"] = "string"
+            one["properties"][k]["minLength"] = 1
+        reg["subjects"] = {
+            "type": "object",
+            "properties": {n: json.loads(json.dumps(one)) for n in nums},
+            "required": list(nums),
+            "additionalProperties": False,
+            "description": subs.get("description", ""),
+        }
+        return sch
+    except Exception as exc:
+        print(f"[{TAG}] could not tighten the repair schema: {exc!r}",
+              flush=True)
+        return None
+
+
+def _subjects_repair(errors):
+    nums = _missing_subject_nums(errors)
     example = {n: {"name": "the young woman",
                    "locked": "the same face, the same long dark hair",
                    "context": "a green blouse, standing at the counter"}
@@ -642,6 +701,9 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     messages = [{"role": "system", "content": system_prompt()},
                 {"role": "user", "content": attach_images(text, images)}]
     sch = schema() if use_schema else None
+    # The schema in force for the NEXT call. A prose repair swaps in a grammar
+    # that cannot spell the empty answer; everything else uses the shipped one.
+    turn_sch = sch
 
     last_errors, warnings = [], []
     shot_text = ref_text = ""
@@ -650,7 +712,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         if on_step:
             on_step({"attempt": attempt, "of": int(attempts),
                      "errors": last_errors})
-        reply = await complete_fn(messages, schema=sch)
+        reply = await complete_fn(messages, schema=turn_sch)
         new_shots, new_refs = split_reply(reply)
         # A model that looked at the stills names the rows for what it saw.
         # Map those back onto the rail by filename before anything else reads
@@ -693,9 +755,17 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         messages.append({"role": "assistant", "content": reply})
         if _only_register_prose_gaps(last_errors):
             # qwen left "subjects": {} three times when asked to rewrite the
-            # whole plan. Ask only for the missing block.
+            # whole plan -- then three byte-identical times when asked again
+            # with the images still in context. Ask only for the missing
+            # block, and take the empty answer out of the grammar.
             repair = _subjects_repair(last_errors)
+            turn_sch = _tighten_schema(
+                sch, _missing_subject_nums(last_errors)) or sch
+            if turn_sch is not sch:
+                print(f"[{TAG}] repair turn: desc and subject prose are "
+                      f"required by the schema", flush=True)
         else:
+            turn_sch = sch
             repair = (
                 "The node rejected that plan:\n\n"
                 + "\n".join(f"- {e}" for e in last_errors)

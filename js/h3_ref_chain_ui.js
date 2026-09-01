@@ -193,6 +193,12 @@ function mountEditor(node) {
     const prevRemoved = node.onRemoved;
     node.onRemoved = function (...args) {
         api.removeEventListener("promptQueued", onQueued);
+        // Same reason, one layer down: each trim bar holds a requestAnimationFrame
+        // loop and a media element with an open connection, and neither stops
+        // just because the node left the canvas.
+        try { mediaStrip.destroy?.(); } catch (err) {
+            console.error("[HandTieClips] media strip teardown failed:", err);
+        }
         return prevRemoved?.apply(this, args);
     };
 

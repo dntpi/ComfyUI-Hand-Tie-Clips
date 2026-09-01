@@ -13,25 +13,35 @@
 
 import { el, widgetByName } from "./widget_utils.js";
 import { createPicker } from "./media_picker.js";
+import { createTrimBar } from "./trim_bar.js";
 
-/* Widget name -> what it is, in the order they are drawn. */
+/* Widget name -> what it is, in the order they are drawn.
+ *
+ * The fifth entry is the widget PREFIX of the trim window, or null for a slot
+ * that cannot be trimmed. A still has no duration, so the first frame has none;
+ * the other three each own a `<prefix>_start_s` / `<prefix>_end_s` pair. */
 const SLOTS = [
     ["start_image_file", "image", "first frame",
-     "Pins hop 1's opening frame. Ignored on later hops -- they are pinned by the join."],
+     "Pins hop 1's opening frame. Ignored on later hops -- they are pinned by the join.",
+     null],
     ["reference_video_file", "video", "reference clip",
-     "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that."],
+     "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that.",
+     "reference_video"],
     ["voice_file", "audio", "voice",
-     "Voice or timbre reference. Rides every hop as <Audio 1>."],
+     "Voice or timbre reference. Rides every hop as <Audio 1>.",
+     "voice"],
     // Not a reference at all: this one is never shown to the model. It is mixed
     // under the finished chain after the last hop is joined, so it sits here
     // because this is where you look for audio -- not because it behaves like
     // its neighbours. The dials that shape it live in RUN > soundtrack.
     ["soundtrack_file", "audio", "soundtrack",
-     "Music bed mixed under the whole chain once it is joined. Not a reference -- the model never hears it."],
+     "Music bed mixed under the whole chain once it is joined. Not a reference -- the model never hears it.",
+     "music"],
 ];
 
 /** The widget names this strip owns, so the caller hides exactly those. */
-export const MEDIA_WIDGETS = SLOTS.map(([name]) => name);
+export const MEDIA_WIDGETS = SLOTS.flatMap(
+    ([name, , , , trim]) => (trim ? [name, `${trim}_start_s`, `${trim}_end_s`] : [name]));
 
 function commit(node, w, value) {
     w.value = value;
@@ -57,10 +67,14 @@ export function createMediaStrip(node, { onChange } = {}) {
     const grid = el("div", "h3e-media-grid");
     root.appendChild(grid);
 
+    const trims = el("div", "h3e-trims");
+    root.appendChild(trims);
+
     const pickers = [];
+    const bars = [];
     let missing = 0;
 
-    for (const [name, kind, label, tip] of SLOTS) {
+    for (const [name, kind, label, tip, trim] of SLOTS) {
         const w = widgetByName(node, name);
         if (!w) {
             // A widget this build does not define is skipped, not warned about,
@@ -82,6 +96,26 @@ export function createMediaStrip(node, { onChange } = {}) {
         cell.appendChild(pick.root);
         grid.appendChild(cell);
         pickers.push(pick);
+
+        // The bar goes in its own full-width row under the grid, not inside the
+        // 104px cell: a waveform squeezed to a thumbnail's width is a smear,
+        // and the whole point is to see where the transients are.
+        const ws = trim && widgetByName(node, `${trim}_start_s`);
+        const we = trim && widgetByName(node, `${trim}_end_s`);
+        if (ws && we) {
+            const row = el("div", "h3e-trimrow");
+            row.appendChild(el("span", "h3e-media-label", label));
+            const bar = createTrimBar({
+                kind,
+                name: () => String(w.value || ""),
+                get: () => ({ start: Number(ws.value) || 0, end: Number(we.value) || 0 }),
+                set: (s, e) => { commit(node, ws, s); commit(node, we, e); },
+                onChange,
+            });
+            row.appendChild(bar.root);
+            trims.appendChild(row);
+            bars.push(bar);
+        }
     }
 
     if (missing === SLOTS.length) {
@@ -96,9 +130,17 @@ export function createMediaStrip(node, { onChange } = {}) {
         }
         count.textContent = set ? `${set} set` : "none set";
         for (const p of pickers) p.render();
+        for (const b of bars) b.render();
     }
 
     render();
 
-    return { root, render, ownedNames: () => MEDIA_WIDGETS.slice() };
+    return {
+        root,
+        render,
+        destroy() { for (const b of bars) b.destroy(); },
+        // The six trim widgets are owned here too, so they stop rendering as
+        // raw dials on the node body. MEDIA_WIDGETS is derived, not typed out.
+        ownedNames: () => MEDIA_WIDGETS.slice(),
+    };
 }

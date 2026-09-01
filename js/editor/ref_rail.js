@@ -63,10 +63,16 @@ export function parseRefPlan(text) {
             retention: r.retention || "",
             desc: r.desc || "",
             shots: Array.isArray(r.shots) ? r.shots.slice() : null,
+            mp: r.mp == null ? 0 : Number(r.mp) || 0,
         })),
         subjects,
     };
 }
+
+/* Offered pixel budgets, in MP. The floor mirrors refs.REF_MP_MIN -- below it
+ * you can no longer tell a room from another room. There is no ceiling entry:
+ * "full" (no cap) is the blank option. */
+const REF_MP = [0.3, 0.5, 0.7, 1.0, 1.5, 2.0];
 
 export function refPlanToJson(plan) {
     if (!plan.refs.length && !Object.keys(plan.subjects).length) return "";
@@ -81,6 +87,9 @@ export function refPlanToJson(plan) {
         if (r.retention) out.retention = r.retention;
         if (r.desc) out.desc = r.desc;
         if (r.shots && r.shots.length) out.shots = r.shots;
+        // Omitted when uncapped, so a plan authored before this existed round
+        // trips byte-identical and no diff appears from merely opening it.
+        if (r.mp) out.mp = r.mp;
         return out;
     });
     const body = { refs };
@@ -334,6 +343,31 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
             ret.classList.add("h3e-ret");
             ret.title = "How much of this picture carries over. Hover an option for the exact sentence.";
             row.appendChild(ret);
+
+            /* Pixel budget for THIS picture.
+             *
+             * A token dial, not a quality one: H3 turns each reference into
+             * latent_h*latent_w entries in the DiT payload and attends over all
+             * of them on every step of every hop, so a location plate costing
+             * what a face costs is waste.
+             *
+             * "full" is the top and it is not a number, because H3 only ever
+             * scales a reference DOWN -- a cap above the file's own size is a
+             * dial wired to nothing, and a number there would imply upscaling
+             * that never happens. */
+            const mp = select(REF_MP.map(String), r.mp ? String(r.mp) : "", (v) => {
+                r.mp = v ? Number(v) : 0;
+                commit();
+            }, {
+                blankLabel: "full",
+                titles: Object.fromEntries(REF_MP.map((v) =>
+                    [String(v), `Cap this picture at ${v} MP before the encoder sees it.`])),
+            });
+            mp.classList.add("h3e-mp");
+            mp.title = "Pixel budget for this reference. Lower is fewer tokens and a "
+                + "faster step; 'full' leaves the file alone. Feed a face big and a "
+                + "location plate small.";
+            row.appendChild(mp);
 
             const desc = el("input", "h3e-input h3e-desc");
             desc.type = "text";

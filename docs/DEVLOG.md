@@ -1077,3 +1077,63 @@ itself. That is the whole claim that the feature is opt-in.
 bottom of `optional` and the two shipped workflows grew four values. The AUDIO
 socket costs no widget slot -- `check_workflows.py` already knew that, and
 caught the count mismatch before the workflows were updated.
+
+## 30. Which nine seconds? (2026-09-01)
+
+The soundtrack shipped and worked, and using it for ten minutes found the hole.
+The track was 173 seconds, the chain was 9.4, and `music_fit=loop` takes the
+first 9.4 seconds -- which on a mastered track is the intro. There was no way to
+say *which* nine seconds.
+
+The same hole was on the other two media inputs. On one of them it is not a
+convenience issue at all. `MiniMaxH3ReferenceToVideo` passes the whole voice
+file to `_encode_ref_audio` with no cap, and every latent frame that produces is
+a token the DiT attends over on **every step of every hop**. An untrimmed
+three-minute voice reference is a large, silent, permanent tax that nothing in
+the UI ever mentioned. The reference clip was truncated to the hop length, but
+only from frame 0, so you could not point at the motion you actually wanted.
+
+**Peaks are computed on the server.** The first design decoded the file in the
+browser with `decodeAudioData`. For this track that is roughly 66 MB of Float32
+held in the tab, per control, to draw a picture 240 pixels wide. PromptMasterLD
+has four separate trim controls and not one `decodeAudioData` between them --
+it sends 240 numbers. So do we. The decode runs in an executor, because these
+handlers share ComfyUI's event loop and 1.68 seconds on it stops the canvas, the
+queue and the progress bar together.
+
+**Bucket by max, not mean.** A mean flattens transients into a smooth sausage,
+and transients are the only landmarks you can trim against. The whole reason to
+look at the picture is to find the downbeat.
+
+**`seconds` comes from the decoded sample count.** MP3 Xing/LAME headers
+routinely report double the real duration, and a duration that lies makes every
+position on the bar lie with it. We already decode, so the honest number is
+free. Measured on the file that started this: 173.49 s, matching the samples.
+
+**`end == 0` means "to the end of the file"**, and `media.clip_window` is the
+only definition of what a window is. Four readers have to agree -- the voice,
+the clip, the soundtrack and the peaks route -- and four copies of that
+arithmetic would eventually disagree by a rounding rule. It can never return an
+empty span: reversed, negative, past-the-end and shorter-than-50 ms all fall
+back to the whole file. A trim that did not take is a puzzle; an empty tensor is
+a crash from inside the model naming neither the file nor the widget.
+
+**Per-reference megapixels, and where they are not.** H3 scales each reference
+down from its native size and each becomes `latent_h * latent_w` entries in the
+DiT payload, so a location plate costing what a face costs is waste. That is a
+token dial and it is now a field in `ref_plan`. It is deliberately **not**
+offered on the first frame: `MiniMaxH3AddGuide` does
+`_resize(image, width, height, "center")`, so whatever you feed it becomes
+exactly the canvas, and the control would have been wired to nothing. The
+control the first frame actually lacks is a crop box -- a 9:16 source on a 16:9
+canvas silently loses both sides -- and that is still open.
+
+**The hop cache needed no change**, which is worth recording because it looked
+like it would. `chain_salt` digests the loaded *tensors*, not the filenames or
+the settings, so a trimmed voice is already a different key and a downsized
+reference is already a different key. Keying on pixels rather than on parameters
+paid for itself here without anyone planning it.
+
+`tools/check_waveform.py`: 38 assertions, green first run. `widgets_values` went
+39 -> 45; `check_workflows.py` caught it, which is the third time that checker
+has earned its place.

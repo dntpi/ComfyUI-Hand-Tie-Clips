@@ -416,7 +416,7 @@
  * description got crushed and the row overflowed a narrow node. */
 .h3e-ref {
     display: grid;
-    grid-template-columns: auto minmax(88px, 1.1fr) minmax(74px, .8fr) minmax(74px, .8fr) minmax(96px, 1fr) minmax(120px, 1.6fr) auto;
+    grid-template-columns: auto minmax(88px, 1.1fr) minmax(74px, .8fr) minmax(74px, .8fr) minmax(96px, 1fr) minmax(52px, .45fr) minmax(120px, 1.6fr) auto;
     align-items: center;
     gap: var(--h3-gap-sm);
     padding: 4px;
@@ -431,7 +431,7 @@
 .h3e-ref.h3e-bad { border-color: color-mix(in srgb, var(--h3-error) 55%, transparent); }
 .h3e-ref.h3e-bad .h3e-tag { border-color: var(--h3-error); }
 .h3e-inactive .h3e-ord { background: var(--h3-sunken); color: var(--h3-faint); }
-.h3e-tag, .h3e-slot, .h3e-subj, .h3e-ret, .h3e-desc { width: 100%; }
+.h3e-tag, .h3e-slot, .h3e-subj, .h3e-ret, .h3e-mp, .h3e-desc { width: 100%; }
 
 /* The rail's 7-track grid needs ~536px of content width and the node only ever
  * offers ~510px at NODE_WIDTH 560, so it is crushed by default. These queries
@@ -443,7 +443,7 @@
     /* Drop the description to its own line first: it is the widest track and
      * the least useful one to read mid-row. */
     .h3e-ref {
-        grid-template-columns: auto minmax(88px, 1.2fr) minmax(74px, .9fr) minmax(74px, .9fr) minmax(96px, 1fr) auto;
+        grid-template-columns: auto minmax(88px, 1.2fr) minmax(74px, .9fr) minmax(74px, .9fr) minmax(96px, 1fr) minmax(52px, .45fr) auto;
     }
     .h3e-ref .h3e-desc { grid-column: 2 / -1; }
 }
@@ -453,7 +453,8 @@
     .h3e-ref { grid-template-columns: auto 1fr auto; }
     .h3e-ref .h3e-slot,
     .h3e-ref .h3e-subj { grid-column: 2 / 3; }
-    .h3e-ref .h3e-ret,
+    .h3e-ref .h3e-ret { grid-column: 1 / 3; }
+    .h3e-ref .h3e-mp { grid-column: 3 / -1; }
     .h3e-ref .h3e-desc { grid-column: 1 / -1; }
 }
 
@@ -758,6 +759,60 @@
     font-weight: var(--h3-weight-label);
     letter-spacing: var(--h3-track);
     text-transform: uppercase;
+    color: var(--h3-muted);
+}
+
+
+/* -- trim bar -------------------------------------------------------------
+ *
+ * The media element IS the timeline: the masks and grips are absolutely
+ * positioned over the waveform canvas and driven in percent, so a resize needs
+ * no JS. A pair of range inputs was the first idea and reads as two unrelated
+ * sliders rather than one window.
+ *
+ * `touch-action: none` on the grips is required, not cosmetic -- without it a
+ * pen or touch drag scrolls the panel instead of moving the grip, and
+ * setPointerCapture never sees the move.
+ */
+.h3e-trimwrap { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+.h3e-trim {
+    position: relative;
+    height: 34px;
+    border: 1px solid var(--h3-line);
+    border-radius: var(--h3-radius-sm, 3px);
+    background: var(--h3-panel);
+    overflow: hidden;
+    cursor: crosshair;
+    --h3-wave: color-mix(in srgb, var(--h3-accent) 55%, transparent);
+}
+.h3e-trim-wave { display: block; width: 100%; height: 100%; }
+.h3e-trim-mask {
+    position: absolute; top: 0; bottom: 0;
+    background: color-mix(in srgb, var(--h3-bg) 74%, transparent);
+    pointer-events: none;
+}
+.h3e-trim-mask.l { left: 0; }
+.h3e-trim-mask.r { right: 0; }
+.h3e-trim-grip {
+    position: absolute; top: 0; bottom: 0;
+    width: 9px; margin-left: -4px;
+    cursor: ew-resize;
+    touch-action: none;
+    background: linear-gradient(90deg, transparent 3px,
+                var(--h3-accent) 3px, var(--h3-accent) 6px, transparent 6px);
+}
+.h3e-trim-grip:hover { background: var(--h3-accent-soft); }
+.h3e-trim-head {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: 1px; background: var(--h3-fg, #fff); opacity: 0.55;
+    pointer-events: none;
+}
+.h3e-trim-media { width: 100%; height: 26px; }
+.h3e-trim-media[src=""] { display: none; }
+video.h3e-trim-media { height: auto; max-height: 110px; }
+.h3e-trim-readout {
+    font-size: var(--h3-fs-xs);
+    font-variant-numeric: tabular-nums;
     color: var(--h3-muted);
 }
 

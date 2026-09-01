@@ -599,6 +599,42 @@ def main():
        {"keep_warm", "unload_on_run", "vram_settle_s"} <= set(LM._CONN_KEYS))
     ck("unload_after is gone", "unload_after" not in LM._CONN_KEYS)
 
+    # A truncated reply is the context window, not the model's formatting.
+    # This cost three attempts and an error blaming the wrong thing.
+    def cut(prompt, completion, reasoned=0,
+            content='{ "shot_plan": {'):
+        return {"choices": [{"finish_reason": "length",
+                             "message": {"content": content}}],
+                "usage": {"prompt_tokens": prompt,
+                          "completion_tokens": completion,
+                          "completion_tokens_details":
+                              {"reasoning_tokens": reasoned}}}
+
+    def why(d, max_tokens=12288):
+        try:
+            LM._content(d, max_tokens=max_tokens)
+        except LM.LLMError as exc:
+            return str(exc)
+        return ""
+
+    msg = why(cut(7929, 263))
+    ck("a truncated reply is an error, not half a plan", bool(msg))
+    ck("it names what the prompt cost", "7929" in msg, msg[:80])
+    ck("it names a context size that would fit", "32768" in msg, msg[:120])
+    ck("it does not blame the model's formatting",
+       "JSON" not in msg and "format" not in msg, msg[:80])
+    ck("a small prompt still gets a floor of 16384",
+       "16384" in why(cut(400, 30)), why(cut(400, 30))[:100])
+    ck("reasoning tokens are called out when present",
+       "reasoning" in why(cut(7929, 210, reasoned=210)))
+    ck("our own ceiling is reported as ours, not the context",
+       "ceiling" in why(cut(900, 12288)) and "context" not in
+       why(cut(900, 12288)), why(cut(900, 12288))[:90])
+    ck("a clean reply is still returned untouched",
+       LM._content({"choices": [{"finish_reason": "stop",
+                                 "message": {"content": " ok "}}]}) == "ok")
+
+
     print()
     if FAIL:
         print("%d FAILURE(S): %s" % (len(FAIL), ", ".join(FAIL)))

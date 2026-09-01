@@ -318,7 +318,7 @@ def _chat_body(model, messages, *, schema, temperature, max_tokens):
     return body
 
 
-def _content(data):
+def _content(data, max_tokens=None):
     """Pull the reply text out, and say something useful when there isn't one.
 
     Three different failures produce an empty `content`, and telling a user the
@@ -336,25 +336,57 @@ def _content(data):
     choice = choices[0] or {}
     msg = choice.get("message") or {}
     text = (msg.get("content") or "").strip()
-    if text:
-        return text
 
     usage = (data.get("usage") or {})
     detail = (usage.get("completion_tokens_details") or {})
     reasoned = detail.get("reasoning_tokens") or 0
     reasoning = (msg.get("reasoning_content") or msg.get("reasoning") or "")
 
+    # Checked BEFORE the text is handed back, because the expensive case is a
+    # reply that is truncated but not empty: half a JSON object parses as no
+    # JSON, and the repair loop then spends every remaining attempt telling a
+    # model with no room to answer that its formatting is wrong. Three
+    # attempts, three identical truncations, and an error naming the wrong
+    # cause. Better to stop on the first one and report the real number.
     if choice.get("finish_reason") == "length":
-        raise LLMError(
-            f"the reply was cut off at {usage.get('completion_tokens', '?')} "
-            f"tokens before any JSON was written"
-            + (f" -- {reasoned} of them went to the model's own reasoning"
-               if reasoned else "")
-            + ". Raise the model's context length in LM Studio, or turn its "
-              "reasoning off.")
+        raise LLMError(_cut_off(usage, reasoned, max_tokens))
+    if text:
+        return text
     if reasoning.strip():
         raise LLMError("__REASONING_ONLY__")
     raise LLMError("the server returned an empty reply")
+
+
+def _cut_off(usage, reasoned, max_tokens):
+    """Say which budget ran out, ours or the server's, and what to set.
+
+    `max_tokens` is what this pack asked for; `prompt_tokens` is what the turn
+    cost. A completion that stopped near our own ceiling means the plan really
+    is that long. Otherwise the context window is full, and the useful number
+    is not "raise it" but the size that would actually fit -- measured here
+    rather than left for the reader to work out.
+    """
+    used = int(usage.get("completion_tokens") or 0)
+    prompt = int(usage.get("prompt_tokens") or 0)
+    tail = (f" -- {reasoned} of them went to the model's own reasoning, which "
+            f"must be turned off in LM Studio" if reasoned else "")
+
+    if max_tokens and used >= int(max_tokens) * 0.95:
+        return (f"the reply hit the {int(max_tokens)}-token ceiling this pack "
+                f"asks for{tail}. The plan is longer than the writer expects; "
+                f"try fewer hops.")
+
+    if prompt:
+        want = 1 << max(14, (prompt * 2 + 4096 - 1).bit_length())
+        return (f"the reply was cut off after {used} token(s){tail}. The "
+                f"prompt alone used {prompt}, so the model's context is full "
+                f"and there is no room left to answer in. Raise the context "
+                f"length in LM Studio to at least {want} -- repair turns grow "
+                f"the conversation, so the first attempt fitting is not "
+                f"enough.")
+
+    return (f"the reply was cut off after {used} token(s){tail}. Raise the "
+            f"model's context length in LM Studio.")
 
 
 async def complete(base_url, model, messages, *, schema=None,
@@ -384,7 +416,7 @@ async def complete(base_url, model, messages, *, schema=None,
                           temperature=temperature, max_tokens=max_tokens)
         try:
             data = await _post(session, url, body, timeout)
-            return _content(data)
+            return _content(data, max_tokens=max_tokens)
         except LLMError as first:
             note = str(first)
 
@@ -398,7 +430,7 @@ async def complete(base_url, model, messages, *, schema=None,
                                temperature=temperature, max_tokens=max_tokens),
                     timeout)
                 try:
-                    return _content(data)
+                    return _content(data, max_tokens=max_tokens)
                 except LLMError as second:
                     if str(second) == "__REASONING_ONLY__":
                         raise LLMError(
@@ -415,7 +447,7 @@ async def complete(base_url, model, messages, *, schema=None,
                     _chat_body(model, messages, schema=None,
                                temperature=temperature, max_tokens=max_tokens),
                     timeout)
-                return _content(data)
+                return _content(data, max_tokens=max_tokens)
 
             raise
 

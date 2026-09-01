@@ -1137,3 +1137,15 @@ paid for itself here without anyone planning it.
 `tools/check_waveform.py`: 38 assertions, green first run. `widgets_values` went
 39 -> 45; `check_workflows.py` caught it, which is the third time that checker
 has earned its place.
+
+**TASK 2, verified 2026-09-02.** Header-lie, soundtrack trim, and per-ref mp
+were signed off in the GUI. Voice trim reaches the encoder (hop-cache miss);
+male timbre will not override a woman in frame at 8-step turbo. Null check:
+every window 0/0, empty `voice_file` / `soundtrack_file`, A's graph vs
+`efd6a3e` — hop 1 and hop 2 FFV1 frames and `.npy` audio bit-identical
+(contact_sheet_00039 vs 00043; pin σ 0.9578/0.4434). Hop *keys* differ because
+this branch added `voice_on`; that is a key-field change, not a generate
+change. Old workflows: widget names from 0.4.5 (34) and `efd6a3e` (39) are a
+prefix of this branch (45); Starter.json from both revs maps seed / steps /
+shot_plan onto the same widgets. `user/default/workflows` still use the
+legacy `H3RefChain` id, on purpose.

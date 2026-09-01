@@ -309,6 +309,15 @@ is also `slot`, which is derived from list position — never author it.)
   - `reference` — layout, surfaces and light carry over, i.e. a place
 
   It defaults to `fully_preserved` when `subject` is set, `reference` otherwise.
+
+  **Two pictures of one person is the common case, and the two are not
+  interchangeable.** Decide from the picture, never from the filename. The
+  plate whose framing is dominated by the head is the **likeness** plate:
+  `fully_preserved`, on every hop. A plate that shows the whole outfit is the
+  **wardrobe** plate: `partially_copy`. If anything else in that picture would
+  be wrong in this scene -- a microphone, another room, a different light --
+  ride the wardrobe plate on hop 1 only and name the garment's colours in
+  `context`, because `fully_preserved` asks for its background too.
 - **`shots`** is the list of 1-based hops the picture rides on.
 
 Every subject that appears in `subjects` must be claimed by at least one ref, or
@@ -408,6 +417,8 @@ Before you answer, check every one of these:
 - [ ] Compare each shot's `framing` with the previous shot's: where it
       changes on `join: continuous`, the camera is moving, not `hold`. And no
       `push_in`+`wide`, no `pull_back`+`close`.
+- [ ] Where one person has two pictures, the likeness plate is `fully_preserved`
+      and the wardrobe plate is `partially_copy`.
 - [ ] Every subject in `subjects` is claimed by a ref, and has both a `name`
       and a `locked`.
 - [ ] `refs` holds at most 9 entries in total.

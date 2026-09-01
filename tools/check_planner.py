@@ -304,6 +304,62 @@ def main():
        "hallway" not in PL._remap_pinned_tags(
            json.dumps(renamed_shots), json.dumps(invented), pinned)[2].values())
 
+    # The two reference lints. Both are warnings: the node renders these
+    # plans, and promoting a prose rule into the retry loop rewrites the parts
+    # that were already right.
+    def two_plates(ret3, shots3, shots1=(1, 2)):
+        return json.dumps({
+            "refs": [
+                {"tag": "ref_1", "file": "cook_face.png", "subject": 1,
+                 "retention": "fully_preserved", "desc": "a face",
+                 "shots": list(shots1)},
+                {"tag": "ref_3", "file": "apron.png", "subject": 1,
+                 "retention": ret3, "desc": "a whole outfit",
+                 "shots": list(shots3)},
+                {"tag": "ref_2", "file": "kitchen.png",
+                 "retention": "reference", "desc": "a kitchen",
+                 "shots": [1, 2]},
+            ],
+            "subjects": GOOD_REFS["subjects"]})
+
+    kf = ["cook_face.png", "apron.png", "kitchen.png"]
+    errs, warns = PL.validate(json.dumps(rail_shots),
+                              two_plates("fully_preserved", [1, 2]),
+                              hops=2, known_files=kf)
+    ck("two fully_preserved plates on one subject is a warning",
+       any("fully_preserved" in w and "wardrobe" in w for w in warns),
+       "; ".join(warns[:1])[:110])
+    ck("it names both plates",
+       any("@ref_1" in w and "@ref_3" in w for w in warns))
+    ck("and it is never an error", not errs, "; ".join(errs[:1]))
+
+    _, warns = PL.validate(json.dumps(rail_shots),
+                           two_plates("partially_copy", [1]),
+                           hops=2, known_files=kf)
+    ck("a wardrobe plate marked partially_copy is quiet",
+       not any("wardrobe" in w for w in warns), "; ".join(warns[:1])[:100])
+
+    # The mirror hazard: a hop with no plate for a subject.
+    _, warns = PL.validate(json.dumps(rail_shots),
+                           two_plates("partially_copy", [1], shots1=(1,)),
+                           hops=2, known_files=kf)
+    ck("a subject with no plate on hop 2 is a warning",
+       any("no picture on hop" in w for w in warns), "; ".join(warns[:1])[:110])
+    ck("it says drift does not self-correct",
+       any("self-correct" in w for w in warns))
+
+    _, warns = PL.validate(json.dumps(rail_shots),
+                           two_plates("partially_copy", [1]),
+                           hops=2, known_files=kf)
+    ck("a face plate on every hop is quiet",
+       not any("no picture on hop" in w for w in warns))
+
+    # The live plan of 2026-09-02, which tripped exactly one of the two.
+    live, _ = PL.validate(json.dumps(rail_shots),
+                          two_plates("fully_preserved", [1, 2]),
+                          hops=2, known_files=kf)
+    ck("the live plan is still accepted", not live)
+
     kept = PL._merge_register(
         json.dumps({"refs": [{"tag": "ref_1", "file": "a.jpg",
                               "desc": "a woman in green"}],

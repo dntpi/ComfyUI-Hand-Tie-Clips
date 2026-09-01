@@ -312,6 +312,61 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None):
     except Exception:
         pass
 
+    # Two plates of one person are not interchangeable, and the schema default
+    # (`fully_preserved` when `subject` is set) pushes both toward "face".
+    # Observed live: a full-body plate with a microphone and a different room
+    # in it, marked fully_preserved on every hop -- which asks the encoder to
+    # copy that room too. The prompt already distinguishes a likeness plate
+    # from a wardrobe plate; nothing checked that the plan did.
+    #
+    # Decidable from the register alone, so it is a lint rather than a guess:
+    # two "copy this exactly" plates of one person riding the same hop are
+    # contradictory instructions whichever picture is which.
+    try:
+        for num in sorted({r["subject"] for r in refs
+                           if r.get("subject") is not None}):
+            mine = [r for r in refs if r.get("subject") == num
+                    and (r.get("retention") or "fully_preserved")
+                    == "fully_preserved"]
+            if len(mine) < 2:
+                continue
+            shared = sorted(set.intersection(*[
+                set(r.get("shots") or [1]) for r in mine]))
+            if not shared:
+                continue
+            warnings.append(
+                f"subject {num} has {len(mine)} `fully_preserved` plates "
+                + ", ".join("@" + r["tag"] for r in mine)
+                + f" riding hop(s) {', '.join(str(h) for h in shared)} "
+                f"together. One picture is the likeness; a picture that shows "
+                f"the whole outfit is the wardrobe plate and wants "
+                f"`partially_copy`, or its background rides into the scene "
+                f"with the garment.")
+    except Exception:
+        pass
+
+    # The mirror hazard, and the one that does not self-correct. Two six-hop
+    # renders settled it: the hop scheduled with no face plate came back a
+    # different person and nothing after it recovered. `locked` holds a face
+    # that is still right; only a plate rebuilds one that is gone.
+    try:
+        if len(shots) > 1:
+            for num in sorted({r["subject"] for r in refs
+                               if r.get("subject") is not None}):
+                ride = set()
+                for r in refs:
+                    if r.get("subject") == num:
+                        ride |= set(r.get("shots") or [1])
+                bare = [h for h in range(1, len(shots) + 1) if h not in ride]
+                if bare:
+                    warnings.append(
+                        f"subject {num} has no picture on hop(s) "
+                        + ", ".join(str(h) for h in bare)
+                        + ". Identity drift does not self-correct: put the "
+                          "likeness plate on every hop.")
+    except Exception:
+        pass
+
     # SYSTEM_PROMPT.md rule 13, and its own closing checklist: the final shot
     # sets `tail` to `settle` or `hold`. Left at the default `ongoing`, the
     # chain ends mid-gesture -- the clip stops rather than finishes.

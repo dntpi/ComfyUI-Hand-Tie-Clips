@@ -352,6 +352,9 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                 }),
             });
             const j = await r.json();
+            // A rejected loop can still hold a usable script. Put it in the
+            // draft so Accept is not behind a red wall that threw the work away.
+            if (j.shot_plan) showDraft(j.shot_plan || "", j.ref_plan || "");
             if (!j.ok) {
                 // A plan that would not converge still comes back, so the
                 // errors name real shots. Showing them beats "generation
@@ -361,10 +364,12 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                 say(errs
                     ? `Gave up after ${j.attempts} attempts. The model could `
                       + `not fix:\n${errs}`
+                      + (j.shot_plan
+                          ? "\n\nA partial draft is below; Accept still writes it."
+                          : "")
                     : (j.error || "the plan writer failed"), "error");
                 return;
             }
-            showDraft(j.shot_plan || "", j.ref_plan || "");
             const warn = (j.warnings || []).slice(0, 3)
                 .map((w) => `• ${w}`).join("\n");
             say(`Draft of ${hops.value} hop(s) in ${j.attempts} attempt(s). `

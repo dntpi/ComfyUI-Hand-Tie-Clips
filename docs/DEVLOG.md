@@ -1569,6 +1569,13 @@ as vision parts (768 px JPEG, executor, not a widget). A text-only model that
 `subjects.{n}.name`/`locked` is an error for the writer, so the repair loop
 fills the box instead of Accept writing an empty one.
 
+qwen 3.8-27b then wrote a correct script and kept the rail's files, and still
+emitted `"subjects": {}` on all three attempts -- structured output treats an
+empty object as valid, and "rewrite the whole plan" never added the block.
+A subjects-only repair overlays the last register; if that still comes back
+empty, name/locked are filled from each ref's `desc` so the draft is not
+thrown away. The panel shows a partial draft on give-up.
+
 ## 30. Which nine seconds? (2026-09-01)
 
 The soundtrack shipped and worked, and using it for ten minutes found the hole.

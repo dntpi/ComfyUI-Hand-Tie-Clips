@@ -148,9 +148,12 @@ def build():
 
     subject = {
         "type": "object", "additionalProperties": False,
+        "required": ["name", "locked"],
         "properties": {
-            "name": {"type": "string"},
-            "locked": {"type": "string",
+            "name": {"type": "string", "minLength": 1,
+                     "description": "Plain prose that replaces the @tag from "
+                                    "hop 2 on, e.g. 'the cook'. Never an @tag."},
+            "locked": {"type": "string", "minLength": 1,
                        "description": "What must not change. This is what "
                                       "survives on a hop where the photograph "
                                       "is absent."},

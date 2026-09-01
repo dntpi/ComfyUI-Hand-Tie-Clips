@@ -142,6 +142,10 @@ def main():
     s, _ = PL.split_reply(json.dumps(GOOD_SHOTS))
     ck("bare array is taken as the script", json.loads(s or "null") == GOOD_SHOTS)
 
+    s, r = PL.split_reply(json.dumps({"subjects": GOOD_REFS["subjects"]}))
+    ck("a subjects-only reply is not a script",
+       not s and json.loads(r)["subjects"]["1"]["name"] == "the cook")
+
     # --------------------------------------------------------------- validate
     print("\nplanner.validate")
     errs, warns = PL.validate(json.dumps(GOOD_SHOTS), json.dumps(GOOD_REFS),
@@ -248,6 +252,8 @@ def main():
     ck("a filled rail does not dump the folder",
        "@ref_1" in turn and "apron.png" not in turn
        and "already on the rail" in turn)
+    ck("empty subjects is named as a reject",
+       "empty" in turn.lower() and "subjects" in turn)
 
     # ------------------------------------------------------------- write_plan
     print("\nplanner.write_plan -- the repair loop")
@@ -312,6 +318,32 @@ def main():
     ck("the still is labelled with its tag",
        any("@ref_1 is this picture" in str((p or {}).get("text") or "")
            for p in first))
+
+    empty_sub = json.loads(json.dumps(GOOD_REFS))
+    empty_sub["subjects"] = {}
+    fn = scripted([
+        fence(GOOD_SHOTS, empty_sub),
+        json.dumps({"subjects": GOOD_REFS["subjects"]}),
+    ])
+    out = asyncio.run(
+        PL.write_plan("a cook in a kitchen", 3, complete_fn=fn, files=FILES,
+                      use_schema=False))
+    ck("empty subjects repair merges", out["ok"] is True, "; ".join(out["errors"][:1]))
+    ck("in two attempts", out["attempts"] == 2, str(out["attempts"]))
+    ck("the original refs survived",
+       json.loads(out["ref_plan"])["refs"][0]["tag"] == "cook_face")
+    ck("subjects landed",
+       json.loads(out["ref_plan"])["subjects"]["1"]["name"] == "the cook")
+
+    fn = scripted([fence(GOOD_SHOTS, empty_sub)] * 3)
+    out = asyncio.run(
+        PL.write_plan("a cook in a kitchen", 3, complete_fn=fn, files=FILES,
+                      use_schema=False, attempts=3))
+    ck("a stub fills subjects after three empty replies",
+       out["ok"] is True, "; ".join(out["errors"][:1]))
+    ck("and says they were filled in",
+       any("filled from the photo" in w for w in out["warnings"]),
+       "; ".join(out["warnings"][-1:]))
 
     # ------------------------------------------------------- the killswitch
     # Only the parts that need no server. `unload_all` short-circuits on a

@@ -118,7 +118,17 @@ def split_reply(raw):
         elif isinstance(obj, list) or (isinstance(obj, dict) and "shots" in obj):
             shot_txt = shot_txt or b
     if not shot_txt and blocks:
-        shot_txt = blocks[0]
+        # A subjects-only repair is a register patch, not a script. Taking
+        # blocks[0] here is how `{"subjects": {...}}` became
+        # `shot_plan object needs a "shots" array`.
+        try:
+            first = json.loads(blocks[0])
+        except ValueError:
+            first = None
+        if not (isinstance(first, dict)
+                and ("refs" in first or "subjects" in first)
+                and "shots" not in first):
+            shot_txt = blocks[0]
     return shot_txt, ref_txt
 
 
@@ -347,15 +357,21 @@ def build_user_turn(brief, hops, files, pinned=None):
     if pinned:
         lines += ["",
                   "These pictures are already on the rail. Keep these tags "
-                  "and filenames. Fill `retention`, `subject`, `desc`, and "
-                  "`subjects` from the brief and the pictures. Do not add "
-                  "other files. Do not rename tags."]
+                  "and filenames. Do not add other files. Do not rename tags. "
+                  "Look at each still: a person gets subject N + "
+                  "retention fully_preserved and a subjects.N block; a place "
+                  "gets retention reference and no subject.",
+                  "",
+                  "If any ref has \"subject\": N, subjects MUST contain that "
+                  "N with `name` and `locked` in prose from the photograph. "
+                  "An empty \"subjects\": {} is a rejected plan. Example:",
+                  '  "subjects": {"1": {"name": "the young woman", '
+                  '"locked": "the same face, the same long dark hair", '
+                  '"context": "a white blouse"}}']
         for p in pinned:
             bit = f"  - @{p.get('tag')}  file={p.get('file')}"
             if p.get("subject") is not None:
                 bit += f"  subject={p['subject']}"
-            if p.get("retention"):
-                bit += f"  retention={p['retention']}"
             lines.append(bit)
         lines += ["",
                   "Stills of those rows are attached below, labelled with "
@@ -384,6 +400,110 @@ def attach_images(text, images):
         parts.append({"type": "image_url",
                       "image_url": {"url": im["data_url"]}})
     return parts
+
+
+def _parse_obj(text):
+    try:
+        obj = json.loads(text or "")
+    except ValueError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _is_subjects_patch(ref_text):
+    """A reply that only fills subjects, with no refs list to replace."""
+    obj = _parse_obj(ref_text)
+    if not obj:
+        return False
+    if "ref_plan" in obj and "shot_plan" not in obj:
+        obj = obj.get("ref_plan") or {}
+    refs = obj.get("refs") if isinstance(obj, dict) else None
+    subs = obj.get("subjects") if isinstance(obj, dict) else None
+    return bool(subs) and not refs
+
+
+def _merge_subjects(base_text, patch_text):
+    """Keep base refs, overlay patch subjects. Used when a repair returns only
+    the missing subjects block instead of rewriting the register."""
+    base = _parse_obj(base_text) or {}
+    patch = _parse_obj(patch_text) or {}
+    if isinstance(patch.get("ref_plan"), dict):
+        patch = patch["ref_plan"]
+    subs = dict(base.get("subjects") or {})
+    incoming = patch.get("subjects") if isinstance(patch, dict) else None
+    if isinstance(incoming, dict):
+        for k, v in incoming.items():
+            if isinstance(v, dict):
+                subs[str(k)] = v
+    refs = base.get("refs") or []
+    if isinstance(patch, dict) and patch.get("refs"):
+        refs = patch["refs"]
+    return json.dumps({"refs": refs, "subjects": subs}, indent=2)
+
+
+def _only_subject_gaps(errors):
+    return bool(errors) and all("continuity text" in e for e in errors)
+
+
+def _subjects_repair(errors):
+    nums = []
+    for e in errors:
+        m = re.search(r"subject (\d+)", e)
+        if m and m.group(1) not in nums:
+            nums.append(m.group(1))
+    example = {n: {"name": "the person",
+                   "locked": "the same face, the same hair",
+                   "context": ""}
+               for n in (nums or ["1"])}
+    return (
+        "The shot_plan and the refs list are fine. Do not change tags or "
+        "files. subjects is empty, which is why the node rejected the plan. "
+        "Return the FULL ref_plan -- the same refs, with subjects filled. "
+        "An empty subjects object is rejected.\n\n"
+        "Fill this from the photographs, in prose, never an @tag:\n"
+        + json.dumps({"subjects": example}, indent=2)
+        + "\n\nThe missing fields:\n"
+        + "\n".join(f"- {e}" for e in errors)
+    )
+
+
+def _stub_missing_subjects(ref_text):
+    """Last resort: name/locked from the ref's own desc so a usable draft is
+    not thrown away because the model left subjects empty."""
+    try:
+        plan = _refs.parse_ref_plan(ref_text)
+    except Exception:
+        return ref_text
+    refs = plan.get("refs") or []
+    subs = dict(plan.get("subjects") or {})
+    changed = False
+    for r in refs:
+        n = r.get("subject")
+        if n is None:
+            continue
+        info = dict(subs.get(n) or {})
+        if (info.get("name") or "").strip() and (info.get("locked") or "").strip():
+            continue
+        desc = (r.get("desc") or "").strip()
+        if not (info.get("name") or "").strip():
+            info["name"] = "the person"
+        if not (info.get("locked") or "").strip():
+            info["locked"] = desc or "the same face and hair"
+        info.setdefault("context", "")
+        subs[n] = info
+        changed = True
+    if not changed:
+        return ref_text
+    out_refs = []
+    for r in refs:
+        row = {"tag": r["tag"]}
+        for k in ("file", "subject", "retention", "desc", "shots", "mp"):
+            if r.get(k) not in (None, "", [], 0, 0.0):
+                row[k] = r[k]
+        out_refs.append(row)
+    return json.dumps(
+        {"refs": out_refs, "subjects": {str(k): v for k, v in subs.items()}},
+        indent=2)
 
 
 async def write_plan(brief, hops, *, complete_fn, files=None,
@@ -418,7 +538,16 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
             on_step({"attempt": attempt, "of": int(attempts),
                      "errors": last_errors})
         reply = await complete_fn(messages, schema=sch)
-        shot_text, ref_text = split_reply(reply)
+        new_shots, new_refs = split_reply(reply)
+        if new_shots:
+            shot_text = new_shots
+        if new_refs:
+            # A repair that returns only {"subjects": {...}} must overlay the
+            # last register, not wipe the refs the previous turn got right.
+            if ref_text and shot_text and _is_subjects_patch(new_refs):
+                ref_text = _merge_subjects(ref_text, new_refs)
+            else:
+                ref_text = new_refs
         if not shot_text:
             last_errors = ["the reply contained no JSON. Answer with the two "
                            "JSON blocks and nothing else."]
@@ -438,12 +567,32 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         # turn matters: without it the model re-derives the plan from scratch
         # and reliably reintroduces a different fault.
         messages.append({"role": "assistant", "content": reply})
-        messages.append({"role": "user", "content":
-                         "The node rejected that plan:\n\n"
-                         + "\n".join(f"- {e}" for e in last_errors)
-                         + "\n\nReturn the two corrected JSON blocks. Change "
-                           "only what the errors name; leave the rest as it "
-                           "was."})
+        if _only_subject_gaps(last_errors):
+            # qwen left "subjects": {} three times when asked to rewrite the
+            # whole plan. Ask only for the missing block.
+            repair = _subjects_repair(last_errors)
+        else:
+            repair = (
+                "The node rejected that plan:\n\n"
+                + "\n".join(f"- {e}" for e in last_errors)
+                + "\n\nReturn the two corrected JSON blocks. Change "
+                  "only what the errors name; leave the rest as it "
+                  "was."
+            )
+        messages.append({"role": "user", "content": repair})
+
+    # A usable script with empty subjects is not a throw-away. Fill name/locked
+    # from each ref's own desc so Accept has something, and say so.
+    if shot_text and ref_text and _only_subject_gaps(last_errors):
+        stub = _stub_missing_subjects(ref_text)
+        errs, warns = validate(
+            shot_text, stub, hops=hops, known_files=files, pinned=pinned)
+        if not errs:
+            note = ("subjects were filled from the photo descriptions because "
+                    "the model left them empty; read them before Accept.")
+            return {"ok": True, "shot_plan": shot_text, "ref_plan": stub,
+                    "attempts": int(attempts), "errors": [],
+                    "warnings": list(warns) + [note]}
 
     return {"ok": False, "shot_plan": shot_text, "ref_plan": ref_text,
             "attempts": int(attempts), "errors": last_errors,

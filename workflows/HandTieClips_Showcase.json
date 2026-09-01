@@ -597,7 +597,11 @@
         "final",
         "off",
         "off",
-        0.35
+        0.35,
+        -14.0,
+        0.6,
+        "loop",
+        1.0
       ],
       "title": "H3 Ref2VA Chain - showcase 6x7s"
     },

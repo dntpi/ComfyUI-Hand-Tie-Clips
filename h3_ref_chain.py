@@ -70,6 +70,7 @@ from . import store as _store
 from . import media as _media
 from . import tone as _tone
 from . import sheet as _sheet
+from . import music as _music
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -1270,6 +1271,59 @@ class HandTieClips:
                         "with \"tone\": \"rebase\"."
                     ),
                 }),
+                # APPENDED, never inserted -- the same rule the ref sockets at
+                # the top of this block were deleted for. `widgets_values` is a
+                # positional list, so a widget added anywhere but the end shifts
+                # every widget after it, and a workflow saved before the change
+                # reads its own settings out of the wrong slots. Silently: the
+                # numbers all still parse, they are just the wrong numbers.
+                "soundtrack": ("AUDIO", {
+                    "tooltip": (
+                        "Optional music bed under the whole chain, mixed in once "
+                        "after the last hop is joined. A mix, not a replacement: "
+                        "H3's own dialogue and effects stay. Wire a Load Audio, "
+                        "or anything with an AUDIO output. Unwired, the audio "
+                        "output is untouched."
+                    ),
+                }),
+                "music_gain_db": ("FLOAT", {
+                    "default": -14.0, "min": -60.0, "max": 6.0, "step": 0.5,
+                    "tooltip": (
+                        "Level of the bed against the generated audio. -14 sits "
+                        "a track under speech without fighting it; -6 is a "
+                        "music-led cut. Push it far enough and the peak guard "
+                        "trims the whole mix rather than let it clip -- which it "
+                        "says in `info` rather than doing quietly."
+                    ),
+                }),
+                "music_duck": ("FLOAT", {
+                    "default": 0.6, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": (
+                        "Pull the bed down while anyone is talking and let it "
+                        "back up in the gaps. 0 is off: a flat bed at "
+                        "music_gain_db and nothing else. 0.6 drops it about 8 dB "
+                        "under speech, which is what keeps dialogue intelligible "
+                        "under a loud track. Fast attack, slow release, no "
+                        "model -- same result every run."
+                    ),
+                }),
+                "music_fit": (["loop", "once"], {
+                    "default": "loop",
+                    "tooltip": (
+                        "loop: repeat the track to cover the chain, crossfading "
+                        "each wrap so it cannot click. once: play it through and "
+                        "leave silence after. A track longer than the chain is "
+                        "trimmed either way."
+                    ),
+                }),
+                "music_fade_s": ("FLOAT", {
+                    "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.25,
+                    "tooltip": (
+                        "Seconds of fade on the bed at the start and end of the "
+                        "finished chain, so it neither begins on a cut nor stops "
+                        "on a dropout. Also sets the loop crossfade length."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1327,6 +1381,8 @@ class HandTieClips:
             tone_compensate="off", establish=None,
             render_through=0, quality="final", dry_run="off",
             contact_sheet="off", tone_anchor=_tone.ANCHOR_STRENGTH,
+            soundtrack=None, music_gain_db=-14.0, music_duck=0.6,
+            music_fit="loop", music_fade_s=1.0,
             unique_id=None):
         dry = str(dry_run) == "on"
         draft = str(quality) == "draft"
@@ -2069,6 +2125,30 @@ class HandTieClips:
                   "drift_ms": round((_a_secs - _v_secs) * 1000.0, 1),
                   "hops": int(n), "frames": int(master_imgs.shape[0]),
                   "done": True})
+
+        # The soundtrack goes on LAST, after every hop is joined and the seams
+        # are crossfaded. That placement is the whole safety argument: it runs
+        # once, downstream of every latent, every pin and every cache key, so it
+        # cannot move a generated frame or sample -- it only decides what is
+        # laid over them. It also means a cached chain can be re-mixed at a
+        # different level for the price of the mix alone.
+        if soundtrack is not None and master_wav is not None:
+            try:
+                master_wav, _mnote = _music.apply(
+                    master_wav, sr,
+                    soundtrack.get("waveform"), soundtrack.get("sample_rate", sr),
+                    gain_db=float(music_gain_db), duck=float(music_duck),
+                    fit_mode=str(music_fit), fade_s=float(music_fade_s))
+                if _mnote:
+                    print(f"[{TAG}] {_mnote}", flush=True)
+                    info = info + "\n" + _mnote
+            except Exception as _me:  # noqa: BLE001
+                # A bad music file must not destroy a render that has already
+                # cost minutes of GPU. Report it and hand back the audio the
+                # chain actually generated.
+                print(f"[{TAG}] soundtrack skipped ({_me!r})", flush=True)
+                info = info + f"\nsoundtrack skipped: {_me}"
+
         master_audio = {"waveform": master_wav, "sample_rate": sr}
         sheet = _sheet.placeholder()
         if want_sheet:

@@ -1022,3 +1022,58 @@ was required -- CLAUDE.md, PROMPTING.md, README twice, and the on-canvas card in
 the Starter workflow via `tools/notes.py`. All corrected. README's existing
 "No dependencies to install" line, which already listed `av`, is now true rather
 than nearly true.
+
+## 28. A music bed that does not bury the dialogue (2026-09-01)
+
+*(Numbered 28 because 24-25 are on `llm-plan-writer` and 26-27 on
+`texture-ratchet`, both unmerged. Section numbers are cheap; renumbering a
+merged history is not.)*
+
+A user asked for a soundtrack over the whole chain -- not an audio *reference*,
+which H3 already takes as a voice, but a track laid under the finished thing.
+
+The first decision was where it goes, and it decided everything else. H3 writes
+its own audio per hop and `_xfade_audio` joins it at each seam, so the bed is
+applied ONCE, after the last hop, immediately before `master_audio` is built. It
+is therefore downstream of every latent, every pin and every cache key: it
+cannot move a generated frame or sample, only decide what is laid over them. The
+same property that made the texture work safe -- correcting something nothing
+renders from -- is what makes this safe, for the opposite reason. It also means a
+cached chain can be re-mixed at a new level for the price of the mix alone.
+
+Three things in `music.py` are there because the obvious version is wrong:
+
+**Resample explicitly.** A 48 kHz track dropped into a 44.1 kHz master plays 9%
+fast and a semitone sharp. That reads as "the model generated bad music", not as
+a bug in the node, so it would have been reported as anything but what it was.
+
+**Crossfade the loop wrap.** Butt-joining a loop leaves a step discontinuity,
+i.e. a click -- and a click on a fixed period is the most audible artifact
+available, worse than the seam it came from. Equal-power cos/sin, the same law
+`_xfade_audio` already uses; two different fade shapes in one output is an
+argument waiting to happen.
+
+**Duck against the 95th percentile, not the peak.** A single shouted word would
+otherwise set the scale and leave ordinary dialogue barely ducking at all --
+which is the common case in the podcast clip this was asked for. Fast attack,
+slow release: the reverse lets the first syllable of every line collide with the
+music, and the first syllable is the one a listener needs to follow a sentence.
+
+The envelope runs at a 1 kHz control rate. A one-pole attack/release filter is
+sequential, so at 44.1 kHz a 40 s master is 1.8M Python iterations -- about a
+minute of dead time on a node whose whole job took ten. At 1 kHz it is 40,000,
+and 1 ms resolution is far finer than the 10-400 ms attacks that matter.
+
+The peak guard trims the whole mix rather than only the bed, and says so in
+`info`. Ducking the bed further to fit would change the balance the user set, by
+an amount they cannot predict, without telling them.
+
+`tools/check_music.py` is 31 assertions on synthetic material, because every
+defect here is inaudible in a still and invisible in a frame count. The one that
+matters is the last: with nothing wired, `apply()` returns the master object
+itself. That is the whole claim that the feature is opt-in.
+
+**Four widgets, appended.** `widgets_values` is positional, so they go at the
+bottom of `optional` and the two shipped workflows grew four values. The AUDIO
+socket costs no widget slot -- `check_workflows.py` already knew that, and
+caught the count mismatch before the workflows were updated.

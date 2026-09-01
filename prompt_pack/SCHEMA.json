@@ -178,6 +178,11 @@
                 },
                 "minItems": 1,
                 "description": "1-based hops this picture rides on. OMITTING IT MEANS HOP 1 ONLY on a continuation chain -- a plate shot elsewhere riding a later hop beats the frame pin."
+              },
+              "mp": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Per-reference pixel budget in megapixels. 0 (or omit) means no cap. A set value has a 0.3 MP floor -- this is a token dial, so a location plate need not cost what a face costs."
               }
             }
           },

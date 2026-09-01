@@ -132,6 +132,14 @@ def build():
                                "plate shot elsewhere riding a later hop beats "
                                "the frame pin.",
             },
+            "mp": {
+                "type": "number", "minimum": 0,
+                "description": "Per-reference pixel budget in megapixels. 0 "
+                               "(or omit) means no cap. A set value has a "
+                               f"{r.REF_MP_MIN:g} MP floor -- this is a token "
+                               "dial, so a location plate need not cost what "
+                               "a face costs.",
+            },
         },
     }
     assert set(ref["properties"]) == set(r.REF_FIELDS), (

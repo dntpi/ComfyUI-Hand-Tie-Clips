@@ -207,18 +207,55 @@ def load_audio(name):
 
     Shape is `[batch, channels, samples]`, which is what every AUDIO consumer
     in the graph expects.
+
+    Decoded with PyAV rather than `torchaudio.load`. torchaudio 2.9 removed its
+    own decoding backends and left `load` a thin wrapper over `torchcodec`, so
+    on an install without that package -- including this one -- it raises
+    ImportError for every file, wav and mp3 alike, and the only symptom is a
+    reference that silently does not arrive. PyAV is already a hard ComfyUI
+    dependency and is what core's own Load Audio decodes with, so a file picked
+    in the panel now takes exactly the same path as one arriving down a wire.
+
+    `torchaudio` is still used for `functional.resample` in music.py; it is only
+    the *decoding* half of that library that is gone.
     """
     path = resolve(name, kinds={"audio"})
     if path is None:
         return None
     try:
+        import av  # noqa: PLC0415
         import torch  # noqa: PLC0415
-        import torchaudio  # noqa: PLC0415
 
-        wav, sr = torchaudio.load(path)
-        if wav.dim() == 1:
-            wav = wav.unsqueeze(0)
-        return {"waveform": wav.unsqueeze(0).float(), "sample_rate": int(sr)}
+        with av.open(path) as container:
+            if not container.streams.audio:
+                print(f"[{TAG}] {name!r} has no audio stream", flush=True)
+                return None
+            stream = container.streams.audio[0]
+            sr = int(stream.codec_context.sample_rate)
+            channels = int(stream.channels)
+            chunks = []
+            for frame in container.decode(streams=stream.index):
+                buf = torch.from_numpy(frame.to_ndarray())
+                # Planar formats decode to [channels, samples]; packed ones to
+                # [1, samples*channels] interleaved. Same reshape ComfyUI uses.
+                if buf.shape[0] != channels:
+                    buf = buf.view(-1, channels).t()
+                chunks.append(buf)
+        if not chunks:
+            print(f"[{TAG}] {name!r} decoded to no audio frames", flush=True)
+            return None
+        wav = torch.cat(chunks, dim=1)
+        # Integer PCM is scaled by its own full range, not normalised by peak:
+        # a quiet take must stay quiet, and dividing by max would silently
+        # apply a wildly different gain per file.
+        if not wav.dtype.is_floating_point:
+            if wav.dtype == torch.int16:
+                wav = wav.float() / (2 ** 15)
+            elif wav.dtype == torch.int32:
+                wav = wav.float() / (2 ** 31)
+            else:
+                wav = wav.float()
+        return {"waveform": wav.float().unsqueeze(0), "sample_rate": sr}
     except Exception as exc:
         print(f"[{TAG}] could not read audio {name!r}: {exc!r}", flush=True)
         return None

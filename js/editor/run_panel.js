@@ -53,6 +53,11 @@ const GROUPS = [
     // fallback doing its job, not a break. Order is the order you reach for
     // them: prove the plan compiles, pick the fidelity, stop short, look.
     ["preview", ["dry_run", "quality", "render_through", "contact_sheet"]],
+    // Last because it is the last thing to happen: the bed goes on after every
+    // hop is joined. The file itself is picked in MEDIA -- these four only say
+    // how loud it is and how it is laid down, and are inert with nothing set.
+    ["soundtrack", ["music_gain_db", "music_duck", "music_fit",
+                    "music_fade_s"]],
 ];
 
 /**

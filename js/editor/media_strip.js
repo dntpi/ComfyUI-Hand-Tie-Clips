@@ -1,5 +1,5 @@
 /**
- * The three single media inputs: first frame, reference clip, voice.
+ * The single media inputs: first frame, reference clip, voice, soundtrack.
  *
  * These were `start_image`, `reference_video` and `voice` IMAGE/AUDIO sockets.
  * Together with the nine `ref_image_N` slots they were twelve of a sixteen
@@ -22,6 +22,12 @@ const SLOTS = [
      "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that."],
     ["voice_file", "audio", "voice",
      "Voice or timbre reference. Rides every hop as <Audio 1>."],
+    // Not a reference at all: this one is never shown to the model. It is mixed
+    // under the finished chain after the last hop is joined, so it sits here
+    // because this is where you look for audio -- not because it behaves like
+    // its neighbours. The dials that shape it live in RUN > soundtrack.
+    ["soundtrack_file", "audio", "soundtrack",
+     "Music bed mixed under the whole chain once it is joined. Not a reference -- the model never hears it."],
 ];
 
 /** The widget names this strip owns, so the caller hides exactly those. */

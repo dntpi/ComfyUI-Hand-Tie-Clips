@@ -24,9 +24,9 @@ const STYLE_ID = "h3rc-style";
  * managed to draw, and only those are hidden. A dial the panel could not render
  * -- a type it does not know, or one renamed on the Python side -- therefore
  * stays visible as a native widget instead of vanishing from the node. */
-// MEDIA_WIDGETS are the three filename STRINGs that replaced the
-// start_image / reference_video / voice sockets. They are always hidden:
-// the media strip owns them in both modes, and shown raw they are three
+// MEDIA_WIDGETS are the filename STRINGs that replaced the start_image /
+// reference_video / voice sockets, plus soundtrack_file. They are always
+// hidden: the media strip owns them in both modes, and shown raw they are
 // text boxes inviting you to type a path that would not resolve.
 const SHOTS_HIDDEN = ["prompt", "chains", "hop_script", "shot_plan", "ref_plan"]
     .concat(MEDIA_WIDGETS);

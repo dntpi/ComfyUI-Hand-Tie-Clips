@@ -1324,6 +1324,17 @@ class HandTieClips:
                         "on a dropout. Also sets the loop crossfade length."
                     ),
                 }),
+                # The picker's half of the soundtrack, and the one most people
+                # use. Same shape as voice_file: a basename under h3_refs, set
+                # in the panel. LAST, per the note at the top of this block.
+                "soundtrack_file": ("STRING", {
+                    "default": "",
+                    "tooltip": (
+                        "Music bed as a filename, set in the panel next to the "
+                        "voice reference. The `soundtrack` socket wins when both "
+                        "are set."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1349,7 +1360,8 @@ class HandTieClips:
 
     @classmethod
     def IS_CHANGED(cls, ref_plan="", start_image_file="",
-                   reference_video_file="", voice_file="", **_):
+                   reference_video_file="", voice_file="",
+                   soundtrack_file="", **_):
         """Re-run when a reference file changes underneath its name.
 
         Every picture now arrives as a basename, and a basename is a stable
@@ -1359,7 +1371,8 @@ class HandTieClips:
         Deliberately NOT `float("nan")` -- that is the blunt version of this and
         would force a full re-render of an expensive node on every queue.
         """
-        names = [start_image_file, reference_video_file, voice_file]
+        names = [start_image_file, reference_video_file, voice_file,
+                 soundtrack_file]
         try:
             for r in (_refs.parse_ref_plan(ref_plan).get("refs") or []):
                 if r.get("file"):
@@ -1382,7 +1395,7 @@ class HandTieClips:
             render_through=0, quality="final", dry_run="off",
             contact_sheet="off", tone_anchor=_tone.ANCHOR_STRENGTH,
             soundtrack=None, music_gain_db=-14.0, music_duck=0.6,
-            music_fit="loop", music_fade_s=1.0,
+            music_fit="loop", music_fade_s=1.0, soundtrack_file="",
             unique_id=None):
         dry = str(dry_run) == "on"
         draft = str(quality) == "draft"
@@ -1488,7 +1501,9 @@ class HandTieClips:
         voice = _media.load_audio(voice_file) if voice_file else None
         for _name, _got in (("start_image", start_image_file and start_image is None),
                             ("reference_video", reference_video_file and reference_video is None),
-                            ("voice", voice_file and voice is None)):
+                            ("voice", voice_file and voice is None),
+                            ("soundtrack", soundtrack_file and soundtrack is None
+                             and _media.resolve(soundtrack_file, kinds={"audio"}) is None)):
             if _got:
                 print(f"[{TAG}] note: {_name} file could not be read; continuing "
                       f"without it", flush=True)
@@ -2132,11 +2147,20 @@ class HandTieClips:
         # cannot move a generated frame or sample -- it only decides what is
         # laid over them. It also means a cached chain can be re-mixed at a
         # different level for the price of the mix alone.
-        if soundtrack is not None and master_wav is not None:
+        # The socket wins over the picker when both are set. A wire is a
+        # deliberate act; a filename left in the panel from an earlier take is
+        # not, and silently preferring the stale one would be the worse guess.
+        _bed = soundtrack
+        if _bed is None and soundtrack_file:
+            _bed = _media.load_audio(soundtrack_file)
+        elif _bed is not None and soundtrack_file:
+            print(f"[{TAG}] soundtrack: using the wired socket, not "
+                  f"{soundtrack_file!r}", flush=True)
+        if _bed is not None and master_wav is not None:
             try:
                 master_wav, _mnote = _music.apply(
                     master_wav, sr,
-                    soundtrack.get("waveform"), soundtrack.get("sample_rate", sr),
+                    _bed.get("waveform"), _bed.get("sample_rate", sr),
                     gain_db=float(music_gain_db), duck=float(music_duck),
                     fit_mode=str(music_fit), fade_s=float(music_fade_s))
                 if _mnote:

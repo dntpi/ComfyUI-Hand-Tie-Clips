@@ -26,85 +26,12 @@ each entry's mtime for LRU, so probing marks every hop as recently used.
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import sys
-import types
 
-# Derived from this file's position (pack/tools/ -> custom_nodes/pack ->
-# ComfyUI root), so the probe works on a checkout that is not this machine's.
-# Matches the root h3_ref_chain.py builds from folder_paths.get_temp_directory().
-_COMFY_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))))
-DEFAULT_ROOT = os.path.join(_COMFY_ROOT, "temp", "h3_ref_chain_hops")
-
-
-def _load_store():
-    """Import the pack's own store.py without installing the pack.
-
-    The directory has dashes, so it is not a legal module name; register a
-    synthetic package pointing at it. Same trick the offline tests use.
-    """
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    pkg = types.ModuleType("h3pack")
-    pkg.__path__ = [here]
-    sys.modules["h3pack"] = pkg
-    from h3pack import store  # noqa: PLC0415
-    return store
-
-
-def _hops(store, root):
-    """Cached hops as [(hop_index, key, meta)], oldest first."""
-    out = []
-    for key, _size, _mtime in store.HopStore(root).entries():
-        meta_path = os.path.join(root, key + store.META_EXT)
-        try:
-            with open(meta_path, encoding="utf-8") as fh:
-                meta = json.load(fh)
-        except (OSError, ValueError) as e:
-            print(f"  ! {key[:8]}: unreadable meta ({e!r}), skipped")
-            continue
-        hop = meta.get("hop")
-        if hop is None:
-            print(f"  ! {key[:8]}: meta has no hop index, skipped")
-            continue
-        out.append((int(hop), key, meta))
-    # `written` is the render order. Sorting by hop index instead would
-    # interleave two runs that share the directory -- see _chains.
-    return sorted(out, key=lambda t: (float(t[2].get("written") or 0.0), t[0]))
-
-
-def _chains(hops):
-    """Split cached hops into separate renders. -> [[(hop, key, meta), ...]].
-
-    The cache is keyed by content, not by run, so a directory routinely holds
-    several chains at once: a session of testing leaves one per settings
-    change. Differencing straight down a hop-sorted list then pairs hop 2 of
-    one render against hop 1 of another and reports the gap between two
-    unrelated scenes as drift -- a large, plausible, entirely fictional number.
-    That is the worst way for a measuring instrument to fail, so segment first.
-
-    Hops of one render are written in order, so a hop index that does not
-    advance means a new run started. That separates two runs of the SAME shape
-    (the frame_shift-vs-anchor A/B) as well as two of different lengths, which
-    grouping on frames/resolution alone would not.
-    """
-    chains, cur, last = [], [], None
-    for hop, key, meta in hops:
-        if last is not None and hop <= last:
-            chains.append(cur)
-            cur = []
-        cur.append((hop, key, meta))
-        last = hop
-    if cur:
-        chains.append(cur)
-    return chains
-
-
-def _describe(chain):
-    m = chain[0][2]
-    return (f"{len(chain)} hop(s), {m.get('frames', '?')}f "
-            f"@ {m.get('width', '?')}x{m.get('height', '?')}")
+# The cache reader lives in hopcache.py because texture_probe.py needs the
+# same chain segmentation, and a second copy of it is how the
+# two-renders-differenced-as-one bug comes back.
+import hopcache
+from hopcache import DEFAULT_ROOT
 
 
 def main():
@@ -117,35 +44,13 @@ def main():
                          "more than one (1 = oldest). Default: the newest.")
     args = ap.parse_args()
 
-    if not os.path.isdir(args.root):
-        print(f"No hop cache at {args.root}.\n"
-              f"Render with cache_hops=on and probe before restarting ComfyUI "
-              f"(temp/ is wiped on start).")
-        return 1
-
-    store = _load_store()
+    store, hops, report = hopcache.select(args.root, args.chain)
     import torch  # noqa: PLC0415  -- after store, so the venv check fails first
 
-    all_hops = _hops(store, args.root)
-    chains = _chains(all_hops)
-    if args.chain is not None:
-        if not 1 <= args.chain <= len(chains):
-            print(f"--chain {args.chain} out of range; "
-                  f"{len(chains)} chain(s) cached.")
-            return 1
-        hops = chains[args.chain - 1]
-    else:
-        hops = chains[-1] if chains else []
-
-    if len(chains) > 1:
-        # Never silently pick one. The number below is only meaningful for a
-        # single render, and which one was read changes the answer.
-        print(f"{len(all_hops)} cached hops in {args.root} span "
-              f"{len(chains)} separate renders:")
-        for _i, _c in enumerate(chains, 1):
-            _mark = " <- reading" if _c is hops else ""
-            print(f"  chain {_i}: {_describe(_c)}{_mark}")
-        print("  Pick another with --chain N.\n")
+    if report:
+        # Never silently pick one. The numbers below are only meaningful for
+        # a single render, and which one was read changes the answer.
+        print(report)
 
     if len(hops) < 2:
         print(f"Found {len(hops)} cached hop(s) in the selected render; "

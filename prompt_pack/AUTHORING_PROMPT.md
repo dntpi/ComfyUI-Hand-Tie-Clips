@@ -71,10 +71,21 @@ These are not style preferences. They are how this model fails.
 6. **A hop that ends on dialogue keeps talking into the next hop.** The audio
    pin carries the previous hop's tail, so speech at the end of hop N becomes
    the opening of hop N+1 and propagates down the whole chain. Land each spoken
-   line in the MIDDLE of its hop and leave a non-verbal action running into the
-   seam — slicing, walking, a hand on a doorframe. Give every hop with no
-   dialogue its own narrowband sound bed (footsteps, a refrigerator, rain on
-   glass), or the audio has nowhere to go but back to speech.
+   line in the MIDDLE of its hop. Give every hop with no dialogue its own
+   narrowband sound bed (footsteps, a refrigerator, rain on glass), or the
+   audio has nowhere to go but back to speech.
+
+   **Then end every hop but the last on a physical action still in progress**
+   — slicing, walking, turning something over, a hand still moving. Write it in
+   those words: *"still turning it as the clip ends"*. This is not the same
+   requirement as the one above and passing that one does not cover it. A
+   non-final hop carries `tail: ongoing`, which tells the model an action is
+   underway at the last frame; if every physical action in the beat has
+   *finished* — hands come to rest, fingers tap "before settling back down" —
+   then the only thing left underway is the mouth, and the model fills the
+   remaining frames with dialogue nobody wrote. Rule 2's "pose plus a sound"
+   ending is for the FINAL hop, which sets `tail` to `settle` or `hold` and is
+   the one place a still ending is what the directive asks for.
 
 7. **A beat must be true from any plausible ending of the hop before it.** A
    hop routinely over-delivers -- given a movement it finishes it, and then some.
@@ -200,13 +211,21 @@ about fifty words whatever the hop length. Fifty words is right for a 7 s hop
 and is half of what 15 s needs. The table below is not a style note; it is the
 one part of this document you have to do arithmetic for.
 
-| hop | words in the beat |
-|---|---|
-| `5 s` | 30-45 |
-| `7 s` | 30-55 |
-| `8 s` | 35-60 |
-| `10 s` | 45-75 |
-| `15 s` | 70-100 |
+| hop | words in the beat | spoken lines |
+|---|---|---|
+| `5 s` | 30-45 | 1 |
+| `7 s` | 30-55 | 1 |
+| `8 s` | 35-60 | 1-2 |
+| `10 s` | 45-75 | 2 |
+| `15 s` | 70-100 | 2-3 |
+
+**Both columns, not just the first.** The word count sizes the *description*;
+the line count sizes the *audio*, and they fail in opposite directions. Too few
+words and the model has nothing to render. Too few spoken lines and it has
+several seconds of someone visibly mid-conversation with nothing assigned to
+say, so it invents some: a 10 s hop written with a single line came back with
+the character babbling dialogue nobody wrote, on two hops out of three. Write
+both counts down.
 
 A worked `15 s` beat, at 74 words, from a rendered eight-hop chain:
 
@@ -243,9 +262,14 @@ barely started.'
 ```
 
 Single quotes survive copy-paste; escaped double quotes are the most common
-cause of a rejected plan. Budget roughly one line of dialogue per 5–7 seconds of
-hop — a long speech in a short hop is truncated mid-word, and that truncation is
-then pinned into the next hop's audio.
+cause of a rejected plan.
+
+**The line count is in the length table above, and it is a floor as well as a
+ceiling.** A long speech in a short hop is truncated mid-word, and that
+truncation is then pinned into the next hop's audio. But the opposite failure is
+the more common one and it is louder: a hop given fewer lines than the table
+asks for leaves seconds of a speaking character with nothing assigned, and the
+model writes its own. Two spoken lines in a 10 s hop, not one.
 
 ## `ref_plan`
 
@@ -366,7 +390,15 @@ Before you answer, check every one of these:
       Passing this check is not the same as passing the one above it.
 - [ ] No beat contains backticks, asterisks or any other markdown. Beats are
       plain prose; a tag inside a beat is written bare, as @tag.
-- [ ] No shot names an action ending; endings are written as a pose plus a sound.
+- [ ] No shot names an action ending. The FINAL hop's ending is written as a
+      pose plus a sound; every earlier hop ends on motion instead — see below.
+- [ ] Every hop but the last ends on a physical action still in progress, in
+      those words: "still turning it as the clip ends". A hop whose every
+      action has finished carries `tail: ongoing` with nothing underway, and
+      the model fills the gap with invented dialogue.
+- [ ] Every beat's spoken-line count has been counted, written down, and
+      matches the table for its hop length. One line in a 10 s hop is half a
+      hop of someone mid-conversation with nothing to say.
 - [ ] Any quiet moment names a specific narrowband sound.
 - [ ] No hop ends on a spoken line; every dialogue-free hop names a sound of its own.
 - [ ] Any hop that changes location joins on `match_cut` or `hard_cut`, not `continuous`.

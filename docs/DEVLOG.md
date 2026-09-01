@@ -1183,6 +1183,269 @@ The probe itself needed fixing before any of this could be read: with both runs
 in the cache it differenced across renders and reported `-30.37/255`. See the
 `tone_probe` commit.
 
+## 26. The texture metric everyone reaches for is the wrong one (2026-08-31)
+
+*Numbered 26 because 24 and 25 are on the `llm-plan-writer` branch, which is on
+hold. Nothing here depends on them.*
+
+A user running H3 chains on a different rig -- `MiniMaxH3SongMaskedAVContext`,
+`source_latent`, `context_length 39` -- reported "saturation and overbaking on
+close shots": skin blotchy, hair frizzed into noise, the face restructuring by
+segment 4. They came with a measured report over 81 chained clips and a
+fixed-seed harness, and with a question aimed at this pack: *is the latent
+hand-off amplifying high-frequency energy, or is the sampler over-sharpening
+the generated region to match the sharpened context it was handed?*
+
+Their metric was mean `|Laplacian|` over the frame, end of last segment over
+start of first. It gave 1.060 / 1.180 / 1.204 for 2 / 3 / 4 hops.
+
+**On the two clips they sent, that metric reads 0.961 and 0.973.** Both faces
+are visibly destroyed by the end -- frame 5 against frame 1045 is not a
+close call. The metric says one of them got slightly *better*.
+
+It is confounded twice.
+
+It is an **area average**. A face is about 6% of a 736x1312 portrait frame, and
+these clips are a talking head against wood panelling, a fleece throw and two
+sconces. The background does not change; it outvotes the face roughly sixteen
+to one.
+
+It **sums every spatial frequency into one number**, so energy moving between
+bands cancels. Measured on the same clips:
+
+| | luma | global sigma | fine <1px | mid 1-2.5px | coarse 2.5-6px |
+|---|---|---|---|---|---|
+| TEA2 | 92.2 -> 90.1 | 59.7 -> 58.0 | x1.09 | **x1.17** | x1.03 |
+| TEA3 | 106.0 -> 104.1 | 56.9 -> 54.4 | x1.33 | **x1.35** | x1.30 |
+
+Global contrast **falls** while mid-band energy **rises**. No single scalar can
+represent that, and a correction tuned against one is tuned against noise.
+
+Three things follow, and each changes what a fix should do.
+
+**The band is mid, not high.** "Blotchy skin" is mottle at 1-2.5 px, not grain.
+A fix aimed at high-frequency sharpening aims past it.
+
+**The climb is continuous, with no step at the joins.** TEA2's background
+mid-band, in 60-frame bins: 1.57 1.55 1.56 1.56 1.57 1.60 1.68 1.66 1.61 1.64
+1.71 1.71 1.72 1.77 1.85 1.85 1.93. A ramp, not a staircase. So the hop
+boundary is not where the damage is injected -- it is the ratchet pawl. It
+carries the degraded state forward instead of resetting it, and
+`h3_ref_chain.py` hands forward `imgs[-tail_n:]`, which by this finding is the
+most degraded stretch of the hop. Every hop is seeded from the worst frames
+available to it.
+
+**It is global, not face-local.** TEA2's background ratcheted *more* than the
+head (x1.21 vs x1.17). The face is where it becomes objectionable, not where it
+happens -- we are simply far better at reading skin than wood. So a correction
+can be global, but the measurement must still report a subject box, because
+that is where the acceptance threshold lives.
+
+Their exposure anchoring was on and working: luma holds at 92 -> 90 across 44
+seconds. The texture ratchet is independent of it. That matches the table --
+coarse band roughly flat, mid climbing -- and it is why the existing tone work
+never touched this.
+
+### What got built
+
+`tools/texture_probe.py`. Three Gaussian-difference bands, a subject box against
+a background control, and the within-hop slope as well as the per-hop step. It
+reads the hop cache's pre-correction FFV1 frames, or any video via `--video`,
+which is what makes it usable on someone else's rig. It prints mean
+`|Laplacian|` next to its own numbers, because "the head gained 34% mid-band
+and the Laplacian says 0.973" is a better argument against that metric than a
+paragraph is.
+
+`tools/check_texture.py` drives it against a synthetic cache with a ratchet of
+**known** amplitude injected. This is not ceremony. §21's instrument shipped a
+confident wrong number for weeks because nothing had ever read it against a
+signal whose answer was known in advance, and this one caught two defects while
+being written: `slope_pct` reported percent-per-frame under a per-100-frame
+label -- a hop that doubled read as "+2.4%" -- and the first fixture's
+"mid-only" injection was a full-window difference of Gaussians whose tails
+landed squarely in the coarse band, so the test was measuring its own spectral
+hygiene rather than the probe's.
+
+`tools/hopcache.py` now holds the cache reader and the chain segmentation,
+shared with `tone_probe` instead of copied. That segmentation is precisely what
+was wrong in §21; it must not exist in two places. `latents.py` lifts the
+NestedTensor shim out of `h3_ref_chain.py` so a tool can read a cached latent
+without importing ComfyUI -- the same reason `plan.py` and `tone.py` have no
+ComfyUI imports.
+
+### What is deliberately not built yet
+
+The lever. `_condition_pin_latent`'s `pin_renorm` matches one scalar sigma per
+latent component, and the pixel evidence says sigma and the damaged band move in
+opposite directions -- so a band-aware rescale is the obvious next move. But
+that is an argument about pixels, and the lever acts on latents. Whether the
+*latent's* band structure drifts the way the pixels' does is unmeasured, and
+`texture_probe` now prints exactly that (`latent [0] sigma ... hi ...`) from a
+cached hop.
+
+Measure first. A 4-5 hop chain with `cache_hops=on`, probed before the restart
+that wipes `temp/`. Two hops cannot show this: the reporter's own numbers only
+separate at three.
+
+### Also found, by reading
+
+`_condition_pin_latent` is applied to `pin_latent = prev_sampled`, which only
+the `motion_context` branch of `_pin_continue` consumes. The `addguide_pixels`
+fallback takes raw `prev_imgs` and gets **no conditioning at all** -- and a
+cache hit whose latent did not serialise lands there silently. AddGuide also
+re-encodes decoded pixels, which is the decode/re-encode round trip the reporter
+measured at 1.530, "much worse", on their own rig. A chain that quietly fell
+back has both levers dead and the worse hand-off. The log says which pin ran;
+it is worth reading before trusting any A/B.
+
+### Correction, 2026-09-01: it is a staircase, not a ramp
+
+The section above says the climb is continuous with no step at the joins. That
+was wrong, and it was wrong in the way that matters most -- it is the claim
+that decides where a correction belongs.
+
+It came from binning the reporter's master at 60 frames **without knowing where
+their joins were**. A step function sampled that way, with content noise on
+top, reads as a ramp if you want it to. The inference was under-determined and
+I did not say so.
+
+The hop cache settles it, because there the boundaries are known. A 3 x 243f
+chain, 736x1280, overlap 22, Motion-Context pin, `pin_renorm off`, head box,
+mid band, with the regenerated overlap frames excluded:
+
+    hop 1   0.00985 0.00976 0.00963 0.00992 0.00981    last/first 0.996
+    hop 2   0.01050 0.01025 0.01029 0.01033 0.01053    last/first 1.003
+    hop 3   0.01058 0.01025 0.01044 0.01058 0.01076    last/first 1.018
+
+    join 1 -> 2   tail 0.01006 -> body start 0.01048   x1.042
+    join 2 -> 3   tail 0.01068 -> body start 0.01113   x1.042
+
+Flat inside every hop. **The same +4.2% at both joins.** Those two frames are
+adjacent in scene time -- hop N+1's frame 22 continues from hop N's last -- so
+it is a genuine discontinuity and not a gap the scene moved through.
+
+Re-reading the reporter's bins with this in hand, theirs is a staircase too:
+1.57 1.55 1.56 1.56 1.57 | 1.60 1.68 1.66 1.61 1.64 | 1.71 1.71 1.72 1.77 |
+1.85 1.85 1.93 -- four plateaus at ~1.56, ~1.64, ~1.73, ~1.88, stepping +5%,
++6%, +9%, on a chain they told us was four hops. Both rigs agree. I had the
+right data and read it wrong.
+
+This is better news than the original reading. "Self-conditioning drift inside
+the generation" could only ever be damped; a step injected at the hand-off can
+be removed at the hand-off, and the hand-off copies are conditioning-only.
+
+### And the latent measurement, which was the point
+
+From the same cache, per hop: component [0] sigma `1.0414 -> 1.0376 -> 1.0289`,
+its high band `0.3794 -> 0.3811 -> 0.3809`.
+
+Sigma **falls 1.2%** while the pixel mid band climbs 8%. The high-band
+*fraction* -- hi/sigma -- goes `0.3643 -> 0.3673 -> 0.3702`, up 1.6% and
+monotone. So the latent does carry the tilt, and total sigma does not see it.
+
+`pin_renorm=on` would have multiplied this pin by `1.0414/1.0289 = x1.012`,
+scaling every band up uniformly, on a latent whose high band was already 1.6%
+too hot. **On this chain the shipped lever pushes the wrong way.** That is not
+a small correction to it; it is the wrong statistic, and Phase 2a's band-matched
+rescale is now evidenced rather than assumed.
+
+One caveat kept in view: 1.6% in the latent against 8% in pixels. The VAE
+decode is nonlinear, so the two are not expected to be proportional, but the
+gap is large enough that the lever's gain will have to be fitted against
+measured output rather than derived from the latent ratio.
+
+### Two probe defects the real data exposed
+
+**Cached latents did not load at all.** `torch.load` has to import
+`comfy.nested_tensor` to rebuild the object; without the ComfyUI root on
+`sys.path`, `store._get_latent` caught the ModuleNotFoundError and the probe
+printed "none cached for this hop" -- reporting a path problem as an absent
+latent. `hopcache.enable_latent_reads()` appends the root and nothing else;
+the module imports only torch when pickle reaches for it, so it is safe to run
+beside a queued render.
+
+**Band energy was not exposure-normalised.** The probe's own docstring claimed
+band-pass output "does not care about the local mean", which is true of an
+offset and false of a scale: brighten a frame 5% and every band grows with it.
+The 3-hop chain's luma rose 4.7%, so whole-frame mid read `x1.084` when the
+texture part was `n1.035`. Both columns are printed now. The head box was
+unaffected either way -- the brightening was in the background -- which is
+exactly the kind of thing a single whole-frame number cannot tell you.
+
+## 27. The band lever, and why the old one could never have worked (2026-09-01)
+
+Built after §26's correction, on the finding that the ratchet is a step at the
+join: +4.2% mid-band, twice, identically, on a 3-hop chain. Two identical steps
+is already a model -- constant multiplicative step per join, geometric in hop
+count. It predicts hop 3 at 1.042^2 = 1.086 against 1.079 measured. So the
+shape did not need a 4-5 hop run to pin down, which matters: those runs are
+expensive enough that the user does not do them.
+
+`pin_renorm` is now `["off", "sigma", "band"]`. `"on"` maps to `"sigma"`, so
+pre-0.5 workflows keep their behaviour, and the combo keeps its widget slot --
+adding options is safe, adding widgets is not.
+
+### The old lever is a no-op, provably
+
+The statistic that drifts is the high-band **fraction**, hi_sigma / sigma. A
+fraction is invariant under uniform rescaling, and a uniform rescale is the
+entirety of what `sigma` mode does. Driven end to end through
+`_condition_pin_latent` with a 12.74% band drift planted in hop 2:
+
+    mode=off     ratio after 0.3526 (anchor 0.3128)  err +12.74%
+    mode=sigma   ratio after 0.3526 (anchor 0.3128)  err +12.74%   x0.9651 applied
+    mode=band    ratio after 0.3127 (anchor 0.3128)  err  -0.04%   hi x0.8339
+
+`sigma` applied a real scale factor and moved the drift by nothing at all. This
+is stronger than §26's "corrects the wrong way": there is no gain, no strength
+knob and no anchor choice that makes a scale-invariant statistic respond to a
+scale. The lever was mis-specified, not mis-tuned. It is kept only for the
+workflows that saved it.
+
+### The fixed point that nearly shipped
+
+`match_band` first computed `k = target * sigma / hi_sigma`. That is wrong in a
+way that hides: scaling the high band changes the sigma it is a fraction of, so
+the target moves while you apply it. It landed at 0.3331 against a 0.3168
+target -- 5% short, in the right direction, which is the worst possible
+signature because it looks like it works.
+
+Now it solves the orthogonal fixed point in closed form,
+`k = r*L / (H*sqrt(1-r^2))`, then refines two or three passes against the
+statistic as actually measured, because a difference of Gaussians is not an
+exact projection. Lands at 0.3167 against 0.3168.
+
+### The fixture was also wrong, and would have hidden it
+
+The first test used `torch.randn` for the latent. White noise has a high-band
+fraction of **0.966** -- pinned against its ceiling of 1.0, where lifting the
+high band moves the statistic by 0.6% and the clamp does all the "correcting".
+Every assertion about the lever would have been measuring the clamp. Real
+latents sit at 0.3643, so the fixture is now built to land near there and an
+assertion holds it in that regime.
+
+The safety property is asserted as "the entire change lies along the high band"
+(cosine with `hi` > 0.99), not as "the low band is unchanged" -- re-splitting
+the result does not hand back the same `lo`, because the split is not a
+projection. The first version asserted the false one and failed correctly.
+
+### One cache key narrowed
+
+`pin_cond` was in every hop's key including hop 1, which has no pin --
+`_pin_mech_for` returns `"none"` at index 0 and the conditioning branch is
+`elif i > 0`. So flipping a lever discarded a byte-identical cached hop 1 and
+re-rendered it. That is a third of the cost of every lever A/B, on the one hop
+that provably could not have changed. Now keyed only from hop 2.
+
+### Still unknown
+
+The latent's band fraction moved 1.6% across the chain while the picture's mid
+band moved 8%. The decode is nonlinear so they are not expected to be
+proportional, but a full match to hop 1's fraction may therefore under-correct
+the picture. That is one A/B to find out, and it is readable off a 3-hop run:
+`texture_probe` reports each join separately, so two joins is two data points.
+If `band` shrinks the +4.2% step but does not close it, the next move is a gain
+above 1.0, fitted -- not guessed.
 ## 28. A music bed that does not bury the dialogue (2026-09-01)
 
 *(Numbered 28 because 24-25 are on `llm-plan-writer` and 26-27 on

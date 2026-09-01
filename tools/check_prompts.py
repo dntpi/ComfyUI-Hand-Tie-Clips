@@ -149,6 +149,60 @@ for fn in ("HandTieClips_Starter.json", "HandTieClips_Showcase.json"):
                 NOTE.append("%s hop %d: <Subject %s> with no definitions block "
                             "on this hop" % (fn, i + 1, ">, <Subject ".join(dangling)))
 
+# -- the two prompt documents must not drift apart -----------------------------
+# AUTHORING_PROMPT.md is SYSTEM_PROMPT.md wrapped in paste-me framing, and the
+# rules in the middle are meant to be the same text. Nothing enforced that, and
+# both files carry ~400 lines. DEVLOG 23 is what this looks like when it goes
+# wrong: five documents claimed ffmpeg was required, long after it was not.
+# The user-facing one is the AUTHORING copy, so a rule fixed only in
+# SYSTEM_PROMPT is a rule fixed in the file nobody pastes.
+print()
+print("  prompt_pack: the two documents agree")
+
+
+def _shared_blocks(text):
+    """The parts the two files are supposed to hold in common."""
+    out = {}
+    # Every numbered rule. Matched on the OPENER alone: several rules carry a
+    # bold header that wraps across a line, and requiring the closing `**` on
+    # the same line silently skipped rules 1 and 9 -- a coverage hole that
+    # looks exactly like a passing check.
+    for m in re.finditer(r"^(\d+)\. \*\*", text, re.M):
+        a = m.start()
+        nxt = re.search(r"^\d+\. \*\*", text[a + 1:], re.M)
+        end = re.search(r"^## ", text[a + 1:], re.M)
+        stop = min([x.start() for x in (nxt, end) if x] or [len(text)])
+        out["rule " + m.group(1)] = text[a:a + 1 + stop]
+    blank = chr(10) + chr(10)
+    m = re.search(r"^\| hop \|.*?(?=" + blank + ")", text, re.M | re.S)
+    if m:
+        out["length table"] = m.group(0)
+    items = re.findall(r"^- \[ \] .+?(?=" + chr(10) + r"- \[ \]|" + blank + ")",
+                       text, re.M | re.S)
+    out["checklist"] = chr(10).join(" ".join(i.split()) for i in items)
+    return out
+
+
+_docs = {}
+for _fn in ("SYSTEM_PROMPT.md", "AUTHORING_PROMPT.md"):
+    _path = os.path.join(PACK, "prompt_pack", _fn)
+    _docs[_fn] = _shared_blocks(io.open(_path, encoding="utf-8").read())
+
+_a, _b = _docs["SYSTEM_PROMPT.md"], _docs["AUTHORING_PROMPT.md"]
+ck("both documents define the same blocks", set(_a) == set(_b),
+   "only in one: %s" % sorted(set(_a) ^ set(_b)))
+# A comparison that quietly stops finding things passes just as loudly as one
+# that finds everything and matches. Pin the count.
+_rules = [k for k in _a if k.startswith("rule ")]
+ck("all 13 numbered rules were found", len(_rules) == 13,
+   "found %d: %s" % (len(_rules),
+                     sorted(int(r.split()[1]) for r in _rules)))
+for _key in sorted(set(_a) & set(_b)):
+    _x = " ".join(_a[_key].split())
+    _y = " ".join(_b[_key].split())
+    ck("%s matches" % _key, _x == _y,
+       "" if _x == _y else "SYSTEM %d chars vs AUTHORING %d" % (len(_x), len(_y)))
+
 print()
 for n in NOTE:
     print("NOTE  " + n)

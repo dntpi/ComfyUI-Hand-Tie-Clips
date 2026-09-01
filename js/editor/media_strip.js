@@ -82,11 +82,15 @@ export function createMediaStrip(node, { onChange } = {}) {
         count.textContent = set ? `${set} set` : "none set";
     }
 
-    // The bars and the header, deliberately NOT the pickers: this runs from
-    // inside a picker's own `set`, and re-entering that picker's render in the
-    // middle of its own callback is how you get a control that fights itself.
+    const trimRows = [];
+
+    // The bars, the header and the empty-row labels, deliberately NOT the
+    // pickers: this runs from inside a picker's own `set`, and re-entering
+    // that picker's render in the middle of its own callback is how you get
+    // a control that fights itself.
     function afterPick() {
         syncCount();
+        for (const fn of trimRows) fn();
         for (const b of bars) b.render();
     }
 
@@ -101,6 +105,10 @@ export function createMediaStrip(node, { onChange } = {}) {
         }
         const cell = el("label", "h3e-media-cell");
         cell.appendChild(el("span", "h3e-media-label", label));
+        // Looked up before the picker so a pick can zero the window. The bar
+        // is built later; the widgets are the store either way.
+        const ws = trim && widgetByName(node, `${trim}_start_s`);
+        const we = trim && widgetByName(node, `${trim}_end_s`);
         const pick = createPicker({
             kind,
             get: () => String(w.value || ""),
@@ -113,7 +121,18 @@ export function createMediaStrip(node, { onChange } = {}) {
             // route's is keyed by (name, mtime): re-uploading different audio
             // under a basename already on the canvas would otherwise draw the
             // old file's waveform over the new one's duration.
-            set: (v) => { commit(node, w, v); forgetPeaks(v); afterPick(); },
+            //
+            // The window is reset because it lives on the node, not the file:
+            // a 34 s IN from a previous take would otherwise sit on a 5 s
+            // replacement and the bar would read "0.00 s of 4.94 s" with the
+            // IN grip jammed at the end. The render already falls back
+            // (`clip_window`); this makes the bar tell the same story.
+            set: (v) => {
+                commit(node, w, v);
+                if (v) forgetPeaks(v);
+                if (ws && we) { commit(node, ws, 0); commit(node, we, 0); }
+                afterPick();
+            },
             onChange,
             title: tip,
         });
@@ -125,8 +144,6 @@ export function createMediaStrip(node, { onChange } = {}) {
         // The bar goes in its own full-width row under the grid, not inside the
         // 104px cell: a waveform squeezed to a thumbnail's width is a smear,
         // and the whole point is to see where the transients are.
-        const ws = trim && widgetByName(node, `${trim}_start_s`);
-        const we = trim && widgetByName(node, `${trim}_end_s`);
         if (ws && we) {
             const row = el("div", "h3e-trimrow");
             row.appendChild(el("span", "h3e-media-label", label));
@@ -140,6 +157,14 @@ export function createMediaStrip(node, { onChange } = {}) {
             row.appendChild(bar.root);
             trims.appendChild(row);
             bars.push(bar);
+            // The bar hides its own root when no file is set; the row's label
+            // is outside that root, so without this an empty slot still prints
+            // "REFERENCE CLIP" / "SOUNDTRACK" above the one that is set.
+            const syncRow = () => {
+                row.style.display = String(w.value || "") ? "" : "none";
+            };
+            trimRows.push(syncRow);
+            syncRow();
         }
     }
 
@@ -150,6 +175,7 @@ export function createMediaStrip(node, { onChange } = {}) {
 
     function render() {
         syncCount();
+        for (const fn of trimRows) fn();
         for (const p of pickers) p.render();
         for (const b of bars) b.render();
     }

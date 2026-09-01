@@ -82,6 +82,32 @@ function fmt(s) {
     return m ? `${m}:${(v % 60).toFixed(2).padStart(5, "0")}` : `${v.toFixed(2)} s`;
 }
 
+/** Mirror `media.clip_window`, then store with the end=0 sentinel.
+ *
+ *  A window that cannot fit in this file (IN past the end, shorter than
+ *  50 ms, reversed) becomes 0/0 -- the whole file -- which is what the
+ *  Python side already does. An OUT past the end becomes the sentinel, so
+ *  a later longer file still plays to *its* end rather than truncating at
+ *  the previous file's length. */
+function storedWindow(start, end, secs) {
+    start = Number(start) || 0;
+    end = Number(end) || 0;
+    if (!(secs > 0)) {
+        return { start: Math.max(0, start), end: Math.max(0, end) };
+    }
+    let hi = end;
+    if (hi <= 0 || hi > secs) hi = secs;
+    let lo = Math.max(0, Math.min(start, secs));
+    if (hi - lo < MIN_WINDOW_S) {
+        lo = 0;
+        hi = secs;
+    }
+    return {
+        start: Math.round(lo * 100) / 100,
+        end: (hi >= secs - 0.05) ? 0 : Math.round(hi * 100) / 100,
+    };
+}
+
 function viewUrl(name) {
     return `/view?filename=${encodeURIComponent(name)}`
         + `&subfolder=h3_refs&type=input&t=${Date.now()}`;
@@ -117,7 +143,7 @@ export function createTrimBar({ kind = "audio", name, get, set, onChange } = {})
     media.preload = "metadata";
     root.appendChild(media);
 
-    const readout = el("div", "h3e-note h3e-trim-readout");
+    const readout = el("div", "h3e-note h3e-note-hint h3e-trim-readout");
     root.appendChild(readout);
 
     let secs = 0;            // duration, from the route (see loadedmetadata)
@@ -252,6 +278,19 @@ export function createTrimBar({ kind = "audio", name, get, set, onChange } = {})
         raf = requestAnimationFrame(tick);
     }
 
+    /** If the stored window cannot fit this file, write the fallback the
+     *  renderer already uses, so the readout and the grips match the audio
+     *  that will actually be encoded. Never during a drag -- rebuilding the
+     *  committed values mid-pointer would fight the grip. */
+    function adoptWindow() {
+        if (dragging || !(secs > 0)) return;
+        const fitted = storedWindow(a, b, secs);
+        if (fitted.start === a && fitted.end === b) return;
+        a = fitted.start;
+        b = fitted.end;
+        set?.(a, b);
+    }
+
     function render() {
         const file = String(name?.() || "");
         const win = get?.() || {};
@@ -276,8 +315,11 @@ export function createTrimBar({ kind = "audio", name, get, set, onChange } = {})
                 // that lies makes every position on this bar lie with it.
                 if (got?.seconds > 0) secs = got.seconds;
                 paintWave(got?.peaks);
+                adoptWindow();
                 paintGrips();
             });
+        } else {
+            adoptWindow();
         }
         paintGrips();
     }
@@ -287,6 +329,7 @@ export function createTrimBar({ kind = "audio", name, get, set, onChange } = {})
     media.addEventListener("loadedmetadata", () => {
         if (secs <= 0 && Number.isFinite(media.duration)) {
             secs = media.duration;
+            adoptWindow();
             paintGrips();
         }
     });

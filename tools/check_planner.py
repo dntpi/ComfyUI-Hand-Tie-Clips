@@ -418,8 +418,49 @@ def main():
                                 ("twenty-five words is not", full, False)):
         _, ws = PL.validate(_talk(spoken), json.dumps(GOOD_REFS), hops=1,
                             known_files=kf, duration="10 s")
-        ck(label, any("spoken words is about" in w for w in ws) == want,
-           "; ".join(w for w in ws if "spoken words" in w)[:110])
+        ck(label, any("spoken lines run about" in w for w in ws) == want,
+           "; ".join(w for w in ws if "spoken lines run" in w)[:110])
+
+    # A plan may be written in any language; only the beats around the quotes
+    # have to be English. Counting a Korean line's whitespace tokens with the
+    # word rate called a real 4-5 s line 3.2 s, and the "roughly N words"
+    # target it derived asked for about 85 syllables in a 10 s hop. Live, on
+    # 2026-09-02: a 3-hop Korean vlog warned on every shot for being too thin
+    # when two of the three were fine.
+    KO = chr(0xd55c) + chr(0xad6d) + chr(0xc5d0) + chr(0xc11c) + chr(0xc758)
+    KO_LINE = KO + " " + chr(0xc2dc) + chr(0xac04) + chr(0xc740)   # 8 syllables
+    ck("a CJK line is counted in syllables, not tokens",
+       abs(PL.speech_seconds(KO_LINE) - 8 / PL.SPEECH_SPS) < 0.01,
+       "%.2f" % PL.speech_seconds(KO_LINE))
+    ck("English still uses the word rate",
+       abs(PL.speech_seconds("one two three four five") - 5 / PL.SPEECH_WPS) < 0.01,
+       "%.2f" % PL.speech_seconds("one two three four five"))
+    ck("mixed text counts both scripts",
+       abs(PL.speech_seconds(KO_LINE + " and five more words here")
+           - (8 / PL.SPEECH_SPS + 5 / PL.SPEECH_WPS)) < 0.01,
+       "%.2f" % PL.speech_seconds(KO_LINE + " and five more words here"))
+    ck("stranded punctuation is not a spoken word",
+       PL.speech_seconds(KO_LINE + " ! . ?") == PL.speech_seconds(KO_LINE),
+       "%.2f vs %.2f" % (PL.speech_seconds(KO_LINE + " ! . ?"),
+                         PL.speech_seconds(KO_LINE)))
+    ck("the word rate would have undercounted it",
+       len(KO_LINE.split()) / PL.SPEECH_WPS < PL.speech_seconds(KO_LINE),
+       "%.2f vs %.2f" % (len(KO_LINE.split()) / PL.SPEECH_WPS,
+                         PL.speech_seconds(KO_LINE)))
+
+    # ...and the shortfall warning has to name the target in the unit the line
+    # is written in. "roughly 25 words" of Korean is three times the hop.
+    thin_ko = json.dumps({"shots": [
+        {"id": "s1", "beat": "@ref_1 walks and says, '" + KO
+                             + "' She keeps going as the clip ends.",
+         "directives": {"tail": "hold"}}]})
+    _, ws = PL.validate(thin_ko, json.dumps(GOOD_REFS), hops=1,
+                        known_files=kf, duration="10 s")
+    short = [w for w in ws if "spoken lines run about" in w]
+    ck("a thin CJK hop is still flagged", bool(short), "; ".join(ws)[:110])
+    ck("and its target is in syllables",
+       bool(short) and "syllables" in short[0],
+       short[0][:120] if short else "")
 
     # Rule 3 applies INSIDE a hop. A beat that opens on action and speaks later
     # has frames with a picture and no sound, and the model fills them with

@@ -1774,3 +1774,30 @@ smile and the wave are what filled the frames.
 six words, 1.8 s voiced). Hops 2 and 3 of chain_00060 are confirmed-good
 dialogue and would make a better basis. `LEAD_IN_MAX_WORDS = 8` is reasoned
 from the length table, not measured at all.
+
+## 33. The word rate is an English number (2026-09-02)
+
+The first live write after section 32 was the proof it wanted: asked for a
+three-hop Korean vlog, the writer opened every hop with a named sound before
+the line -- *"The sound of heavy footsteps and distant city traffic fills the
+air before she speaks"* -- and the lead-in lint stayed quiet on all three,
+correctly.
+
+The same run broke something else. `SPEECH_WPS` counts whitespace tokens, which
+is only a speech rate in a script that puts spaces between words. The Korean
+line was 8 tokens and 27 syllables: the lint called it 3.2 s against a real
+4-5 s, warned on all three hops when two were fine, and -- the harmful half --
+told the author to write "roughly 25 words", which in Hangul is about 85
+syllables and three times the hop it has to fit in.
+
+`speech_seconds()` now counts CJK by syllable at `SPEECH_SPS = 5.5` and
+everything else by word, adding the two so a mixed beat is estimated correctly
+rather than in whichever script dominates. Punctuation stranded by the split
+stops counting as a spoken word, which was quietly buying every CJK line most
+of a second. The shortfall warning and `build_user_turn` both name the target in
+the unit the line is written in.
+
+Nothing here is measured on this model. 5.5 syllables a second is a reference
+figure for conversational Korean, Japanese and Mandarin alike, and `SPEECH_WPS`
+still rests on the one English measurement in section 32. Both are honest
+starting points and neither is evidence.

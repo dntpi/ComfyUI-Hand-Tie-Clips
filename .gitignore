@@ -15,3 +15,8 @@ node.zip
 
 # Local LLM connection settings -- a machine property, not a release.
 htc_llm.json
+
+# Session handover docs. Working notes between sessions -- they name renders,
+# dead ends and machine specifics, and one of them is always the live queue.
+# The root HANDOVER.md was already ignored; these are the same thing, dated.
+docs/HANDOVER_*.md

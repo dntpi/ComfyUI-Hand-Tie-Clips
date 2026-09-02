@@ -85,6 +85,48 @@ def beat_table():
 # words and measured 1.8 s of voiced audio.
 SPEECH_WPS = 2.5
 
+# Speech rate for scripts written in syllable blocks rather than space-delimited
+# words -- Hangul, Han, Kana. Counting their whitespace tokens with SPEECH_WPS
+# undercounts badly: a 27-syllable Korean line is 8 tokens, which the word rate
+# calls 3.2 s against a real 4-5 s, and the "write roughly N words" target it
+# derives would ask for about 85 syllables in a 10 s hop. ~5.5 syllables a
+# second is the conversational figure across all three scripts; it is a
+# reference figure, not something measured on this model.
+SPEECH_SPS = 5.5
+
+# Built from codepoints rather than written as an escape class so the source
+# stays pure ASCII. Hangul jamo and syllables, kana, CJK ideographs, halfwidth
+# kana.
+_CJK_RANGES = ((0x1100, 0x11ff), (0x3040, 0x30ff), (0x3130, 0x318f),
+               (0x3400, 0x4dbf), (0x4e00, 0x9fff), (0xa960, 0xa97f),
+               (0xac00, 0xd7ff), (0xff66, 0xff9f))
+_CJK = re.compile("[" + "".join(chr(a) + "-" + chr(b) for a, b in _CJK_RANGES) + "]")
+
+
+def speech_seconds(text):
+    """Seconds of speech in `text`, counting each script in its own unit.
+
+    A plan may be written in any language -- the beats stay English prose, the
+    lines inside the quotes need not. Mixed text is counted both ways and
+    added, so an English beat with one Korean line is estimated correctly
+    rather than in whichever unit happens to dominate.
+    """
+    t = str(text or "")
+    cjk = len(_CJK.findall(t))
+    # Only tokens carrying a letter or digit. Stripping the CJK out of a
+    # Korean line leaves its punctuation stranded as free-standing tokens,
+    # and counting "!" and "." as two spoken words bought a 10 s hop most of
+    # a second it does not have.
+    rest = sum(1 for w in _CJK.sub(" ", t).split() if any(c.isalnum() for c in w))
+    return cjk / SPEECH_SPS + rest / SPEECH_WPS
+
+
+def spoken_text(beat):
+    """Just the words inside the spoken spans, joined."""
+    t = str(beat or "")
+    return " ".join(t[a + 1:b] for a, b in spoken_spans(t))
+
+
 # How much of a hop a speaking character should actually be speaking for. Below
 # this there are seconds of someone visibly mid-sentence with nothing assigned,
 # and the model fills them itself -- as fragments (chain_00059: 17.8% voiced,
@@ -322,17 +364,24 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
         # twenty. This is the arithmetic, and it is worth stating outright
         # because the number the author needs is not the number of lines.
         secs = DURATION_FRAMES.get(label, 0) / float(FPS or 24)
+        said = spoken_text((sh or {}).get("beat"))
         if spoken_words and secs:
-            speech = spoken_words / SPEECH_WPS
+            speech = speech_seconds(said)
+            # Name the target in the unit the line is actually written in,
+            # because "roughly 25 words" of Korean is about 85 syllables and
+            # three times the hop.
+            if len(_CJK.findall(said)) > len(_CJK.sub(" ", said).split()):
+                target = f"{int(secs * SPEECH_SPS)} syllables"
+            else:
+                target = f"{int(secs * SPEECH_WPS)} words"
             if speech < secs * SPEECH_MIN_SHARE:
                 warnings.append(
-                    f"shot {i + 1}: {spoken_words} spoken words is about "
-                    f"{speech:.1f}s of speech in a {secs:.0f}s hop. A character "
-                    f"written as talking throughout needs roughly "
-                    f"{int(secs * SPEECH_WPS)}. The seconds left over are a "
-                    f"person visibly mid-sentence with nothing assigned, and "
-                    f"the model fills them itself. Give those seconds more "
-                    f"words, or name the sound they carry.")
+                    f"shot {i + 1}: the spoken lines run about {speech:.1f}s "
+                    f"in a {secs:.0f}s hop. A character written as talking "
+                    f"throughout needs roughly {target}. The seconds left over "
+                    f"are a person visibly mid-sentence with nothing assigned, "
+                    f"and the model fills them itself. Give those seconds more "
+                    f"to say, or name the sound they carry.")
         # Rule 3 inside a hop. A beat that opens on action and speaks later has
         # frames with a picture and no sound, and the model fills them with
         # dialogue nobody wrote -- the same failure as a silent hop, one
@@ -697,7 +746,11 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None):
                 f"roughly {int(secs * SPEECH_WPS)} words INSIDE the quotes -- "
                 f"several sentences, not one. Count the spoken words too. "
                 f"A hop where nobody speaks is fine, but say so: name the "
-                f"sound the room makes instead.")
+                f"sound the room makes instead. If the lines are in a script "
+                f"written in syllable blocks rather than spaced words -- "
+                f"Korean, Japanese, Chinese -- count syllables instead and "
+                f"aim for about "
+                f"{int(secs * SPEECH_SPS)}.")
             lines.append(
                 "If anything happens before the first spoken line -- walking "
                 "in, sitting down, turning to the camera -- name the sound "

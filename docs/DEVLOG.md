@@ -1654,3 +1654,82 @@ change. Old workflows: widget names from 0.4.5 (34) and `efd6a3e` (39) are a
 prefix of this branch (45); Starter.json from both revs maps seed / steps /
 shot_plan onto the same widgets. `user/default/workflows` still use the
 legacy `H3RefChain` id, on purpose.
+
+## 31. The lints that cried wolf, and the field the writer ate (2026-09-02)
+
+A day of GUI renders against two writer models. Nothing in the renderer was
+wrong. Four things in the *plumbing around* it were, and three of them had been
+telling the author to fix work that was already correct.
+
+**A Write plan silently deleted every reference cap.** `railRefs()` and
+`_pinned_refs()` both built their five fields and dropped `mp`; the model
+cannot author one (it is not in the prompt's valid-field list); and Accept
+overwrites the register wholesale. So the caps survived exactly until the next
+write. chain_00047 ran three plates at 0.54 MP -- 1.58 MP of stills against a
+0.72 MP canvas -- and came back coherent. One rewrite later the same three were
+at native size, 3.23 MP against the same canvas, and the render opened on the
+kitchen plate reproduced almost verbatim and warped the subject in. The ratio
+tracked the result across four renders: 2.2x coherent, 3.4x coherent picture
+with gibberish audio, 4.5x cooked. `load_image`'s own docstring had said why
+for weeks -- "a location plate costing as much as a face is waste" -- and
+nothing enforced it because nothing kept it.
+
+The dial was also invisible. `REF_MP` offers 0.3/0.5/0.7/1.0/1.5/2.0, `select`
+assigns a value matching no option, and a blank control is labelled `full`. A
+row capped at 0.54 read as uncapped while it was working. Two hours were spent
+tuning megapixels that had already been erased.
+
+**The schema never required the ref_plan.** `properties` listed both documents
+and there was no top-level `required`, so `{"shot_plan": ...}` alone was valid.
+qwen3.8 volunteered both and hid it for the whole life of the feature.
+gemma4-26b emitted only the shot plan, on every attempt: the register stayed
+empty, `_remap_pinned_tags` bailed on the falsy `ref_text` before it could
+restore the rail's names, and each repair turn was told its beats cited
+undeclared tags -- so it rewrote the beats it had already got right and never
+emitted the document that was missing. Three attempts, no convergence. With the
+requirement in place: two attempts, correct register, zero warnings.
+
+**`check_coherence` tested "framing is named" where it meant "framing
+changed".** Its own docstring says a framing CHANGE fights a continuous join
+with a held camera. The test never compared against the previous shot, and
+models restate the framing on every shot because the axis describes the shot
+rather than a transition -- so `medium/medium/medium` tripped it on every hop
+after the first while the framing never moved. Both writers hit it on
+essentially every plan. chain_00052 carried the banner and seamed at
+**-0.31/255**, one of the cleanest joins measured here. That was the evidence,
+and it read as a curiosity for hours before it read as a bug.
+
+**`check_place_handoff` fired on chains that never leave.** The abandonment
+half is about a destination the film moves to and then holds with nothing. It
+tested only whether a place plate rides the last shot, so a two-hop kitchen
+scene that drops the plate after hop 1 was called a defect -- when that is the
+pin-only recipe the renderer is built for. Distinct places *cited in beats* is
+the test now; under two, the film never leaves.
+
+**What the renders actually taught, separately from the bugs.** A continuation
+hop carries a small motion, not a relocation. Three pin configurations --
+plates on hop 2, plates off hop 2 (`0 identity stills`), and overlap raised
+from 0.9 s to 1.6 s -- all produced the same hard cut at frame 192 for a beat
+reading "gets off the counter and stands to face the window", while a beat
+reading "stays seated, shifting her weight" continued cleanly at -0.31/255. The
+pin length is not the lever; what the beat asks of the first frame is.
+
+`overlap` moved out of `chain_salt` into the per-hop key from hop 2, for the
+reason `pin_mech` was never in it: the trim and the pin are both hop-2+ work,
+so hop 1's pixels cannot depend on it, and keying it chain-wide made every
+overlap A/B re-render a byte-identical hop 1.
+
+**The writer was never told the hop length.** The prompt ships a five-row
+length table and instructs the model to ask when it has not been told, which a
+button cannot answer. The node has known the duration all along and nothing
+carried it, so beats were sized to a guess -- 75 words into 8 s hops, one
+spoken line where the row allows two, 26.7% voiced. The panel sends `duration`
+now and the band is named outright rather than left as a table to look up.
+`beat_table()` parses it out of SYSTEM_PROMPT.md rather than restating it, the
+same reason `schema()` reads SCHEMA.json.
+
+**Still open.** A desc can be confidently wrong about its own photograph --
+gemma4-26b called a white ribbed crop top "a dark top" and a daylit wooden
+kitchen "a dark kitchen interior with blue light and tiled surfaces", and no
+lint can check prose against a picture. qwen3.8 did not make that class of
+error on the same three plates.

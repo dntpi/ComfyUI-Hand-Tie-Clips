@@ -80,6 +80,24 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > quiet buys a quiet pin, not a quiet opening. Sections 31 and 32 of the devlog
 > have the measurements.
 
+> **1.0.1 — 2026-09-02.** Three fixes, all found by the first people to use
+> 1.0.0. The **WRITE** panel never saved your model on a fresh install: with
+> nothing stored, no entry in the dropdown was ever *selected* and the browser
+> simply displayed the first one, so the panel showed a model the backend had
+> never been told about. That one empty string produced every symptom — WRITE
+> answering *no model is selected*, Just-In-Time loading never firing because
+> nothing was ever asked of the server, and Free VRAM working anyway, which
+> made it stranger still. Underneath it, a failed write of `htc_llm.json` was
+> swallowed and reported as success, so a pack folder the ComfyUI account
+> cannot write to — a system-wide install, a container — gave the same
+> complaint from a different cause with the evidence in a console nobody
+> reads; it now says so. And writing a plan no longer spends attempts on
+> filenames: your photographs are named by the camera, a model that has just
+> looked at one renames it after the tag you gave it, and the node rejected the
+> whole plan over a value the rail was already holding. Worse, a filename
+> complaint is not a prose gap, so it suppressed the repair that actually works
+> for a full round. Sections 34 and 35 of the devlog.
+
 **Writing for it:** [PROMPTING.md](PROMPTING.md) is the authoring guide — the rules that come from what this model actually does, not from taste. The node's **WRITE** bar hands the whole job to a local model: describe the scene in a sentence and it fills the script and the reference rows for you. [prompt_pack/](prompt_pack/) is the same writer as a copy-paste prompt, for when you would rather work in a chat window.
 
 Each hop is native **MiniMax H3 Reference-to-Video**. Hops after the first are guided by the **previous hop's sampler AV latent** via `ComfyUI-H3-Motion-Context` when that pack is installed (22 picture frames + 24-frame end-aligned audio). Stock `MiniMaxH3AddGuide` is the fallback when Motion-Context is missing or the previous hop was a pixel cache hit. Voice stays as a reference every hop. Identity stills ride hop 1; later hops use the pin for wardrobe and room unless a ref lists those hops in `shots`. A 5 s hop drops the airlock on a continuous join — validate seams at 8 s or 15 s.

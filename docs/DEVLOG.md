@@ -1909,3 +1909,48 @@ or the download -- stops being a hazard at all.
 
 The older lesson underneath: every field the node can determine and chooses to
 reject instead is an attempt spent, and attempts are a budget of three.
+
+## 36. A generator that fails quietly is worse than one that dies (2026-09-02)
+
+A ComfyUI dependency install, run to satisfy some other pack's requirements,
+uninstalled Pillow and did not finish putting it back. About 180 of the 211
+files in its manifest were gone, `__init__.py` and `Image.py` among them, so
+`import PIL` resolved to an empty namespace package. Four checks in the suite
+died on it, which is the suite working.
+
+What the suite did not catch is what `gen_schema.py` did next. It reads the
+duration table off the node, and that import needs `comfy.model_management`,
+which needs PIL. The import raised, and this was the handler:
+
+    except Exception:                                # pragma: no cover
+        durations, frames = [], {}
+
+So a routine regeneration wrote a `SCHEMA.json` whose `duration` enum was `[]`
+and whose `x-duration-frames` was `{}`. The schema that exists to constrain the
+writer's duration field stopped constraining it, in a file that is committed,
+published, and fed to the model as a grammar. Nothing downstream complains
+about an empty enum — that is precisely what an empty enum means.
+
+It was caught by `git status`, run for an unrelated reason. That is not a
+control. Ten minutes either way and it ships.
+
+`build()` now raises, with the cause and the instruction to fix the
+environment rather than the file, and `main()` refuses to emit a schema with no
+duration table at all — belt and braces, because the enum could empty for a
+reason nobody has thought of yet. Verified by reproducing the original
+condition rather than trusting the reasoning: a `PIL` package on `PYTHONPATH`
+that raises `ImportError` on import, then both entry points checked. Both exit
+1 with a readable message; the file's hash does not move.
+
+**A correction worth recording, because the first diagnosis was wrong.** The
+note written at the time blamed `--check` for rewriting the file. It does not;
+it only reads and compares, and always did. The corrupt write came from
+`gen_schema.py` with no arguments, run by hand in a diagnostic loop. The
+distinction matters: the fault was never in the comparison path, it was in
+`build()` returning a plausible-looking empty answer to a question it could not
+answer. Fixing `--check` would have fixed nothing.
+
+The general shape, and section 34's lesson one level down: a control that
+displays a value it has not committed is bad, and a generator that emits a
+value it could not compute is the same bug wearing a different hat. Neither
+one fails; both produce something that looks like an answer.

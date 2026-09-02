@@ -48,8 +48,28 @@ def build():
         from _h3schema import h3_ref_chain as node   # noqa: F401
         durations = list(node.DURATION_FRAMES)
         frames = dict(node.DURATION_FRAMES)
-    except Exception:                                # pragma: no cover
-        durations, frames = [], {}
+    except Exception as exc:
+        # Loudly, not quietly. This used to fall back to `[], {}`, which
+        # writes a SCHEMA.json whose `duration` enum is EMPTY -- a schema
+        # that no longer constrains the field it exists to constrain, that
+        # nothing downstream complains about, and that is perfectly
+        # committable.
+        #
+        # It happened for real on 2026-09-02: a ComfyUI dependency install
+        # had gutted Pillow, so `import comfy.model_management` raised, so
+        # the node import raised, and a routine regeneration wrote the empty
+        # tables over a good file. It was caught by `git status`, which is
+        # not a control.
+        #
+        # The node import needs a working ComfyUI environment. If it cannot
+        # be had, the answer is to fix the environment, never to emit a
+        # schema with the hard part missing.
+        raise SystemExit(
+            "gen_schema: cannot import the node, so DURATION_FRAMES is "
+            "unknown and the schema would ship an empty `duration` enum. "
+            "cause: %r -- run this with ComfyUI's interpreter in a working "
+            "environment; a broken Pillow or torch shows up here first."
+            % (exc,))
 
     directives = {
         axis: {
@@ -245,7 +265,14 @@ def main():
                     help="exit 1 if the file on disk is out of date")
     args = ap.parse_args()
 
-    text = json.dumps(build(), indent=2, ensure_ascii=False) + "\n"
+    built = build()
+    # Belt and braces: the duration table is the whole reason this file is
+    # generated rather than hand-written, so an empty one is never a
+    # legitimate result, whatever produced it.
+    if not built.get("x-duration-frames"):
+        raise SystemExit("gen_schema: refusing to emit a schema with no "
+                         "duration table.")
+    text = json.dumps(built, indent=2, ensure_ascii=False) + "\n"
 
     if args.check:
         try:

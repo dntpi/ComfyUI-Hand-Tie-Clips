@@ -285,6 +285,39 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
             model.appendChild(o);
         }
 
+        // A fresh install has no saved model, so nothing above matched and
+        // the browser is left showing option[0] having fired no `change` --
+        // and `change` is the only thing that saves. The panel then displays a
+        // model the server does not have: WRITE answers "no model is
+        // selected", nothing is ever asked of the server so JIT never fires,
+        // and Free VRAM still works because unload_all() ignores the
+        // configured model by design. All three, one empty string.
+        //
+        // So adopt what is on screen -- but ONLY when the stored value is
+        // empty. The guard above is still right that option[0] must not
+        // overwrite a working setting; it had just over-corrected into never
+        // writing one at all.
+        if (!conn.model && model.value) {
+            const adopted = model.value;
+            try {
+                const r = await fetch(LLM_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ model: adopted }),
+                });
+                const j = await r.json();
+                if (j?.ok) conn.model = j.model || adopted;
+                if (j?.saved === false) {
+                    console.warn("[HandTieClips] model set for this session "
+                        + "but not written to disk: " + (j.save_error || ""));
+                }
+            } catch (e) {
+                // Leave conn.model empty: the badge below then reads
+                // "no model", which is the truth.
+                console.warn("[HandTieClips] could not adopt model: " + e);
+            }
+        }
+
         badge.textContent = conn.online
             ? (conn.model || "no model") : "offline";
         if (announce) {
@@ -315,7 +348,13 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
             });
             const j = await r.json();
             if (!j.ok) throw new Error(j.error || "save failed");
-            say("Saved.", "hint");
+            say(j.saved === false
+                ? `Set for this session, but htc_llm.json could not be `
+                  + `written: ${j.save_error || "unknown error"}. The setting `
+                  + `is lost when ComfyUI restarts -- make the pack folder `
+                  + `writable.`
+                : "Saved.",
+                j.saved === false ? "error" : "hint");
             await loadConn(false);
         } catch (e) {
             say(String(e), "error");

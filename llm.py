@@ -149,12 +149,21 @@ def save_conn(patch):
             except (TypeError, ValueError):
                 continue
         CONN[k] = v
+    out = dict(CONN)
+    # Whether it reached disk is the caller's business. A read-only or
+    # root-owned custom_nodes -- a system-wide ComfyUI, any container image --
+    # used to fail here, print to a console nobody was reading, and answer the
+    # panel `ok: true`. The settings still work for this session, because CONN
+    # is a live module global; they just do not survive a restart. Those are
+    # different sentences and the user is entitled to the right one.
+    out["saved"], out["save_error"] = True, ""
     try:
         with open(_conn_path(), "w", encoding="utf-8") as fh:
             json.dump(CONN, fh, indent=2)
     except OSError as exc:
         print(f"[{TAG}] could not save {CONN_FILE}: {exc}", flush=True)
-    return dict(CONN)
+        out["saved"], out["save_error"] = False, str(exc)
+    return out
 
 
 class LLMError(RuntimeError):

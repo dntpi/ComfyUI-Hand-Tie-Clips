@@ -1801,3 +1801,56 @@ Nothing here is measured on this model. 5.5 syllables a second is a reference
 figure for conversational Korean, Japanese and Mandarin alike, and `SPEECH_WPS`
 still rests on the one English measurement in section 32. Both are honest
 starting points and neither is evidence.
+
+## 34. The dropdown was showing a model nobody had chosen (2026-09-02)
+
+An Arch user, one day after 1.0.0: the node "isn't auto loading the model even
+if it sees it, jit is enabled"; selecting one and pressing WRITE "says no model
+selected even though it is"; and "i can eject the model which is odd".
+
+Three symptoms, one empty string, and nothing to do with Linux.
+
+`CONN["model"]` starts as `""`. The panel builds the dropdown and marks an
+option `selected` only when `m.id === conn.model`, which never matches `""`, so
+no option was selected and the browser fell back to displaying `option[0]`.
+Falling back is not choosing: **no `change` event fires**, and `change` was the
+only thing wired to save. The panel therefore displayed a model the server did
+not have.
+
+Everything downstream followed from that one value:
+
+- `_plan` refuses on `if not conn.get("model")` with the exact words the user
+  quoted back.
+- Nothing is ever asked of the server, so JIT has nothing to load. "Sees it" is
+  `/v1/models`, which lists what is *installed*, not what is resident -- the
+  distinction section 29 already had to make once.
+- Free VRAM still worked, because `unload_all()` ignores the configured model
+  by design (section 29 again: the button exists for when JIT loaded something
+  other than what was asked). The user read that as odd. It was the clue: the
+  fault was in the saved value, not the server.
+
+It is guaranteed for the ordinary case, not a corner. `models()` sorts loaded
+models first, so the model you have loaded *is* `option[0]` -- and clicking the
+entry already on screen fires nothing. Anyone running one model hits it on
+every fresh install. It escaped a release only because the machine it was
+developed on has had a populated `htc_llm.json` since 0.2.
+
+`loadConn()` now adopts what is on screen when the stored value is empty, and
+only then. The comment guarding this spot was right that `option[0]` must not
+overwrite a working setting; it had over-corrected into never writing one.
+
+**And a second hole, found underneath it.** `save_conn()` wrote `htc_llm.json`
+into the pack directory, swallowed `OSError` with a `print`, and returned as
+though it had saved -- the route answered `ok: true`. A read-only or root-owned
+`custom_nodes`, which is how a system-wide ComfyUI or any container image is
+laid out, produced the identical "no model is selected" from a completely
+different cause, with the only evidence in a console nobody was reading. It now
+returns `saved` and `save_error`, and the panel says "set for this session, but
+not written to disk" -- which is true, because `CONN` is a live module global
+and the setting really does work until a restart. Whether that file belongs in
+the pack directory at all is still open; ComfyUI's `user/` survives a reinstall
+and this does not.
+
+The lesson is the older one, in a new place: a control that *displays* a value
+it has not committed is worse than one that displays nothing. Section 31 caught
+a lint that cried wolf; this is a dropdown that cried yes.

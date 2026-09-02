@@ -250,8 +250,14 @@ def main():
     # dimension -- so the Starter's own SaveVideo died on a dry run. The
     # contract is now "encodable, at the geometry the plan resolved to".
     ck("dry-run images is one encodable frame", encodable(out[0]))
+    # `base` asks for "1.0 MP", which 1.1 retired from the dropdown. Getting
+    # 1280x736 out of it is the legacy pin working end to end: the formula would
+    # give 1344x736, and a saved 1.0.x workflow must not quietly change size.
     ck("dry-run images carries the planned geometry",
        tuple(out[0].shape) == (1, 736, 1280, 3), str(tuple(out[0].shape)))
+    o2, _ = run(resolution="0.98 MP")
+    ck("the current top rung resolves to 1312x736",
+       tuple(o2[0].shape) == (1, 736, 1312, 3), str(tuple(o2[0].shape)))
     ck("audio is silent, not None", out[1]["waveform"].abs().max() == 0)
     ck("info carries every compiled prompt", out[2].count("===== hop") == 8)
     ck("contact sheet is built on a dry run", out[3].shape[1] > 100)
@@ -262,7 +268,7 @@ def main():
            o[2].count("===== hop") == want)
 
     _, log = run(quality="draft", render_through=2)
-    ck("draft drops the canvas", "736x416" in log and "0.3 MP" in log)
+    ck("draft drops the canvas", "736x416" in log and "0.30 MP" in log)
     ck("draft drops the steps", "6 steps" in log)
     _, log = run(quality="final", render_through=2)
     ck("final leaves the canvas alone", "1280x736" in log)

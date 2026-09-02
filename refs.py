@@ -419,15 +419,44 @@ def subject_prose(active, subjects=None):
             )
         parts.append("subject_definitions:\n" + "\n".join(lines))
 
+    parts.append(retention_prose(active, ords))
+
+    return "\n\n".join(parts)
+
+
+def retention_prose(active, ords=None):
+    """`retention_analysis:` alone, at the ordinals this hop actually uses.
+
+    Split out of `subject_prose` so a continuation hop can emit it too. This
+    block is what tells the encoder what a picture is FOR, and it used to be
+    hop-1 only because `subject_prose` is -- so a still scheduled onto hop 3
+    arrived as an uncited image with no stated role. A Ref2VA model handed a
+    photograph and no reason for it renders the photograph: that is the
+    "pinning outfit to anything but the first hop throws the actual image in"
+    report.
+
+    `ords` is passed in rather than derived. On hop 2+ the pinned live frame is
+    <Picture 1> and every still shifts up by one; deriving the map here would
+    reproduce the off-by-one the caller has already solved once, which is
+    exactly the drift the comment above `hop_ords` warns about.
+    """
+    if not active:
+        return ""
+    ords = ords if ords is not None else ordinals(active)
     ret = []
     for r in active:
-        pic = f"<Picture {ords[r['tag']]}>"
+        # A tag with no ordinal is not in this hop's payload at all. Citing a
+        # <Picture N> the encoder cannot see is worse than saying nothing.
+        pos = ords.get(r["tag"])
+        if pos is None:
+            continue
+        pic = f"<Picture {pos}>"
         detail = RETENTION[r["retention"]]
         desc = f" ({r['desc']})" if r["desc"] else ""
         ret.append(f"{pic}{desc}: {detail}.")
-    parts.append("retention_analysis:\n" + "\n".join(ret))
-
-    return "\n\n".join(parts)
+    if not ret:
+        return ""
+    return "retention_analysis:\n" + "\n".join(ret)
 
 
 def continuity_line(subjects, subject_nums=None):

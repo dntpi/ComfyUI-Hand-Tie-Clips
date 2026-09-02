@@ -32,6 +32,7 @@ CHECKS = [
     ("check_templates.py", []),
     ("check_prompts.py", []),
     ("check_waveform.py", []),
+    ("check_canvas.py", []),
     ("check_music.py", []),
     ("check_texture.py", []),
     ("check_workflows.py", []),

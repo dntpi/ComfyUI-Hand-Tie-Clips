@@ -238,7 +238,7 @@ def clip_window(start, end, secs):
     return lo, hi
 
 
-def _mp_cap_size(w, h, cap_mp, multiple=16):
+def _mp_cap_size(w, h, cap_mp, multiple=32):
     """Target size for a still under a megapixel cap. Down only.
 
     `cap_mp <= 0` is off. Never upscales: H3 itself only ever scales references
@@ -246,9 +246,15 @@ def _mp_cap_size(w, h, cap_mp, multiple=16):
     own size would be a dial wired to nothing, and one that pretended to
     upscale would just cost VRAM for interpolated pixels.
 
-    Edges land on a multiple of 16 because that is H3's canvas grid -- it
-    rounds to it anyway, and doing it here means the size in the log is the
-    size the encoder sees.
+    Edges land on a multiple of 32, which is H3's canvas grid
+    (`CANVAS_MULTIPLE` in nodes_minimax_h3.py). This said 16 until 1.1, on the
+    stated grounds that 16 *was* the grid -- it is not, it is the VAE's spatial
+    factor. Core re-snaps every reference to 32 on its way in, so the wrong
+    number never reached the model; it only meant the size printed in the log
+    was not the size the encoder saw, which is the one job this rounding has.
+
+    Floor, not round-to-nearest, unlike the generation canvas: this is a cap.
+    Rounding up would hand back a size above the budget that was just asked for.
     """
     cap = float(cap_mp or 0.0) * 1_000_000.0
     if cap <= 0 or w * h <= cap:

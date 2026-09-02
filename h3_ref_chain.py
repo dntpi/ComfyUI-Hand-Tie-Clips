@@ -83,36 +83,74 @@ TAG = "HandTieClips"
 # quality=draft. Low enough to be genuinely fast, high enough that blocking,
 # camera and whether a join lands are all still readable. Both values are in
 # the cache key already, so a draft never overwrites the matching final.
-DRAFT_RESOLUTION = "0.3 MP"
+DRAFT_RESOLUTION = "0.30 MP"
 DRAFT_STEPS = 6
 
-# H3 canvas: multiples of 32, short-edge ~768, area cap 768*1344.
-CANVAS = {
-    "0.2 MP": {
-        "16:9 landscape": (608, 352),
-        "9:16 portrait": (352, 608),
-        "1:1 square": (448, 448),
-    },
-    "0.3 MP": {
-        "16:9 landscape": (736, 416),
-        "9:16 portrait": (416, 736),
-        "1:1 square": (544, 544),
-    },
-    "0.5 MP": {
-        "16:9 landscape": (960, 544),
-        "9:16 portrait": (544, 960),
-        "1:1 square": (704, 704),
-    },
-    "0.7 MP": {
-        "16:9 landscape": (1120, 640),
-        "9:16 portrait": (640, 1120),
-        "1:1 square": (832, 832),
-    },
-    "1.0 MP": {
-        "16:9 landscape": (1280, 736),
-        "9:16 portrait": (736, 1280),
-        "1:1 square": (992, 992),
-    },
+# H3's canvas rules, mirrored from comfy_extras/nodes_minimax_h3.py
+# (CANVAS_MULTIPLE, MAX_PIXELS, adapt_canvas) so the two cannot drift silently.
+# Core applies them to reference VIDEOS only -- adapt_canvas has exactly one
+# call site and the generation canvas is not it. What core does with the size we
+# hand it is `height // 16`, which means an off-grid canvas does not raise: it
+# quietly builds a latent for a smaller frame than `master_imgs` was allocated
+# for. Hence _fit_canvas below, and the assertion at the call site.
+CANVAS_MULTIPLE = 32
+CANVAS_AREA_CAP = 768 * 1344          # 1_032_192
+
+# Ratio per aspect label, in dropdown order: widest landscape down to square,
+# then the portraits back out. LABELS ARE PART OF THE SAVED-WORKFLOW FORMAT --
+# a combo widget stores its value as a string, so renaming one resets that
+# widget to the default on every graph that used it. The three 1.0.x labels
+# below are therefore verbatim, spacing included.
+ASPECTS = {
+    "21:9 landscape": (21, 9),
+    "16:9 landscape": (16, 9),
+    "3:2 landscape": (3, 2),
+    "4:3 landscape": (4, 3),
+    "5:4 landscape": (5, 4),
+    "1:1 square": (1, 1),
+    "4:5 portrait": (4, 5),
+    "3:4 portrait": (3, 4),
+    "2:3 portrait": (2, 3),
+    "9:16 portrait": (9, 16),
+    "9:21 portrait": (9, 21),
+}
+DEFAULT_ASPECT = "16:9 landscape"
+
+# Area budget per resolution label. 0.98 MP is the top rung because H3's own
+# cap is 768*1344 = 1.03 MP and the short edge wants to be 768; asking for more
+# only buys a scale-down.
+RESOLUTIONS = {
+    "0.98 MP": 0.98,
+    "0.75 MP": 0.75,
+    "0.60 MP": 0.60,
+    "0.45 MP": 0.45,
+    "0.30 MP": 0.30,
+}
+DEFAULT_RESOLUTION = "0.98 MP"
+
+# Sizes that shipped in 1.0.x and are NOT what the area formula gives.
+#
+# The formula agrees with nine of the old fifteen tuples on its own -- every
+# square, and both 16:9/9:16 at 0.3 and 0.7 MP. It disagrees on six, all in the
+# 16:9/9:16 column, because that column was hand-tuned for ratio fidelity rather
+# than derived from the area: at 0.2 and 0.5 MP the old sizes are a grid step
+# taller than the budget gives, and at 1.0 MP the long edge was held at 1280
+# instead of the 1344 the area allows.
+#
+# They are pinned rather than recomputed because width and height are in
+# `chain_salt`: resolving them differently would re-render every chain a 1.0.x
+# user has on disk AND change the pixels of a graph they have already signed
+# off. These labels are off the dropdown, so nothing new can select one; this
+# exists only so an old saved workflow keeps rendering what it always rendered.
+# tools/check_canvas.py asserts both halves of that -- these stay pinned, and
+# the other nine keep agreeing with the formula.
+LEGACY_CANVAS = {
+    ("0.2 MP", "16:9 landscape"): (608, 352),
+    ("0.2 MP", "9:16 portrait"): (352, 608),
+    ("0.5 MP", "16:9 landscape"): (960, 544),
+    ("0.5 MP", "9:16 portrait"): (544, 960),
+    ("1.0 MP", "16:9 landscape"): (1280, 736),
+    ("1.0 MP", "9:16 portrait"): (736, 1280),
 }
 DURATION_FRAMES = {
     # Every value satisfies align_frame_count (n % 17 == 5) at FPS 24, so the
@@ -136,11 +174,74 @@ OVERLAP_FRAMES = {
 MC_CONTEXT_LENGTHS = frozenset(str(v) for v in OVERLAP_FRAMES.values())
 
 
-def _canvas(resolution, aspect):
+def _fit_canvas(ratio, mp):
+    """An area budget snapped onto H3's grid: nearest 32 per axis, under the cap.
+
+    Round-to-nearest rather than floor, matching core's adapt_canvas -- flooring
+    both axes loses up to 63 px of each edge and skews the ratio toward whichever
+    side happened to round down.
+    """
+    area = max(0.05, float(mp)) * 1_000_000.0
+    w, h = math.sqrt(area * ratio), math.sqrt(area / ratio)
+    if w * h > CANVAS_AREA_CAP:
+        s = math.sqrt(CANVAS_AREA_CAP / (w * h))
+        w, h = w * s, h * s
+    m = CANVAS_MULTIPLE
+    w = max(m, int(round(w / m)) * m)
+    h = max(m, int(round(h / m)) * m)
+    # Rounding up on both axes can cross the cap the scale above just enforced.
+    # Trim the long edge until it fits; one step is almost always enough.
+    while w * h > CANVAS_AREA_CAP and max(w, h) > m:
+        if w >= h:
+            w -= m
+        else:
+            h -= m
+    return int(w), int(h)
+
+
+def _parse_mp(label, default=None):
+    """The megapixel number out of a label like `0.7 MP`.
+
+    This is what keeps the retired 1.0.x labels resolving to the sizes they
+    always did: their number goes through the same formula and lands on the same
+    tuple. A label nobody can read is worth a line of output -- the old code
+    returned 1280x736 for any unrecognised input and said nothing, so a typo in
+    an API-driven graph rendered at the wrong size with no evidence.
+    """
     try:
-        return CANVAS[str(resolution)][str(aspect)]
-    except KeyError:
-        return (1280, 736)
+        return float(str(label).strip().split()[0])
+    except (ValueError, IndexError):
+        fallback = RESOLUTIONS[DEFAULT_RESOLUTION] if default is None else default
+        print(f"[{TAG}] unreadable resolution {label!r}; using {fallback} MP",
+              flush=True)
+        return fallback
+
+
+def _canvas(resolution, aspect):
+    """(width, height) for a resolution label and an aspect label.
+
+    Computed, not tabulated. Eleven aspects across five rungs is fifty-five
+    tuples to hand-author and keep consistent; the formula that replaces them
+    reproduces thirteen of the fifteen that shipped in 1.0.x exactly, and the
+    other two are pinned in LEGACY_CANVAS with the reason written down.
+    """
+    key = (str(resolution), str(aspect))
+    if key in LEGACY_CANVAS:
+        w, h = LEGACY_CANVAS[key]
+        print(f"[{TAG}] resolution {resolution!r} is a 1.0.x label: holding "
+              f"{w}x{h} so this workflow keeps the pixels it was built with. "
+              f"Choose a current resolution to move onto the computed grid.",
+              flush=True)
+        return w, h
+    ratio = ASPECTS.get(str(aspect))
+    if ratio is None:
+        print(f"[{TAG}] unknown aspect {aspect!r}; using {DEFAULT_ASPECT}",
+              flush=True)
+        ratio = ASPECTS[DEFAULT_ASPECT]
+    mp = RESOLUTIONS.get(str(resolution))
+    if mp is None:
+        mp = _parse_mp(resolution)
+    return _fit_canvas(ratio[0] / ratio[1], mp)
 
 
 def _duration_frames(duration):
@@ -433,7 +534,7 @@ def _live_cite(live_picture, live_video):
 def _assemble_next(beat, live_picture=None, live_video=None,
                    n_stills=0, state_header="",
                    identity_ordinals=None, n_subjects=None, tail=None,
-                   continuity=""):
+                   continuity="", retention="", wardrobe=False):
     """Hop 2+ in `next` mode: user text is only the new beat."""
     text = (beat or "").strip() or ADVANCE_BEAT
     cite = _live_cite(live_picture, live_video)
@@ -456,6 +557,14 @@ def _assemble_next(beat, live_picture=None, live_video=None,
     # nothing, and there is no parameter to pass.
     header = str(state_header or "").strip()
     top = header + "\n\n" if header else ""
+    # Labelled blocks lead, prose follows -- the same shape hop 1 gets from
+    # subject_prose. Deliberately NOT folded into `inject`: that is space-joined
+    # into a single paragraph, and retention_analysis is a multi-line block that
+    # carries its own label. Only retention, never subject_definitions: a
+    # <Subject N> introduced on hop 4 has no antecedent in its own encode, which
+    # is the dangling-token defect the call site documents.
+    ret_block = str(retention or "").strip()
+    ret_block = (ret_block + "\n\n") if ret_block else ""
     # Order: who the pictures are, then what stays the same, then which
     # frame is live. `continuity` carries no ordinals, so it is safe on a
     # pin-only hop where `lock` is deliberately empty.
@@ -478,16 +587,26 @@ def _assemble_next(beat, live_picture=None, live_video=None,
         "hold": "and the final position holds steady through the last moments.",
     }.get(str(tail or "").strip(), "and that action is still underway as the clip ends.")
 
+    # "Clothing follows the live frame" and a wardrobe plate scheduled onto this
+    # hop are contradictory instructions, and at cfg 1.0 both are additive --
+    # there is no negative branch to resolve them, so the encoder gets each with
+    # equal weight. When a `partially_copy` still is actually here, it wins;
+    # otherwise the live frame does, exactly as before.
+    clothing = (
+        "Clothing follows the wardrobe photograph, worn on the body as it "
+        "already stands. " if wardrobe else
+        "Clothing follows whatever is already on them in the live frame. "
+    )
     if lock:
         hold = (
             f"{whoever} their current pose, room, lighting, and camera side, "
             "and the shot continues from exactly there. "
         )
         closer = (
-            "Faces and hair follow the identity photographs. Clothing follows "
-            "whatever is already on them in the live frame. After a brief hold "
-            "on the incoming action, the shot advances through what the "
-            f"next-beat describes, {terminal}"
+            "Faces and hair follow the identity photographs. "
+            f"{clothing}"
+            "After a brief hold on the incoming action, the shot advances "
+            f"through what the next-beat describes, {terminal}"
         )
     else:
         hold = (
@@ -495,9 +614,11 @@ def _assemble_next(beat, live_picture=None, live_video=None,
             "camera side, and the shot continues from exactly there. "
         )
         closer = (
-            "Wardrobe, room, and lighting stay as they are in the live frame. "
-            "After a brief hold on the incoming action, the shot advances "
-            f"through what the next-beat describes, {terminal}"
+            (f"{clothing}Room and lighting stay as they are in the live frame. "
+             if wardrobe else
+             "Wardrobe, room, and lighting stay as they are in the live frame. ")
+            + "After a brief hold on the incoming action, the shot advances "
+            + f"through what the next-beat describes, {terminal}"
         )
     # Official field names on hop 2+ start a new Ref2VA generate
     # (chain_00030..00034). One paragraph: airlock, then the beat.
@@ -505,6 +626,7 @@ def _assemble_next(beat, live_picture=None, live_video=None,
         r"(?m)^(overall_soundscape|non_diegetic_music):\s*", "", text).strip()
     return (
         f"{top}"
+        f"{ret_block}"
         "The clip opens already in progress from the pinned frames. "
         "The incoming arrangement holds for a short beat -- breath, a weight "
         "shift, an eyeline -- and only then the next action begins. "
@@ -1041,13 +1163,13 @@ class HandTieClips:
                     "default": "3",
                     "tooltip": "How many generates to run and join. 3 at 10 s is about 28 s of master after the overlap trim.",
                 }),
-                "resolution": (["0.2 MP", "0.3 MP", "0.5 MP", "0.7 MP", "1.0 MP"], {
-                    "default": "1.0 MP",
-                    "tooltip": "Output area. 1.0 MP landscape is 1280x736 (the verified H3 size). Snapped to H3's 32 px grid.",
+                "resolution": (list(RESOLUTIONS), {
+                    "default": DEFAULT_RESOLUTION,
+                    "tooltip": "Output area. 0.98 MP is the top rung because H3 caps at 768x1344 (1.03 MP); 16:9 there is 1312x736. Every size is snapped to H3's 32 px grid and kept under the cap.",
                 }),
-                "aspect": (["16:9 landscape", "9:16 portrait", "1:1 square"], {
-                    "default": "16:9 landscape",
-                    "tooltip": "Frame shape. Combined with resolution to set width and height.",
+                "aspect": (list(ASPECTS), {
+                    "default": DEFAULT_ASPECT,
+                    "tooltip": "Frame shape. Combined with resolution to set width and height. Widest first, then square, then the portraits.",
                 }),
                 "duration": (["5 s", "7 s", "8 s", "10 s", "15 s"], {
                     "default": "10 s",
@@ -1521,6 +1643,19 @@ class HandTieClips:
             resolution, steps = DRAFT_RESOLUTION, min(int(steps), DRAFT_STEPS)
             print(f"[{TAG}] draft: {DRAFT_RESOLUTION}, {steps} steps", flush=True)
         width, height = _canvas(resolution, aspect)
+        # Nothing downstream checks this. Core takes the generation canvas on
+        # trust and floor-divides it by 16 for the latent, so an off-grid size
+        # does not raise -- it renders a smaller frame than `master_imgs` is
+        # allocated for and the mismatch surfaces later as a shape error with no
+        # obvious cause. Fail here, where the size and its two inputs are known.
+        if width % CANVAS_MULTIPLE or height % CANVAS_MULTIPLE:
+            raise ValueError(
+                f"canvas {width}x{height} from resolution={resolution!r} "
+                f"aspect={aspect!r} is not a multiple of {CANVAS_MULTIPLE}; "
+                "H3 cannot render it.")
+        print(f"[{TAG}] canvas {width}x{height} "
+              f"({width * height / 1e6:.2f} MP, {width / height:.3f}:1) "
+              f"from {resolution} {aspect}", flush=True)
         length = align_frame_count(_duration_frames(duration))
         overlap_n = _overlap_frames(overlap)
 
@@ -1881,15 +2016,26 @@ class HandTieClips:
                 id_ords = None
                 n_subj = None
                 if hop_active:
-                    id_ords = [hop_ords[r["tag"]] for r in hop_active
-                               if r["subject"] is not None]
+                    # `subject is not None` on its own is not enough. The
+                    # canonical outfit ref (README) carries a subject AND
+                    # retention `partially_copy`, so it was being declared "the
+                    # only identity ... that face, bone structure, and hairstyle
+                    # match the photograph exactly" -- asserted about a
+                    # photograph of a garment. Only a fully_preserved still is a
+                    # face plate. refs.py already defaults a subject-bearing ref
+                    # to fully_preserved, so an ordinary identity reference is
+                    # unaffected by this narrowing; a wardrobe or setting plate
+                    # stops being called a person.
+                    faces = [r for r in hop_active
+                             if r["subject"] is not None
+                             and r["retention"] == "fully_preserved"]
+                    id_ords = [hop_ords[r["tag"]] for r in faces]
                     # Counted over this hop, not the whole plan. Counting
                     # plan-wide while listing only this hop's ordinals is how a
                     # single scheduled still produced "<Picture 2> are the only
                     # identities" -- the plural that has rendered two people
                     # from one reference.
-                    n_subj = len({r["subject"] for r in hop_active
-                                  if r["subject"] is not None}) or None
+                    n_subj = len({r["subject"] for r in faces}) or None
                 elif ref_plan_refs:
                     # Pin-only hop: no identity to lock. _identity_lock returns
                     # "" on an empty ordinal list whatever the count says.
@@ -1902,6 +2048,15 @@ class HandTieClips:
                     ref_subjects,
                     {r["subject"] for r in ref_plan_refs
                      if r["subject"] is not None}) if ref_plan_refs else ""
+                # What each still riding THIS hop is for. Hop 1 gets this from
+                # subject_prose; without it here a scheduled still reaches the
+                # encoder as an uncited photograph with no stated role, and a
+                # Ref2VA model handed a picture and no reason for it renders the
+                # picture. `hop_ords`, not fresh ordinals -- the live frame is
+                # <Picture 1> on every continuation hop.
+                hop_retention = _refs.retention_prose(hop_active, hop_ords)
+                hop_wardrobe = any(r["retention"] == "partially_copy"
+                                   for r in hop_active)
                 block = _assemble_next(
                     block,
                     live_picture=live_p,
@@ -1912,12 +2067,33 @@ class HandTieClips:
                     n_subjects=n_subj,
                     tail=(shot.get("directives") or {}).get("tail"),
                     continuity=hop_continuity,
+                    retention=hop_retention,
+                    wardrobe=hop_wardrobe,
                 )
                 print(f"[{TAG}] hop {i + 1} next-beat assembled "
                       f"(Picture {live_p}, Video {live_v}, "
-                      f"{n_stills} identity stills, "
+                      f"{len(id_ords or [])} identity stills of {n_stills}, "
                       f"state_header {len(hop_state_header)} chars, "
-                      f"continuity {len(hop_continuity)} chars)", flush=True)
+                      f"continuity {len(hop_continuity)} chars, "
+                      f"retention {len(hop_retention)} chars"
+                      f"{', wardrobe plate' if hop_wardrobe else ''})",
+                      flush=True)
+
+            elif i > 0 and hop_active:
+                # Verbatim mode assembles nothing -- the author owns the text --
+                # so the retention block above is not injected here. But a still
+                # scheduled onto this hop and never named in it reaches the
+                # encoder as the same uncited photograph, authored rather than
+                # assembled. Say so rather than silently rendering it.
+                uncited = [r["tag"] for r in hop_active
+                           if f"<Picture {hop_ords[r['tag']]}>" not in block]
+                if uncited:
+                    print(f"[{TAG}] hop {i + 1}: "
+                          + ", ".join("@" + t for t in uncited)
+                          + " rides this hop but is never cited in its prompt. "
+                          "An uncited reference tends to be rendered as the "
+                          "shot; name it with its @tag, or take it off this "
+                          "hop in the rail.", flush=True)
 
             # Voice is hop-1 only under hop_script=next. The pin already
             # carries hop 1's spoken audio; leaving the clip on hop 2 as a

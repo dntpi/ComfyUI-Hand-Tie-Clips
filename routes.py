@@ -101,7 +101,8 @@ def _pinned_refs(raw, limit):
 
 
 def _payload():
-    from .h3_ref_chain import DURATION_FRAMES, OVERLAP_FRAMES, CANVAS, FPS
+    from .h3_ref_chain import (
+        ASPECTS, DURATION_FRAMES, OVERLAP_FRAMES, RESOLUTIONS, FPS, _canvas)
 
     return {
         # axis -> option -> the sentence it compiles to. Order matters: AXES is
@@ -126,8 +127,12 @@ def _payload():
 
         "durations": {k: v for k, v in DURATION_FRAMES.items()},
         "overlaps": {k: v for k, v in OVERLAP_FRAMES.items()},
-        "canvas": {res: {asp: list(wh) for asp, wh in by_asp.items()}
-                   for res, by_asp in CANVAS.items()},
+        # Resolved here rather than in the editor. The size is a function of two
+        # combo labels, an area cap and a 32 px grid; a second implementation in
+        # JavaScript is a second place for it to be wrong, and the run panel's
+        # digest would be the thing quietly disagreeing with what rendered.
+        "canvas": {res: {asp: list(_canvas(res, asp)) for asp in ASPECTS}
+                   for res in RESOLUTIONS},
         "fps": FPS,
     }
 

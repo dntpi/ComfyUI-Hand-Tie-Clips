@@ -109,9 +109,13 @@ ck("a cap above the image is a no-op", C(1920, 1080, 8.0) == (1920, 1080))
 w, h = C(1920, 1080, 0.5)
 ck("a cap below the image scales it down", w * h <= 0.5e6, f"{w}x{h}")
 ck("the cap keeps the aspect", abs((w / h) - (1920 / 1080)) < 0.05, f"{w / h:.3f}")
-ck("edges land on H3's 16 px grid", w % 16 == 0 and h % 16 == 0, f"{w}x{h}")
+# 32, not 16. This asserted 16 until 1.1 and so locked in the docstring's wrong
+# claim about which grid H3 uses. Core's CANVAS_MULTIPLE is 32; 16 is the VAE's
+# spatial factor, which is a different number that happens to divide it.
+ck("edges land on H3's 32 px grid", w % 32 == 0 and h % 32 == 0, f"{w}x{h}")
+ck("the cap is a cap -- never rounded up past it", w * h <= 0.5e6, f"{w}x{h}")
 ck("a portrait image stays portrait", C(1080, 1920, 0.3)[0] < C(1080, 1920, 0.3)[1])
-ck("never smaller than one grid cell", min(C(64, 64, 0.3)) >= 16)
+ck("never smaller than one grid cell", min(C(64, 64, 0.3)) >= 32)
 
 print()
 if FAILED:

@@ -722,14 +722,14 @@ def _merge_register(base_text, patch_text, keep=None):
     return json.dumps({"refs": refs, "subjects": subs}, indent=2)
 
 
-# Fields the RAIL owns and the model never authors. `mp` is a pixel budget the
-# person sets per row; it is absent from `schema()` and from the valid-fields
-# list in SYSTEM_PROMPT.md, so a written register cannot carry one. Accept
-# writes that register straight onto the rail, so without this a Write plan
-# silently reset every cap to "full": chain_00047 ran three plates at 0.54 MP
-# (1.58 MP total against a 0.72 MP canvas) and the next write put the same
-# three back at native size, 3.23 MP, which is the run that came back with the
-# reference photograph rendered instead of the beat.
+# Fields the RAIL owns and the writer never authors. `mp` is a pixel budget the
+# person sets per row; it is absent from the valid-fields list in
+# SYSTEM_PROMPT.md and the schema tells the model not to author it. Accept
+# writes the returned register straight onto the rail, so without this a Write
+# plan silently reset every cap to "full": chain_00047 ran three plates at
+# 0.54 MP (1.58 MP total against a 0.72 MP canvas) and the next write put the
+# same three back at native size, 3.23 MP, which is the run that came back with
+# the reference photograph rendered instead of the beat.
 RAIL_ONLY_FIELDS = ("mp",)
 
 
@@ -740,14 +740,20 @@ def _restore_rail_only(ref_text, pinned):
     REMOVED, it is not left as the model wrote it. `mp` is exposed in the
     schema so a hand-authored plan can set one, which means a model can put a
     number there too -- gemma4-26b read the units as pixels and returned
-    1000000000. On the pinned path the person owns that dial, so whatever came
-    back is discarded either way.
+    1000000000, then -1, then 1e+15.
+
+    Runs with an EMPTY rail as well, which is the whole point: `mp` is not the
+    writer's field whether or not there are rows to restore from. Gated on
+    `pinned` it no-opped on a brief-only write, the invented value reached
+    `parse_ref_plan`, and that raises -- which short-circuits every other check
+    in `validate`, so all three attempts died on one line about megapixels and
+    the missing files were never reported at all.
     """
     obj = _parse_obj(ref_text)
-    if not isinstance(obj, dict) or not pinned:
+    if not isinstance(obj, dict):
         return ref_text
     by_tag, by_file = {}, {}
-    for p in pinned:
+    for p in (pinned or []):
         if not isinstance(p, dict):
             continue
         tag = str(p.get("tag") or "").lstrip("@").strip()
@@ -767,15 +773,17 @@ def _restore_rail_only(ref_text, pinned):
         # and spend an attempt on a rejection the rail already had the answer
         # to.
         row = (by_tag.get(str(r.get("tag") or "").lstrip("@").strip())
-               or by_file.get(str(r.get("file") or "").strip()))
-        if not row:
-            continue
+               or by_file.get(str(r.get("file") or "").strip())
+               or {})
+        # Note the order: DROP first, then set from the rail if it has one. No
+        # `continue` on a missing row -- a ref the rail knows nothing about is
+        # exactly the case where the model's own number is the only one there,
+        # and it is still not the model's field to set.
         for field in RAIL_ONLY_FIELDS:
             value = row.get(field)
-            if value in (None, "", 0):
-                if r.pop(field, None) is not None:
-                    touched = True
-            elif r.get(field) != value:
+            if r.pop(field, None) is not None:
+                touched = True
+            if value not in (None, "", 0):
                 r[field] = value
                 touched = True
     return json.dumps(obj, indent=2) if touched else ref_text

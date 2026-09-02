@@ -454,6 +454,22 @@ def main():
     ck("an unrenamed tag is matched by filename",
        "mp" not in byfile["refs"][0], f"got {byfile['refs'][0].get('mp')!r}")
 
+    # ...and with an EMPTY rail, which is a brief-only write. Gated on `pinned`
+    # this no-opped, the invented value reached parse_ref_plan, and that RAISES
+    # -- short-circuiting every other check, so three attempts died on one line
+    # about megapixels and the missing files were never reported. Live: -1,
+    # then 1e+15, from gemma4-26b on 2026-09-02.
+    invented = json.dumps({"refs": [
+        {"tag": "influencer_face", "file": "ref_1.jpg", "subject": 1,
+         "desc": "a face", "mp": -1},
+        {"tag": "platform", "file": "ref_2.jpg", "retention": "reference",
+         "desc": "a platform", "mp": 1e15}], "subjects": {}})
+    for label, pin in (("with an empty rail", []), ("with no rail at all", None)):
+        got = json.loads(PL._restore_rail_only(invented, pin))
+        ck(f"an invented `mp` is dropped {label}",
+           all("mp" not in r for r in got["refs"]),
+           repr([r.get("mp") for r in got["refs"]]))
+
     bad = json.dumps({"refs": [{"tag": "ref_1", "file": "cook_face.png",
                                 "retention": "reference", "desc": "a face",
                                 "mp": 1000000000}], "subjects": {}})

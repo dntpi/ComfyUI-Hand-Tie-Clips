@@ -149,6 +149,10 @@ def check_coherence(shots):
     # the opposite destination is a physical contradiction at any join value,
     # and nothing warned about it before.
     _opposed = {("push_in", "wide"), ("pull_back", "close")}
+    # The framing this shot INHERITS. `keep` and an unset axis both leave it
+    # alone, so the last named value carries forward. Empty means no shot has
+    # named one yet, and a first mention is not a change.
+    prev_framing = ""
     for i, s in enumerate(shots):
         d = s.get("directives") or {}
         framing = d.get("framing", "")
@@ -156,19 +160,31 @@ def check_coherence(shots):
         # Hop 1 has no previous hop, and directive_prose does not emit `join`
         # there, so a join warning on shot 1 points at a sentence that is never
         # compiled. The JS mirror already skips index 0.
+        #
+        # `framing != prev_framing` is what this check is FOR and it was
+        # missing: the docstring says a framing CHANGE, but the test read
+        # "framing is named and is not `keep`". Models restate the framing on
+        # every shot -- the axis describes the shot, not a transition -- so a
+        # plan reading medium/medium/medium tripped this on every hop after the
+        # first while the framing never moved. chain_00052 was exactly that
+        # shape and seamed at -0.31/255, one of the cleanest joins measured.
         if (i > 0 and d.get("join") == "continuous"
                 and framing not in ("", "keep")
+                and prev_framing and framing != prev_framing
                 and camera in ("", "hold")):
             warnings.append(
-                f"shot {i + 1}: join=continuous with framing={framing} and a held "
-                f"camera implies a cut. Use camera=push_in/pull_back/pan_follow to "
-                f"reach that framing on the move, or framing=keep."
+                f"shot {i + 1}: join=continuous changes framing from "
+                f"{prev_framing} to {framing} with a held camera, which implies "
+                f"a cut. Use camera=push_in/pull_back/pan_follow to reach that "
+                f"framing on the move, or framing=keep."
             )
         if (camera, framing) in _opposed:
             warnings.append(
                 f"shot {i + 1}: camera={camera} moves the opposite way from "
                 f"framing={framing}. Pick the framing the move actually lands on."
             )
+        if framing not in ("", "keep"):
+            prev_framing = framing
     return warnings
 
 

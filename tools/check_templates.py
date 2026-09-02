@@ -90,6 +90,31 @@ def main():
         else:
             print("  ok    no coherence warnings across the whole stack")
 
+    # check_coherence has to tell a framing CHANGE from a framing RESTATED.
+    # Models name the framing on every shot -- the axis describes the shot, not
+    # a transition -- so testing "framing is named and is not keep" warned on
+    # medium/medium/medium plans whose framing never moved, on every hop after
+    # the first. Both live writers did it on essentially every plan, and
+    # chain_00052 carried the banner while seaming at -0.31/255.
+    def _sp(*framings):
+        return [{"beat": "x", "directives": dict(
+            {"camera": "hold", "framing": f},
+            **({"join": "continuous"} if i else {}))}
+            for i, f in enumerate(framings)]
+
+    for label, plan_shots, want in (
+            ("medium restated is not a change", _sp("medium", "medium", "medium"), False),
+            ("keep after medium is not a change", _sp("medium", "keep"), False),
+            ("medium -> close IS a change", _sp("medium", "close"), True),
+            ("framing inherited through keep", _sp("close", "keep", "medium"), True),
+            ("a first mention is not a change", _sp("", "medium"), False)):
+        got = any("implies a cut" in w for w in PL.check_coherence(plan_shots))
+        if got == want:
+            print("  ok    %s" % label)
+        else:
+            print("  FAIL  %s: warned=%s wanted=%s" % (label, got, want))
+            fails.append(label)
+
     # The last shot of any pattern that ends a chain must not be left `ongoing`.
     closers = [s for s in all_shots
                if (s["directives"].get("tail") in ("settle", "hold"))]

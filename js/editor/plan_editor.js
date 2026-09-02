@@ -77,16 +77,28 @@ export function planToJson(shots) {
  * somewhere new; with a held camera the only way to get there is a cut, so
  * `continuous` and the framing change want opposite things.
  */
-function coherenceWarning(shot, index) {
+function coherenceWarning(shot, index, shots) {
     if (index === 0) return null;
     const d = shot.directives || {};
     const framing = d.framing || "";
     const camera = d.camera || "";
-    if (d.join === "continuous" && framing && framing !== "keep" && (!camera || camera === "hold")) {
-        return `join=continuous with framing=${framing} and a held camera implies a cut. `
-             + "Use push_in / pull_back / pan_follow to reach that framing on the move, or framing=keep.";
+    if (d.join !== "continuous" || !framing || framing === "keep") return null;
+    if (camera && camera !== "hold") return null;
+    /* The framing this shot INHERITS. `keep` and an unset axis both leave it
+     * alone, so walk back to the last shot that actually named one. A first
+     * mention is not a change -- and neither is restating the same value,
+     * which is what models do on every shot because the axis describes the
+     * shot rather than a transition. Without this the banner sat on
+     * medium/medium/medium plans whose framing never moved. */
+    let prev = "";
+    for (let i = index - 1; i >= 0; i -= 1) {
+        const f = (((shots || [])[i] || {}).directives || {}).framing || "";
+        if (f && f !== "keep") { prev = f; break; }
     }
-    return null;
+    if (!prev || prev === framing) return null;
+    return `join=continuous changes framing from ${prev} to ${framing} with a held `
+         + "camera, which implies a cut. Use push_in / pull_back / pan_follow to "
+         + "reach that framing on the move, or framing=keep.";
 }
 
 /**
@@ -444,7 +456,7 @@ export function createPlanEditor(node, { onChange }) {
         }
         body.appendChild(dirs);
 
-        for (const [text, cls] of [[coherenceWarning(shot, index), "h3e-note h3e-note-hint"],
+        for (const [text, cls] of [[coherenceWarning(shot, index, shots), "h3e-note h3e-note-hint"],
                                    [directionWarning(shot), "h3e-note"]]) {
             if (text) body.appendChild(el("div", cls, text));
         }

@@ -1133,7 +1133,7 @@ class HandTieClips:
                         "<Picture N> per hop, so removing or scheduling off a ref "
                         "never renumbers the others. Refs sharing a 'subject' are "
                         "the same person; different numbers stay different people. "
-                        "Blank = today's positional behaviour."
+                        "Blank = positional behaviour: refs are read in slot order."
                     ),
                 }),
                 "cache_hops": (["off", "on"], {
@@ -1178,7 +1178,7 @@ class HandTieClips:
                         "total sigma FALLS across a chain whose picture is "
                         "baking, so it corrects the wrong way. Saved as `on` "
                         "before 0.5. "
-                        "off reproduces chain_00038 exactly. The log prints "
+                        "off leaves every pin untouched. The log prints "
                         "`pin drift` every hop either way, so you can read the "
                         "ratchet without changing anything."
                     ),
@@ -1190,8 +1190,8 @@ class HandTieClips:
                         "conditions the next hop -- the other half of the texture "
                         "ratchet fix. Small values only: measured gains fall off "
                         "and reverse above 0.10, which is why the range stops "
-                        "there. 0.0 reproduces chain_00038 exactly; 0.05 is the "
-                        "documented starting point."
+                        "there. 0.0 leaves the pin untouched; 0.05 is the "
+                        "suggested starting point."
                     ),
                 }),
                 "tone_compensate": (_tone.MODES, {

@@ -62,7 +62,25 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > which flags every `subprocess` call in a custom node regardless of how it is
 > invoked. Section 23 of the devlog.
 
-**Writing for it:** [PROMPTING.md](PROMPTING.md) is the authoring guide — the rules that come from what this model actually does, not from taste. [prompt_pack/](prompt_pack/) has a copy-paste prompt that gets a language model to write plans for you.
+> **1.0.0 — 2026-09-02.** First full release. The headline is **WRITE**: a plan
+> writer on the node itself, pointed at any OpenAI-compatible server, that fills
+> the script and the reference rows together and sends your reference pictures
+> with the request. Around it, the parts that make a written plan survive
+> contact with the model — the schema the server is handed now *requires* both
+> documents, so a reply carrying only half of one stopped being a silent
+> failure; the reference rail owns each picture's pixel budget, which a plan
+> used to reset to full and quietly triple the load against a fixed canvas; and
+> the writer is told the hop length, so beats are sized to the clip instead of
+> to a guess. Three plan lints were measured against real renders and found to
+> be warning about correct work — a restated framing read as a cut, a
+> single-room chain read as an abandoned location — and were narrowed. Rule 3
+> of the prompt pack grew the case that cost the most renders: a hop that
+> speaks *later* has opening seconds with a picture and no sound assigned, and
+> the model fills them with dialogue nobody wrote. Ending the previous hop
+> quiet buys a quiet pin, not a quiet opening. Sections 31 and 32 of the devlog
+> have the measurements.
+
+**Writing for it:** [PROMPTING.md](PROMPTING.md) is the authoring guide — the rules that come from what this model actually does, not from taste. The node's **WRITE** bar hands the whole job to a local model: describe the scene in a sentence and it fills the script and the reference rows for you. [prompt_pack/](prompt_pack/) is the same writer as a copy-paste prompt, for when you would rather work in a chat window.
 
 Each hop is native **MiniMax H3 Reference-to-Video**. Hops after the first are guided by the **previous hop's sampler AV latent** via `ComfyUI-H3-Motion-Context` when that pack is installed (22 picture frames + 24-frame end-aligned audio). Stock `MiniMaxH3AddGuide` is the fallback when Motion-Context is missing or the previous hop was a pixel cache hit. Voice stays as a reference every hop. Identity stills ride hop 1; later hops use the pin for wardrobe and room unless a ref lists those hops in `shots`. A 5 s hop drops the airlock on a continuous join — validate seams at 8 s or 15 s.
 
@@ -78,6 +96,7 @@ The prompt is no longer a wall of `---`-delimited text, and the MODEL wire is no
 | **`directives`** | `join` / `camera` / `framing` / `pace` / `tail` per shot, compiled to vetted prose. Improving a phrase improves every plan you have ever written. |
 | **`ref_plan`** | Stable `@tags` for reference stills, grouped into subjects, each naming a picture file. Removing one can no longer silently renumber `<Picture N>`. |
 | **`cache_hops`** | Lossless per-hop cache. Re-roll one shot, resume after a crash, and hold roughly one hop in RAM instead of the whole clip. Edit hop 5 of 8 and only 5-8 re-render. [How to use it](PROMPTING.md#re-rolling-one-hop). |
+| **`WRITE`** | A plan writer on the node. Point it at any OpenAI-compatible server — LM Studio, llama-server — describe the scene in plain language, and it fills the script and the reference rows, reading the pictures you have already dropped in. Server settings stay on your machine, never in the workflow. |
 | **the editor** | Cards on the node, not JSON in a textarea. Hover any directive to read the exact sentence it puts in the prompt, or hit **Templates** for a ready-made pattern. |
 
 Simple mode keeps the old one-prompt workflow; the speed stack (LoRAs, AdaLN fix, low-VRAM, SLA) stays as four ordinary nodes on the MODEL wire, where you can see it.
@@ -184,6 +203,10 @@ None of it is required by the node itself. Missing a pack, its nodes load as red
 4. In **SHOTS**, write one card per hop. Shot 1 is the whole opening; every later card is only the new beat.
 5. Optional: a `voice_file`, a `start_image_file`, a look `reference_video_file` — all picked in the **MEDIA** strip, all files under `input/h3_refs`
 6. Queue, and wire the **`info`** output to a Preview Text node — it prints the fully assembled prompt for every hop
+
+![The REFERENCES rail, the MEDIA strip and the SCRIPT cards](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/editor-panels.png)
+
+*The three panels that make up the editor. Each reference row carries its picture, the subject it belongs to, how much of it to keep, its pixel budget and a plain-language description; the chips under it are the hops it rides. Below, one card per hop with its own directives.*
 
 Keep later-hop beats on **what happens next**. Do not re-describe the face; the photos, the register and the pin already carry it.
 
@@ -311,6 +334,34 @@ model is told action is still underway at the final frame and will invent
 something to satisfy it -- on a last shot that means a stray gesture or a stray
 line of dialogue in the closing second.
 
+## Let a model write the plan
+
+Open **WRITE** on the node, point it at any OpenAI-compatible server, say what
+you want in one sentence, and press **Write plan**. It fills the SCRIPT cards
+and the REFERENCES rows together — and the pictures already on those rows go
+with the request, so the model describes what it is actually looking at rather
+than guessing from a filename.
+
+![The WRITE bar](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/write-panel.png)
+
+- **Context 32768.** The system prompt alone is ~6,000 tokens, the reply another
+  1,000–2,000, and every reference picture costs ~260 on top.
+- **Reasoning off.** Thinking tokens come out of the same budget; a reply that
+  stops before the JSON closes is the tell.
+- **Temperature 0.3.** Higher and the JSON grows trailing commas and smart quotes.
+
+Server settings are saved on this machine only — they are not part of the
+workflow, so a shared `.json` never points at your server.
+
+**Treat what comes back as a strong draft, not a finished plan.** It gets the
+structure right — hop count, join types, which reference rides which hop, a
+sound bed on every quiet hop — and that is the part that is tedious by hand.
+Two things are worth reading every time: each reference's `desc`, which can be
+confidently wrong about its own photograph, and the spoken words in every beat.
+The node lints both and prints what it finds before you render.
+
+`prompt_pack/` is the same writer as a copy-paste prompt for a chat window.
+
 ## Reference register
 
 ```json
@@ -381,7 +432,7 @@ hop's first and last **delivered** frame side by side, its beat, its directives,
 and what actually happened to it — seed, steps, whether it came from cache, what
 the tone correction did. Wire it to a Save Image.
 
-![Contact sheet](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/contact-sheet.png)
+![Contact sheet](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/contact-sheet-vlog.png)
 
 On a chain of any length this is the fastest way to find the hop that broke. The
 one hard cut in the 114-second reference chain sat in a plan that passed every
@@ -500,6 +551,25 @@ The DiT pin is the previous hop’s **sampler latent** through Motion-Context wh
 | quality | final |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master after the overlap is dropped.
+
+## Voice, music and trims
+
+The **MEDIA** strip takes a first frame, a look reference clip, a voice
+reference and a music bed — all files under `input/h3_refs`, all picked in the
+panel, none of them a `Load Image` node you have to wire.
+
+![The MEDIA strip, with a voice reference and a soundtrack loaded](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/media-panel.png)
+
+Each audio slot has a scrubber with an in/out window, and it is worth using.
+H3 encodes the **whole** voice file into the conditioning with no cap, and every
+latent frame of it is attended over on every step of every hop — so a
+three-minute take is a large invisible tax on a clip that only needed four
+seconds. The soundtrack window is cut from the track first, then `music_fit`
+loops or trims that to the chain, which is what stops a mastered track always
+starting the chain on its intro.
+
+An end of `0` always means *to the end of the file*, so a longer replacement
+file still plays out rather than being silently cropped to the old one.
 
 ## Limits
 

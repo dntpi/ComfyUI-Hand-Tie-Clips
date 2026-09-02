@@ -19,29 +19,37 @@ import { createTrimBar, forgetPeaks } from "./trim_bar.js";
  *
  * The fifth entry is the widget PREFIX of the trim window, or null for a slot
  * that cannot be trimmed. A still has no duration, so the first frame has none;
- * the other three each own a `<prefix>_start_s` / `<prefix>_end_s` pair. */
+ * the other three each own a `<prefix>_start_s` / `<prefix>_end_s` pair.
+ *
+ * The sixth is a description widget, or null. Only the reference clip has one:
+ * a picture in the rail carries its own `desc`, and the clip had nowhere to say
+ * what it was for -- so it went to the encoder as <Video 1> with nothing naming
+ * it, which is the same uncited-reference problem the stills had. */
 const SLOTS = [
     ["start_image_file", "image", "first frame",
      "Pins hop 1's opening frame. Ignored on later hops -- they are pinned by the join.",
-     null],
+     null, null],
     ["reference_video_file", "video", "reference clip",
      "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that.",
-     "reference_video"],
+     "reference_video", "reference_video_desc"],
     ["voice_file", "audio", "voice",
      "Voice or timbre reference for hop 1 as <Audio 1>. Later hops use the pin.",
-     "voice"],
+     "voice", null],
     // Not a reference at all: this one is never shown to the model. It is mixed
     // under the finished chain after the last hop is joined, so it sits here
     // because this is where you look for audio -- not because it behaves like
     // its neighbours. The dials that shape it live in RUN > soundtrack.
     ["soundtrack_file", "audio", "soundtrack",
      "Music bed mixed under the whole chain once it is joined. Not a reference -- the model never hears it.",
-     "music"],
+     "music", null],
 ];
 
 /** The widget names this strip owns, so the caller hides exactly those. */
-export const MEDIA_WIDGETS = SLOTS.flatMap(
-    ([name, , , , trim]) => (trim ? [name, `${trim}_start_s`, `${trim}_end_s`] : [name]));
+export const MEDIA_WIDGETS = SLOTS.flatMap(([name, , , , trim, desc]) => [
+    name,
+    ...(trim ? [`${trim}_start_s`, `${trim}_end_s`] : []),
+    ...(desc ? [desc] : []),
+]);
 
 function commit(node, w, value) {
     w.value = value;
@@ -94,7 +102,7 @@ export function createMediaStrip(node, { onChange } = {}) {
         for (const b of bars) b.render();
     }
 
-    for (const [name, kind, label, tip, trim] of SLOTS) {
+    for (const [name, kind, label, tip, trim, descName] of SLOTS) {
         const w = widgetByName(node, name);
         if (!w) {
             // A widget this build does not define is skipped, not warned about,
@@ -165,6 +173,36 @@ export function createMediaStrip(node, { onChange } = {}) {
             };
             trimRows.push(syncRow);
             syncRow();
+        }
+
+        // "What is this clip for", full width under the bar. Shown only when a
+        // file is set, for the same reason the trim row is: an input asking
+        // about a reference that is not there is noise.
+        const wd = descName && widgetByName(node, descName);
+        if (wd) {
+            const row = el("div", "h3e-trimrow");
+            row.appendChild(el("span", "h3e-media-label", "describe it"));
+            const input = el("input", "h3e-media-desc");
+            input.type = "text";
+            input.placeholder = "a slow dolly along the counter";
+            input.title = "What the clip is for, in your words. It goes in as "
+                + "<Video 1> either way; this is the only thing that tells the "
+                + "encoder why. A reference the prompt never explains tends to "
+                + "get rendered as the shot.";
+            input.value = String(wd.value || "");
+            // `input`, not `change`: a description typed and then abandoned by
+            // clicking elsewhere on the canvas would never have fired `change`.
+            input.addEventListener("input", () => commit(node, wd, input.value));
+            row.appendChild(input);
+            trims.appendChild(row);
+            const syncDesc = () => {
+                row.style.display = String(w.value || "") ? "" : "none";
+                if (document.activeElement !== input) {
+                    input.value = String(wd.value || "");
+                }
+            };
+            trimRows.push(syncDesc);
+            syncDesc();
         }
     }
 

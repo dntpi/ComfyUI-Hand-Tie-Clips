@@ -795,6 +795,10 @@
     text-transform: uppercase;
     color: var(--h3-muted);
 }
+/* Full width under the reference clip's trim bar: this is a sentence, and a
+ * sentence squeezed into a 104px cell is unreadable for the same reason a
+ * waveform is. */
+.h3e-media-desc { width: 100%; }
 
 
 /* -- trim bar -------------------------------------------------------------

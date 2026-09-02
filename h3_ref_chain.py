@@ -516,6 +516,25 @@ def _identity_lock(n_stills, live_picture, identity_ordinals=None, n_subjects=No
     return line
 
 
+def _refvid_cite(desc, ordinal=1):
+    """One sentence saying what the author's reference clip is for.
+
+    The clip has always gone in as <Video 1> with nothing anywhere in the prompt
+    naming it -- the same uncited-reference problem the stills had on hops after
+    the first, and the same consequence: a Ref2VA model handed footage and no
+    reason for it tends to render the footage. `_live_cite` covers the PINNED
+    tail, which is a different video and already explained.
+
+    Empty desc returns "", so a workflow that does not fill the new field emits
+    byte-identical prompts to 1.0.x. The wording is the author's; only the
+    citation is ours.
+    """
+    text = str(desc or "").strip().rstrip(".")
+    if not text:
+        return ""
+    return f"<Video {ordinal}> is a reference clip: {text}."
+
+
 def _live_cite(live_picture, live_video):
     bits = []
     if live_picture:
@@ -534,7 +553,7 @@ def _live_cite(live_picture, live_video):
 def _assemble_next(beat, live_picture=None, live_video=None,
                    n_stills=0, state_header="",
                    identity_ordinals=None, n_subjects=None, tail=None,
-                   continuity="", retention="", wardrobe=False):
+                   continuity="", retention="", wardrobe=False, refvid=""):
     """Hop 2+ in `next` mode: user text is only the new beat."""
     text = (beat or "").strip() or ADVANCE_BEAT
     cite = _live_cite(live_picture, live_video)
@@ -568,7 +587,8 @@ def _assemble_next(beat, live_picture=None, live_video=None,
     # Order: who the pictures are, then what stays the same, then which
     # frame is live. `continuity` carries no ordinals, so it is safe on a
     # pin-only hop where `lock` is deliberately empty.
-    inject = " ".join(p for p in (lock, str(continuity or "").strip(), cite) if p)
+    inject = " ".join(p for p in (lock, str(continuity or "").strip(),
+                                  str(refvid or "").strip(), cite) if p)
     inject = (inject + "\n\n") if inject else "\n"
     # Pin-only hops have no identity photographs. Naming them (chain_00034)
     # sent the encoder back to the face/outfit stills — commercial kitchen,
@@ -1568,6 +1588,18 @@ class HandTieClips:
                         "render_through to render a range."
                     ),
                 }),
+                "reference_video_desc": ("STRING", {
+                    "default": "",
+                    "tooltip": (
+                        "What the reference clip is for, in your words -- "
+                        "\"a slow dolly along a counter\", \"the way she turns "
+                        "and looks back\". The clip goes in as <Video 1> either "
+                        "way; this is the only thing that tells the encoder "
+                        "why it is there, and a reference the prompt never "
+                        "explains tends to get rendered as the shot. Leave it "
+                        "empty and the prompt is exactly what it was."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1632,6 +1664,7 @@ class HandTieClips:
             voice_start_s=0.0, voice_end_s=0.0,
             reference_video_start_s=0.0, reference_video_end_s=0.0,
             music_start_s=0.0, music_end_s=0.0, render_from=0,
+            reference_video_desc="",
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -1866,6 +1899,18 @@ class HandTieClips:
                       f"the characters block and keep setting only.", flush=True)
         ref_images = _collect_ref_images(slot_images)
         base_videos = None if reference_video is None else {"ref_video_1": reference_video}
+        # The author's clip is always <Video 1>: _attach_pin_to_qwen APPENDS the
+        # pinned tail (`live_v = len(videos) + 1`), so unlike the stills nothing
+        # shifts it. One line, built once, and empty unless the field is filled.
+        refvid_line = (_refvid_cite(reference_video_desc, 1)
+                       if reference_video is not None else "")
+        if refvid_line:
+            print(f"[{TAG}] reference clip described: {refvid_line}", flush=True)
+        elif reference_video is not None:
+            print(f"[{TAG}] note: a reference clip is wired but has no "
+                  "description, so it goes to the encoder as <Video 1> with "
+                  "nothing saying why. Fill reference_video_desc if the render "
+                  "keeps drifting toward the clip.", flush=True)
         ref_audios = None if voice is None else {"ref_audio_1": voice}
 
         # Fingerprint the model as it arrives -- after whatever LoRA and
@@ -2078,6 +2123,11 @@ class HandTieClips:
                     hop_subject_prose = _refs.subject_prose(hop_active, ref_subjects)
             if i == 0 and hop_subject_prose and not _d.is_full_h3_prompt(block):
                 block = hop_subject_prose + "\n\n" + block
+            # Hop 1 has no _assemble_next to fold this into. A full H3 block is
+            # the author's own prompt end to end, so it is left alone there --
+            # the same rule subject_prose follows two lines up.
+            if i == 0 and refvid_line and not _d.is_full_h3_prompt(block):
+                block = block.rstrip() + "\n\n" + refvid_line
             if str(hop_script) == "next" and i > 0:
                 n_stills = len(base_images or {})
                 hop_state_header = _state_header(state, i)
@@ -2139,6 +2189,7 @@ class HandTieClips:
                     continuity=hop_continuity,
                     retention=hop_retention,
                     wardrobe=hop_wardrobe,
+                    refvid=refvid_line,
                 )
                 print(f"[{TAG}] hop {i + 1} next-beat assembled "
                       f"(Picture {live_p}, Video {live_v}, "

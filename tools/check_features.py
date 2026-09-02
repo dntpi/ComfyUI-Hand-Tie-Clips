@@ -300,6 +300,32 @@ def main():
     _, log = run(quality="final", render_through=2)
     ck("final leaves the canvas alone", "1280x736" in log)
 
+    # The reference clip's description. The gate matters as much as the feature:
+    # an empty field has to leave every existing prompt byte-identical, or 1.1
+    # silently rewrites what every 1.0.x workflow sends to the encoder.
+    cite = H3._refvid_cite
+    ck("no description means no line", cite("") == "" and cite(None) == "")
+    ck("whitespace is not a description", cite("   ") == "")
+    ck("a description cites Video 1",
+       cite("a slow dolly along the counter")
+       == "<Video 1> is a reference clip: a slow dolly along the counter.",
+       cite("a slow dolly along the counter"))
+    ck("the author's full stop is not doubled",
+       cite("she turns and looks back.").endswith("looks back."),
+       cite("she turns and looks back."))
+    base_block = H3._assemble_next("She crosses the room.", live_picture=1,
+                                   n_stills=1, identity_ordinals=[2],
+                                   n_subjects=1)
+    with_vid = H3._assemble_next("She crosses the room.", live_picture=1,
+                                 n_stills=1, identity_ordinals=[2], n_subjects=1,
+                                 refvid=cite("a slow dolly"))
+    ck("an empty description changes the continuation prompt not at all",
+       H3._assemble_next("She crosses the room.", live_picture=1, n_stills=1,
+                         identity_ordinals=[2], n_subjects=1, refvid="")
+       == base_block)
+    ck("a description reaches the continuation prompt",
+       "reference clip: a slow dolly" in with_vid and with_vid != base_block)
+
     # The reference ceiling is per ENCODE, not per plan. This counted the whole
     # rail until 1.1, so a plan that spread its references across shots was
     # refused against a limit no shot came near.

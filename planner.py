@@ -432,6 +432,38 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
     except Exception:
         pass
 
+    # A wardrobe plate on a continuation hop brings its own room with it. The
+    # garment is what `partially_copy` is for, and hop 1 is where it lands --
+    # after that the pin carries it, which is what the `next`-mode drop in the
+    # renderer exists to arrange. Scheduled onto later hops the photograph
+    # competes with the pin as a Picture, and the moment the beat asks for
+    # something the pin cannot supply the model reaches for it instead.
+    #
+    # chain_00034 was this on hop 2 (commercial kitchen, apron gone). The 3x10 s
+    # portrait chain on 2026-09-02 was this on hop 3: `podcast_host.jpg` is her
+    # sitting in a studio, it rode all three hops, and a beat reading "she turns
+    # the camera toward her face" cut to that room mid-hop and back. The tone
+    # anchor measured the excursion at +14.0/255 against hop 2's +5.6.
+    #
+    # SYSTEM_PROMPT.md:317 already states the rule; nothing checked it.
+    try:
+        if len(shots) > 1:
+            for r in refs:
+                if (r.get("retention") or "") != "partially_copy":
+                    continue
+                late = sorted(h for h in (r.get("shots") or [1]) if h > 1)
+                if not late:
+                    continue
+                warnings.append(
+                    f"@{r['tag']} is a wardrobe plate (`partially_copy`) riding "
+                    f"hop(s) {', '.join(str(h) for h in late)}. Whatever else is "
+                    f"in that photograph -- its room, its light, a microphone -- "
+                    f"rides with the garment and competes with the pin. Give it "
+                    f"`shots: [1]` and name the garment in the subject's "
+                    f"`context`; the pin carries it after that.")
+    except Exception:
+        pass
+
     # The mirror hazard, and the one that does not self-correct. Two six-hop
     # renders settled it: the hop scheduled with no face plate came back a
     # different person and nothing after it recovered. `locked` holds a face
@@ -524,6 +556,14 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None):
                   "Look at each still: a person gets subject N + "
                   "retention fully_preserved and a subjects.N block; a place "
                   "gets retention reference and no subject.",
+                  "",
+                  # The rule is in the prompt already; both writers still put
+                  # the wardrobe plate on every hop, and its room came with it.
+                  "A `partially_copy` ref is a wardrobe plate. Give it "
+                  "\"shots\": [1] unless the room in that photograph IS this "
+                  "scene -- everything else in it rides along with the garment, "
+                  "and after hop 1 the frame pin carries the outfit. Name the "
+                  "garment's colours in the subject's `context` instead.",
                   "",
                   "If any ref has \"subject\": N, subjects MUST contain that "
                   "N with `name`, `locked`, and `context` in prose from the "

@@ -396,6 +396,26 @@ def main():
     ck("and overruled when the rail has one",
        overruled["refs"][0].get("mp") == 0.54)
 
+    # A wardrobe plate on a continuation hop brings its own room. chain_00034
+    # was this on hop 2; the 3x10 s portrait chain on 2026-09-02 was this on
+    # hop 3 -- podcast_host.jpg is her sitting in a studio, it rode all three
+    # hops, and "she turns the camera toward her face" cut to that room and
+    # back. SYSTEM_PROMPT.md:317 states the rule; nothing checked it.
+    def _wardrobe(shots3):
+        return json.dumps({"refs": [
+            {"tag": "ref_1", "file": "cook_face.png", "subject": 1,
+             "retention": "fully_preserved", "desc": "a face", "shots": [1, 2]},
+            {"tag": "ref_3", "file": "apron.png", "subject": 1,
+             "retention": "partially_copy", "desc": "an outfit", "shots": shots3},
+        ], "subjects": GOOD_REFS["subjects"]})
+
+    for label, s3, want in (("a wardrobe plate riding hop 2 is flagged", [1, 2], True),
+                            ("on hop 1 only it is not", [1], False)):
+        _, ws = PL.validate(json.dumps(rail_shots), _wardrobe(s3),
+                            hops=2, known_files=kf)
+        ck(label, any("wardrobe plate" in w for w in ws) == want,
+           "; ".join(w for w in ws if "wardrobe" in w)[:110])
+
     # ...including when the model kept its own tag, so the tag lookup misses.
     # `_remap_pinned_tags` restores rail names by filename but only when the
     # model supplied one it can match; live, gemma4-26b left @woman_face in

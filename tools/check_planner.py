@@ -360,6 +360,49 @@ def main():
                           hops=2, known_files=kf)
     ck("the live plan is still accepted", not live)
 
+    # `mp` is the rail's, not the model's. It is absent from the schema, so
+    # every written register comes back without one -- and Accept overwrites
+    # the rail with that. chain_00047 ran three plates at 0.54 MP; the next
+    # Write plan put them back at native size (1.58 MP -> 3.23 MP against a
+    # 0.72 MP canvas) and the render came back as the reference photograph.
+    rail_mp = [{"tag": "ref_1", "file": "cook_face.png", "mp": 0.54},
+               {"tag": "ref_2", "file": "kitchen.png", "mp": 0.3}]
+    written = json.dumps({"refs": [{"tag": "ref_1", "file": "cook_face.png",
+                                    "subject": 1, "desc": "a face"},
+                                   {"tag": "ref_2", "file": "kitchen.png",
+                                    "retention": "reference",
+                                    "desc": "a kitchen"}],
+                          "subjects": {}})
+    back = json.loads(PL._restore_rail_only(written, rail_mp))
+    by_tag = {r["tag"]: r for r in back["refs"]}
+    ck("a written register gets the rail's `mp` back",
+       by_tag["ref_1"].get("mp") == 0.54 and by_tag["ref_2"].get("mp") == 0.3,
+       f"got {by_tag['ref_1'].get('mp')!r} / {by_tag['ref_2'].get('mp')!r}")
+    ck("and a rail with no caps set changes nothing",
+       PL._restore_rail_only(written, [{"tag": "ref_1", "file": "cook_face.png"}])
+       == written)
+
+    # The rail is authoritative, not merely restorative. gemma4-26b read `mp`
+    # as pixels and returned 1000000000; it cleared the floor, survived into
+    # the register and filled the rail dropdown with zeroes.
+    junk = json.dumps({"refs": [{"tag": "ref_1", "file": "cook_face.png",
+                                 "subject": 1, "desc": "a face",
+                                 "mp": 1000000000}], "subjects": {}})
+    cleared = json.loads(PL._restore_rail_only(
+        junk, [{"tag": "ref_1", "file": "cook_face.png"}]))
+    ck("a model-authored `mp` is dropped when the rail has no cap",
+       "mp" not in cleared["refs"][0], f"got {cleared['refs'][0].get('mp')!r}")
+    overruled = json.loads(PL._restore_rail_only(junk, rail_mp))
+    ck("and overruled when the rail has one",
+       overruled["refs"][0].get("mp") == 0.54)
+
+    bad = json.dumps({"refs": [{"tag": "ref_1", "file": "cook_face.png",
+                                "retention": "reference", "desc": "a face",
+                                "mp": 1000000000}], "subjects": {}})
+    errs, _ = PL.validate(json.dumps(rail_shots), bad, hops=2, known_files=kf)
+    ck("and a register that keeps one is rejected, naming the units",
+       any("MEGApixels" in e for e in errs), "; ".join(errs)[:130])
+
     kept = PL._merge_register(
         json.dumps({"refs": [{"tag": "ref_1", "file": "a.jpg",
                               "desc": "a woman in green"}],

@@ -157,6 +157,19 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None):
         errors.append(f"the plan has {len(shots)} shot(s) but {hops} hop(s) "
                       f"were asked for. Write exactly {hops}.")
 
+    # An absent register is its own fault and has to say so. Reported only as
+    # undeclared beat tags it reads as a spelling problem, and a repair turn
+    # spends itself rewriting beats that were already right: gemma4-26b went
+    # @woman_face -> @ref_1 on attempt 2 and still shipped no `ref_plan`, three
+    # attempts, no convergence. The schema now requires both documents; this is
+    # the same guard for `use_schema=False` and for servers that ignore it.
+    if not str(ref_text or "").strip():
+        errors.append(
+            "the reply had no `ref_plan` document. Answer with BOTH JSON "
+            "documents: `shot_plan` and `ref_plan`. Every @tag a beat uses "
+            "must be declared as a `tag` in ref_plan.refs.")
+        return errors, warnings
+
     try:
         ref_plan = _refs.parse_ref_plan(ref_text)
     except Exception as exc:
@@ -529,6 +542,50 @@ def _merge_register(base_text, patch_text, keep=None):
     return json.dumps({"refs": refs, "subjects": subs}, indent=2)
 
 
+# Fields the RAIL owns and the model never authors. `mp` is a pixel budget the
+# person sets per row; it is absent from `schema()` and from the valid-fields
+# list in SYSTEM_PROMPT.md, so a written register cannot carry one. Accept
+# writes that register straight onto the rail, so without this a Write plan
+# silently reset every cap to "full": chain_00047 ran three plates at 0.54 MP
+# (1.58 MP total against a 0.72 MP canvas) and the next write put the same
+# three back at native size, 3.23 MP, which is the run that came back with the
+# reference photograph rendered instead of the beat.
+RAIL_ONLY_FIELDS = ("mp",)
+
+
+def _restore_rail_only(ref_text, pinned):
+    """Make the rail authoritative for its own per-row fields.
+
+    Authoritative, not merely restorative: a value the rail does not have is
+    REMOVED, it is not left as the model wrote it. `mp` is exposed in the
+    schema so a hand-authored plan can set one, which means a model can put a
+    number there too -- gemma4-26b read the units as pixels and returned
+    1000000000. On the pinned path the person owns that dial, so whatever came
+    back is discarded either way.
+    """
+    obj = _parse_obj(ref_text)
+    if not isinstance(obj, dict) or not pinned:
+        return ref_text
+    by_tag = {str(p.get("tag") or "").lstrip("@").strip(): p
+              for p in pinned if isinstance(p, dict)}
+    touched = False
+    for r in (obj.get("refs") or []):
+        if not isinstance(r, dict):
+            continue
+        row = by_tag.get(str(r.get("tag") or "").lstrip("@").strip())
+        if not row:
+            continue
+        for field in RAIL_ONLY_FIELDS:
+            value = row.get(field)
+            if value in (None, "", 0):
+                if r.pop(field, None) is not None:
+                    touched = True
+            elif r.get(field) != value:
+                r[field] = value
+                touched = True
+    return json.dumps(obj, indent=2) if touched else ref_text
+
+
 def _remap_pinned_tags(shot_text, ref_text, pinned):
     """Rename invented tags back to the rail's, matching on `file`.
 
@@ -789,6 +846,9 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                 ref_text = _merge_register(ref_text, new_refs, keep=rail_tags)
             else:
                 ref_text = new_refs
+            # Before validate, so a restored `mp` is what the lints and the
+            # returned plan both see, on the failure path as well as the ok one.
+            ref_text = _restore_rail_only(ref_text, pinned)
         if not shot_text:
             last_errors = ["the reply contained no JSON. Answer with the two "
                            "JSON blocks and nothing else."]

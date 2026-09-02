@@ -79,12 +79,21 @@ def _pinned_refs(raw, limit):
             subj = int(subj) if subj not in (None, "", False) else None
         except (TypeError, ValueError):
             subj = None
+        # `mp` rides along so planner._restore_rail_only can put it back on the
+        # written register. The model is never shown it and cannot author it,
+        # but Accept overwrites the rail with what comes back, so a cap that
+        # does not survive this round trip is a cap the next write deletes.
+        try:
+            mp = float(r.get("mp") or 0) or None
+        except (TypeError, ValueError):
+            mp = None
         out.append({
             "tag": tag,
             "file": fname,
             "subject": subj,
             "retention": str(r.get("retention") or ""),
             "desc": str(r.get("desc") or ""),
+            "mp": mp,
         })
         if len(out) >= int(limit):
             break

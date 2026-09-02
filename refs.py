@@ -48,11 +48,17 @@ REF_FIELDS = ("tag", "file", "slot", "subject", "retention", "desc", "shots",
 # This is a TOKEN dial, not a quality one. H3 turns each reference into
 # `latent_h * latent_w` entries in the DiT payload and attends over all of them
 # on every step of every hop, so a location plate costing what a face costs is
-# waste. The floor is a picture you can still recognise a room in; there is no
-# ceiling, because H3 only ever scales a reference DOWN
-# (`min(1.0, ...)` in nodes_minimax_h3.py) and a cap above the file's own size
-# would be a dial wired to nothing.
+# waste. The floor is a picture you can still recognise a room in.
+#
+# The ceiling is a sanity rail, not a capability limit: H3 only ever scales a
+# reference DOWN (`min(1.0, ...)` in nodes_minimax_h3.py), so any cap above the
+# file's own size is already a dial wired to nothing and does no harm at render
+# time. It exists because a *model* can author this field, and one read the
+# units as pixels: gemma4-26b returned mp 1000000000, which passed the floor,
+# survived into the register and rendered in the rail as a dropdown full of
+# zeroes. Anything past this is a units mistake, not an intention.
 REF_MP_MIN = 0.3
+REF_MP_MAX = 16.0
 
 # Per-subject continuity text -- the half `HTCContinuityState` owned, moved here
 # so it is keyed by the same subject number that owns the picture ordinals.
@@ -172,6 +178,10 @@ def _norm_ref(raw, i):
         if mp < REF_MP_MIN:
             _fail(f"{where} (@{tag}): mp {mp:g} is below the {REF_MP_MIN:g} MP "
                   f"floor. Use 0 for no cap.")
+        if mp > REF_MP_MAX:
+            _fail(f"{where} (@{tag}): mp {mp:g} is above the {REF_MP_MAX:g} MP "
+                  f"ceiling -- this field is MEGApixels, not pixels. Use 0 for "
+                  f"no cap.")
 
     shots = raw.get("shots")
     if shots is not None:

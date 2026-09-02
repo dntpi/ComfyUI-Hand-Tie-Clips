@@ -333,6 +333,11 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                 subject: r.subject == null ? null : Number(r.subject),
                 retention: String(r.retention || ""),
                 desc: String(r.desc || ""),
+                // The writer never sees `mp` and cannot author one, but Accept
+                // replaces the whole register with what comes back. Send it up
+                // so the server can put it back, or every write silently
+                // resets every row to "full".
+                mp: r.mp ? Number(r.mp) : null,
             }));
     }
 

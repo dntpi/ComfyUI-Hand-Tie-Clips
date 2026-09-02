@@ -387,12 +387,22 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
              * scales a reference DOWN -- a cap above the file's own size is a
              * dial wired to nothing, and a number there would imply upscaling
              * that never happens. */
-            const mp = select(REF_MP.map(String), r.mp ? String(r.mp) : "", (v) => {
+            /* A cap that is not one of the offered values still has to SHOW.
+             * `select` assigns a value matching no option, which renders the
+             * control blank -- and blank here reads as "full", so a row capped
+             * at 0.54 looked uncapped while it was working. Offer the row's
+             * own value alongside the standard ones. */
+            const mpOpts = REF_MP.map(String);
+            if (r.mp && !mpOpts.includes(String(r.mp))) {
+                mpOpts.push(String(r.mp));
+                mpOpts.sort((a, b) => Number(a) - Number(b));
+            }
+            const mp = select(mpOpts, r.mp ? String(r.mp) : "", (v) => {
                 r.mp = v ? Number(v) : 0;
                 commit();
             }, {
                 blankLabel: "full",
-                titles: Object.fromEntries(REF_MP.map((v) =>
+                titles: Object.fromEntries(mpOpts.map((v) =>
                     [String(v), `Cap this picture at ${v} MP before the encoder sees it.`])),
             });
             mp.classList.add("h3e-mp");

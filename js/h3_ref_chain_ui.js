@@ -248,6 +248,11 @@ function mountEditor(node) {
     node._h3Editor = {
         refresh() {
             refPlan = readRefPlan();
+            // LiteGraph calls onNodeCreated BEFORE configure(), so the mount
+            // above chose a tab from empty properties. The saved one only
+            // exists by the time we get here.
+            const saved = node.properties?.[ACTIVE_TAB_PROP];
+            if (saved && saved !== tabs.active()) tabs.show(saved);
             editor.reload();
             rail.render();
             mediaStrip.render();

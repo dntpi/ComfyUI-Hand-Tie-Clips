@@ -431,7 +431,7 @@ Before you answer, check every one of these:
       and the wardrobe plate is `partially_copy`.
 - [ ] Every subject in `subjects` is claimed by a ref, and has both a `name`
       and a `locked`.
-- [ ] `refs` holds at most 9 entries in total.
+- [ ] `refs` holds at most 9 entries in total. (The encoder's real limit is 9 on any ONE hop, so a whole list of 9 can never breach it.)
 - [ ] Dialogue uses single quotes.
 - [ ] Both blocks are valid JSON: no trailing commas, no comments, no smart
       quotes, plain ASCII, and no field outside the lists above.

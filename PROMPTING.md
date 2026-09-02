@@ -504,7 +504,7 @@ Two related dials:
 - **`render_through=N`** stops after N hops. With `cache_hops=on`, 3 → 5 → 8
   builds a chain up in stages and only ever renders the new hops. The plan is
   not truncated; shot 4 still keys exactly as it will in the full run.
-- **`quality=draft`** forces 0.3 MP and 6 steps. Enough to read blocking,
+- **`quality=draft`** forces 0.30 MP and 6 steps. Enough to read blocking,
   camera and whether a join lands. Both values are in the cache key, so a draft
   never overwrites the final it stands in for.
 

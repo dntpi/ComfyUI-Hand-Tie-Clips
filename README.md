@@ -80,6 +80,34 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > quiet buys a quiet pin, not a quiet opening. Sections 31 and 32 of the devlog
 > have the measurements.
 
+> **1.1.0 — 2026-09-03.** The panel is a 4:3 box with tabs instead of one long
+> scrolling column, and RUN stays pinned at the bottom. The **WRITE** draft is
+> readable — it used to clip every beat at 110 characters and throw away the
+> duration, seed, directives and per-shot references before rendering, so what
+> you were asked to Accept was a row of sentences ending in an ellipsis — and it
+> now survives leaving the tab or reloading the page. Shot cards carry `⏵` and
+> `lock` buttons driving `render_from` / `render_through`, the new one being the
+> other end of a range `render_through` has had since 0.4: everything before the
+> start is replayed from the hop cache rather than re-rendered.
+>
+> The bug worth upgrading for: **a reference pinned to any hop but the first
+> tended to be rendered as the shot.** `retention_analysis:` — the text that
+> tells the encoder what a picture is *for* — was emitted on hop 1 only, so a
+> still scheduled onto hop 3 arrived uncited; and the identity lock never read
+> `retention`, so a wardrobe plate carrying a subject was announced as *"the
+> only identity … that face, bone structure, and hairstyle match the photograph
+> exactly"* about a photograph of an apron, while the closer simultaneously said
+> clothing follows the live frame. Both fixed. The reference *clip* had the same
+> gap — it went in as `<Video 1>` with nothing naming it — and now has a
+> description field.
+>
+> Output size is computed rather than tabulated: eleven aspect ratios from 21:9
+> to 9:21 across five megapixel rungs, every one on H3's 32 px grid and under
+> its 768×1344 cap. **The top rung is 0.98 MP, and 16:9 there is 1312×736** —
+> the hop cache invalidates once because of it. Saved 1.0.x workflows keep the
+> exact pixels they were built with. And changing a reference picture now
+> re-renders only the hops that picture rides, instead of the whole chain.
+
 > **1.0.1 — 2026-09-02.** Three fixes, all found by the first people to use
 > 1.0.0. The **WRITE** panel never saved your model on a fresh install: with
 > nothing stored, no entry in the dropdown was ever *selected* and the browser
@@ -235,7 +263,7 @@ Two modes:
 
 Only one of them is on screen at a time, so there is never a text box quietly doing nothing.
 
-Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls, and the hop cache. Its title line summarises the run — `1.0 MP 16:9 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both.
+Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls, and the hop cache. Its title line summarises the run — `1312x736 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both.
 
 **`tone_compensate`** lives in that panel's *join & pin* group. The H3 denoiser biases each hop's tone, so a chain gets steadily brighter; this measures the bias on the overlap each hop regenerated and undoes it, correcting each hop against the previous **corrected** one so the whole chain lands on hop 1's tone. `frame_shift` is the mode to reach for: all three modes remove the drift equally well (within 0.4/255 of each other), but `gain_bias` and `lut` pair pixels between a frame and its *regeneration*, which fits a slope that is not really there and flattens contrast a little more with every hop. `frame_shift` uses frame averages only, so it can shift but never distort. **Measured on a 3-hop render: chain drift 5.6/255 without it, 0.3/255 with it.** Worth turning on for anything past two hops. It ships off because enabling it also clamps the master to 0..1, and because the correction grows with hop count — by hop 10 it is subtracting ~23/255 and will start crushing blacks. Switching modes never invalidates the hop cache, so it is free to A/B. Do **not** judge it by whether the seams flatten to zero: real scene brightness changes across a cut should survive, and they do.
 
@@ -411,7 +439,8 @@ The key **chains** — each hop's key includes the previous hop's — because ho
 
 - edit shot 3 and re-queue → shots 1 and 2 load from cache, only 3 renders;
 - edit shot 1 → all three re-render, which is correct, not a bug;
-- change resolution, sampler, a reference still, a LoRA, or an attention setting → the whole chain re-renders.
+- change resolution, sampler, a LoRA, or an attention setting → the whole chain re-renders;
+- change a reference picture → only the hops that picture rides re-render. Swapping the file behind `@outfit` when it rides hop 5 leaves hops 1-4 on cache. Before 1.1 this invalidated everything.
 
 That last one is worth knowing about. The node cannot read the settings on your LoRA and attention nodes, so instead it fingerprints what they *did* to the model — which weight keys were patched, at what strengths, and the attention overrides. Change a LoRA strength and the cache correctly invalidates. Two different LoRAs touching exactly the same keys at exactly the same strengths would look identical to it; that is the one gap.
 
@@ -433,14 +462,14 @@ rendered stay on disk, so 3 → 5 → 8 builds a chain up in stages and only eve
 renders the new hops. The plan is not truncated: shot 4 still knows it is shot
 4, keeps its own seed, and keys the same way it will in the full run.
 
-`quality=draft` forces 0.3 MP and 6 steps — enough to read blocking, camera and
+`quality=draft` forces 0.30 MP and 6 steps — enough to read blocking, camera and
 whether a join lands. Resolution and steps are both in the cache key, so a draft
 never overwrites the final it stands in for; the two simply cost two entries.
 
 Treat it as a **fidelity** lever rather than a speed one. Measured at ~42 s/hop
-against ~45 s/hop at 7 steps: if you already render at 0.3 MP and 6–8 steps —
+against ~45 s/hop at 7 steps: if you already render at 0.30 MP and 6–8 steps —
 the regime this pack targets — draft saves almost nothing, and `dry_run` is the
-fast button. Draft earns its place when your final is genuinely heavier, 1.0 MP
+fast button. Draft earns its place when your final is genuinely heavier, 0.98 MP
 at 14 steps.
 
 ## Contact sheet
@@ -556,7 +585,7 @@ The DiT pin is the previous hop’s **sampler latent** through Motion-Context wh
 
 | | |
 |---|---|
-| resolution | 1.0 MP (1280×736 landscape) |
+| resolution | 0.98 MP (1312×736 landscape) |
 | duration | 10 s (243 frames) |
 | overlap | 0.9 s (22 frames) |
 | steps | 8, with a 4-step turbo LoRA — the regime this node targets |

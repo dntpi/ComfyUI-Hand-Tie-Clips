@@ -1954,3 +1954,177 @@ The general shape, and section 34's lesson one level down: a control that
 displays a value it has not committed is bad, and a generator that emits a
 value it could not compute is the same bug wearing a different hat. Neither
 one fails; both produce something that looks like an answer.
+
+## 37. Two ways to hand a model a photograph and not say why (2026-09-03)
+
+A user: *"pinning outfit to anything but first hop throws the actual image
+in."* The obvious suspect was the image ordering -- something prepending the
+still ahead of the continuity frame. It was not. `_attach_pin_to_qwen` builds
+`[last_frame] + refs`, and `still_shift` moves the text ordinals to match. The
+pictures arrive in the right order with the right numbers.
+
+What was wrong was that nothing said what the picture was *for*.
+
+`retention_analysis:` is the block that does that -- `<Picture 2> (denim apron
+over a grey tee): the garment and its cut carry over`. It is produced by
+`subject_prose`, and `subject_prose` is gated on `i == 0`. That gate is correct
+for its other half: `subject_definitions:` introduces `<Subject N>`, and a
+subject token first introduced on hop 4 has no antecedent in its own encode.
+But retention has no such problem, and it went out with the gate. A still
+scheduled onto hop 3 therefore reached the encoder as `ref_image_2` with no
+retention line, no `desc`, and no subject entry. If it also had no subject
+number, `id_ords` came back empty, `_identity_lock` returned `""`, and the
+photograph was never named anywhere in the prompt at all.
+
+The second defect is worse because it is confidently wrong rather than silent.
+`_identity_lock` decides who is a person by `subject is not None` and has never
+read `retention`. The canonical outfit reference in the README carries
+`subject: 1` *and* `retention: partially_copy` -- it is a garment belonging to
+person 1, not a photograph of their face. So hop 3 opened with *"`<Picture 2>`
+is the only identity. That face, bone structure, and hairstyle match the
+photograph exactly"*, asserted about an apron. And because `lock` was then
+non-empty, the closer became *"Faces and hair follow the identity photographs.
+Clothing follows whatever is already on them in the live frame"* -- which
+contradicts the wardrobe plate riding that very hop. At cfg 1.0 there is no
+negative branch, so both instructions are additive and the encoder gets each at
+full weight.
+
+Three changes. `retention_prose` splits out of `subject_prose` and takes an
+explicit ordinal map, because on a continuation hop the live frame is `<Picture
+1>` and every still shifts up -- deriving the map a second time is exactly the
+drift the `hop_ords` comment warns about. The identity filter requires
+`fully_preserved`, which `refs.py` already defaults subject-bearing refs to, so
+ordinary face plates are untouched and only garment and setting plates stop
+being called people. And the closer points clothing at the plate when one is
+actually present.
+
+Hop 1 escaped all of this because `subject_prose` runs there, which is
+precisely why the report said "anything but the first hop".
+
+The same shape turned up a third time while writing this. The author's
+reference *clip* has always gone in as `<Video 1>` with nothing naming it --
+`_live_cite` covers the pinned tail, which is a different video. Same failure
+mode, same fix: a description field, and a note printed when a clip is wired
+without one. It is gated on the field being filled and asserted as such, so no
+existing workflow has its prompt quietly rewritten by upgrading.
+
+The lesson is not about pinning. It is that an uncited reference is not
+neutral. A Ref2VA model handed a photograph and no reason for it will find a
+reason, and the reason it finds is "render this".
+
+## 38. Fifteen tuples, of which the formula gets nine (2026-09-03)
+
+The output canvas was a hand-authored table: five resolution labels by three
+aspects. Adding eight more aspects would have made it fifty-five, so it became
+a function -- mirroring core's `adapt_canvas`, nearest 32 per axis, under the
+`768*1344` cap.
+
+The interesting part was checking it against what it replaced. I predicted the
+formula would reproduce thirteen of the fifteen old tuples and wrote that into
+the plan. It reproduces nine. Two cells I had done in my head were simply wrong
+-- `sqrt(200000/1.7778)` is 335.4, which rounds to ten 32-blocks and not eleven
+-- and I had also forgotten that every landscape divergence has a portrait
+twin.
+
+Six diverge, all in the 16:9/9:16 column, and the pattern says why: that column
+was hand-tuned for ratio fidelity rather than derived from area. 1280x736 is
+1.739:1, closer to 16:9 than the 1344x736 (1.826:1) the area allows. So the old
+table was not sloppy; it was optimising something else.
+
+They are pinned rather than recomputed, because width and height are in
+`chain_salt`: resolving them differently would re-render every chain a 1.0.x
+user has on disk *and* change the pixels of a graph they already signed off.
+`check_canvas.py` asserts both halves -- that the six stay pinned, and that the
+other nine still need no pin. A compat shim nobody re-checks becomes a bug the
+moment the thing it was shimming moves.
+
+I also tried a small grid search to beat per-axis rounding on ratio fidelity.
+Weighting ratio twice as heavily as area took the worst ratio error from 3.3%
+to 2.1% and pushed the worst area error from 2.7% to 3.8%, and produced
+identical sizes for 16:9 at every rung. Not worth diverging from core's
+arithmetic for. Matching `adapt_canvas` exactly is worth more than a point of
+ratio error on one cell, because the two agreeing is a property somebody can
+rely on.
+
+Separately: `media._mp_cap_size` rounded reference stills to a multiple of 16
+on the stated grounds that "that is H3's canvas grid". It is not.
+`CANVAS_MULTIPLE` is 32; 16 is the VAE's spatial factor, a different number
+that happens to divide it. Core re-snaps every reference to 32 on the way in,
+so nothing wrong ever reached the model -- the only casualty was that the size
+printed in the log was not the size the encoder saw, which is the one job that
+rounding has. `check_waveform.py` asserted the wrong number and had been
+passing on it since it was written.
+
+## 39. Four thousand lines with nothing in front of them (2026-09-03)
+
+There is no Node in this environment and no build step in this pack, so `js/`
+had no check of any kind between an edit and a browser. That matters more than
+it sounds: the browser reports a bad import as a node with no editor, which
+looks exactly like the pack failing to load, and the console line is one
+`console.warn` among ComfyUI's own.
+
+`tools/check_ui.py` is not a parser and does not try to be. It checks four
+things that have gone wrong or could go wrong silently: delimiters balance per
+file; every named import resolves to a real export in the file it names; every
+`var(--h3-*)` the stylesheet reads is declared in it; and no rule targets a
+class the JS never sets.
+
+It found three things on its first run, before it had checked any new code.
+`--h3-line` was read in two rules and declared nowhere, so the trim bar's and
+the draft list's borders had been resolving to nothing. `--h3-fg` fell back to
+a literal `#fff` that no longer matched the palette. And two classes had rules
+but no setter -- `.h3e-drag-over`, left behind when the drop target was renamed
+`.h3e-drop`, and `.h3e-card.h3e-dragging { opacity: .45 }`, which is feedback
+the stylesheet was clearly written for and the drag reorder was never wired to.
+The first is deleted; the second is now wired.
+
+Its own first run also caught a bug in itself, which is the honest way to
+calibrate one of these: the import scan ran against the string-stripped source,
+and the module specifier of an import *is* a string literal, so it found zero
+imports and reported success. The "something was actually imported" assertion
+exists because of that, and it is the more valuable line -- a checker that
+silently checks nothing is the failure mode every checker has.
+
+## 40. The range that only had one end (2026-09-03)
+
+`render_through` has stopped a chain after N hops since 0.4. There has never
+been a way to start at one, so re-rendering shot 5 of an eight-shot chain meant
+re-rendering shots 1 through 4 first, or accepting a chain that began at 5 with
+nothing before it.
+
+The obvious implementation is to seed `prev_imgs`, `prev_audio`, `prev_sampled`
+and `prev_key` from the hop store before the loop starts. `HopStore.get`
+already returns all four, so it is maybe fifteen lines.
+
+It is the wrong fifteen lines. The cache-hit branch inside the loop already
+carries exactly those four forward, and a second implementation is a second
+thing to get subtly wrong -- the sampler latent especially, which is what
+decides whether the next hop joins by Motion-Context or falls back to the
+weaker AddGuide pin. Getting that wrong produces a chain that renders fine and
+joins badly, which is the hardest class of bug to attribute.
+
+So `render_from` truncates nothing. The leading hops run through the loop like
+any other hop and are simply *required* to hit the cache; a miss names the hop
+and says why it might be gone. One code path carries continuity, and it is the
+one that was already carrying it.
+
+Two things fell out of writing the guards. Every misconfiguration is refused
+before the master tensor is allocated, which on an 8x15s plan is ~31 GB -- the
+first draft checked `hop_store is None`, which meant the check sat after the
+allocation, so a typo cost 31 GB before being told it was a typo. And the
+inverted-range check has to run against the *original* `render_through`,
+because `n` has already been truncated to it by then: testing `start_at > n`
+first reported "past the end of the plan" for `from=5, through=2` and then
+rendered the whole thing.
+
+The cache change shipped alongside is the one that will be felt more.
+`chain_salt` digested every wired reference chain-wide, so swapping the file
+behind `@outfit` moved hop 1's key even when `@outfit` rides only hop 5 -- and
+the key is chained, so that re-rendered everything. References are keyed per
+hop now, from `base_images`, which is the right set on both paths: this hop's
+scheduled stills when there is a ref plan, every wired reference when there is
+not, and the pin frame it excludes is already covered by `prev_key`.
+
+And the nine-reference ceiling turns out to be per *encode*, not per plan,
+while the check counted the whole rail. Twelve references at three per shot
+across four shots was refused against a limit no shot came near.

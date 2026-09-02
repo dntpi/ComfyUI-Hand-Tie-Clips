@@ -80,12 +80,30 @@ def beat_table():
     return out
 
 
+# Words per second of ordinary speech. ~150 wpm is the conversational figure
+# and it matches what this model renders: chain_00059 hop 1 carried six spoken
+# words and measured 1.8 s of voiced audio.
+SPEECH_WPS = 2.5
+
+# How much of a hop a speaking character should actually be speaking for. Below
+# this there are seconds of someone visibly mid-sentence with nothing assigned,
+# and the model fills them itself -- as fragments (chain_00059: 17.8% voiced,
+# longest run 0.5 s) or as invented dialogue (chain_00048). Half is deliberately
+# lenient: a beat is allowed to be action as well as talk, and the point is to
+# catch a hop that cannot possibly be filled, not to demand wall-to-wall speech.
+SPEECH_MIN_SHARE = 0.5
+
+
 def count_beat(beat):
-    """(words, spoken_lines) for one beat.
+    """(words, spoken_lines, spoken_words) for one beat.
 
     A spoken line is a single-quoted span. The delimiter test is a quote that is
     NOT between two word characters, because the beats are full of apostrophes
     that are: "Today's class was absolutely exhausting" is one line, not two.
+
+    `spoken_words` is what is inside those spans. Lines are the wrong unit on
+    their own -- a line runs from six words to twenty, and six words is 2.4 s
+    of a 10 s hop.
     """
     text = str(beat or "")
     words = len(text.split())
@@ -93,7 +111,10 @@ def count_beat(beat):
     delims = [i for i in marks
               if not (i > 0 and text[i - 1].isalnum()
                       and i + 1 < len(text) and text[i + 1].isalnum())]
-    return words, len(delims) // 2
+    spoken = 0
+    for a, b in zip(delims[0::2], delims[1::2]):
+        spoken += len(text[a + 1:b].split())
+    return words, len(delims) // 2, spoken
 
 
 def schema():
@@ -184,7 +205,7 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
     to the person but never retried, because a model asked to fix a lint it
     disagrees with tends to rewrite the parts that were fine.
     """
-    from .h3_ref_chain import DURATION_FRAMES
+    from .h3_ref_chain import DURATION_FRAMES, FPS
 
     errors, warnings = [], []
 
@@ -246,7 +267,7 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
         if not row:
             continue
         w0, w1, l0, l1 = row
-        words, spoken = count_beat((sh or {}).get("beat"))
+        words, spoken, spoken_words = count_beat((sh or {}).get("beat"))
         label = str((sh or {}).get("duration") or duration).strip()
         if words < w0 or words > w1:
             warnings.append(
@@ -262,6 +283,20 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
                 f"{l0}" + (f"-{l1}" if l1 > l0 else "") + ". The line count is "
                 "a floor as well as a ceiling -- speaking seconds with nothing "
                 "assigned come back as invented dialogue.")
+        # Lines are the wrong unit on their own: one runs from six words to
+        # twenty. This is the arithmetic, and it is worth stating outright
+        # because the number the author needs is not the number of lines.
+        secs = DURATION_FRAMES.get(label, 0) / float(FPS or 24)
+        if spoken_words and secs:
+            speech = spoken_words / SPEECH_WPS
+            if speech < secs * SPEECH_MIN_SHARE:
+                warnings.append(
+                    f"shot {i + 1}: {spoken_words} spoken words is about "
+                    f"{speech:.1f}s of speech in a {secs:.0f}s hop. A character "
+                    f"written as talking throughout needs roughly "
+                    f"{int(secs * SPEECH_WPS)}. The seconds left over are a "
+                    f"person visibly mid-sentence with nothing assigned, and "
+                    f"the model fills them itself.")
 
     # A person with pictures but no continuity text still *renders*, which is
     # why `refs.check` only warns. The writer is the one place that can fill
@@ -548,6 +583,22 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None):
             + (f"{l0}-{l1} spoken lines" if l1 > l0 else
                f"{l0} spoken line" + ("" if l0 == 1 else "s"))
             + ". Count both in every beat before you answer.")
+        # Lines alone do not size the audio: one runs from six words to twenty,
+        # and six words is 2.4 s of a 10 s hop. Live, a 3x10 s vlog written
+        # with one six-word line per hop rendered 17.8% voiced, in fragments.
+        try:
+            from .h3_ref_chain import DURATION_FRAMES, FPS  # noqa: PLC0415
+            secs = DURATION_FRAMES.get(str(duration).strip(), 0) / float(FPS or 24)
+        except Exception:
+            secs = 0
+        if secs:
+            lines.append(
+                f"Speech runs about {SPEECH_WPS:g} words a second, so a "
+                f"character who talks for most of a {secs:.0f}s hop needs "
+                f"roughly {int(secs * SPEECH_WPS)} words INSIDE the quotes -- "
+                f"several sentences, not one. Count the spoken words too. "
+                f"A hop where nobody speaks is fine, but say so: name the "
+                f"sound the room makes instead.")
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned:
         lines += ["",

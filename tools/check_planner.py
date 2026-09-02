@@ -396,6 +396,31 @@ def main():
     ck("and overruled when the rail has one",
        overruled["refs"][0].get("mp") == 0.54)
 
+    # Spoken WORDS, not lines. A line runs from six words to twenty, and six
+    # words is 2.4 s of a 10 s hop: chain_00059 was written one six-word line
+    # per 10 s hop and rendered 17.8% voiced, longest run 0.5 s.
+    ck("apostrophes are not quote delimiters",
+       PL.count_beat("She says, 'Today's class was long.' She waits.") == (8, 1, 4),
+       repr(PL.count_beat("She says, 'Today's class was long.' She waits.")))
+    ck("two spans are counted as two lines",
+       PL.count_beat("'I am happy!' and 'I never want to leave.'")[1:] == (2, 8),
+       repr(PL.count_beat("'I am happy!' and 'I never want to leave.'")))
+
+    def _talk(spoken):
+        return json.dumps({"shots": [
+            {"id": "s1", "beat": "@ref_1 walks and says, '" + spoken
+                                 + "' She keeps going as the clip ends.",
+             "directives": {"tail": "hold"}}]})
+
+    thin = " ".join(["word"] * 6)          # 2.4 s of a 10 s hop
+    full = " ".join(["word"] * 25)         # about what 10 s holds
+    for label, spoken, want in (("a six-word line in a 10 s hop is flagged", thin, True),
+                                ("twenty-five words is not", full, False)):
+        _, ws = PL.validate(_talk(spoken), json.dumps(GOOD_REFS), hops=1,
+                            known_files=kf, duration="10 s")
+        ck(label, any("spoken words is about" in w for w in ws) == want,
+           "; ".join(w for w in ws if "spoken words" in w)[:110])
+
     # A wardrobe plate on a continuation hop brings its own room. chain_00034
     # was this on hop 2; the 3x10 s portrait chain on 2026-09-02 was this on
     # hop 3 -- podcast_host.jpg is her sitting in a studio, it rode all three

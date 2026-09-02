@@ -630,3 +630,24 @@ a `shot_plan` and `ref_plan` this node accepts:
 
 The node still validates everything, so a model that gets it wrong is caught
 rather than obeyed.
+
+**Treat a written plan as a strong draft, not a finished one.** It will get the
+structure right -- tags, retention tiers, schedules, directives, a beat per hop
+that reads as one continuous take -- and that is the part that is tedious to
+write by hand and easy to get subtly wrong. What it will not reliably get right
+is judgement about your particular pictures and your particular scene. Two
+things to read every time before you queue:
+
+- **The `desc` on each ref.** It is written from the photograph and it goes into
+  the prompt verbatim as what to carry over, so a wrong one is actively
+  harmful -- a wardrobe plate described as "a dark top" when the garment is
+  white will fight the picture it came from. Vision quality varies a lot
+  between models here.
+- **The spoken words in each beat.** Speech runs about 2.5 words a second, so a
+  10 s hop of someone talking needs roughly 25 words inside the quotes. Models
+  write one short line and stop. The panel now warns with the arithmetic, and
+  the fix is to write the extra sentences yourself.
+
+Everything the panel flags is a warning rather than a rejection, because all of
+it is legitimate to want on purpose. Read the warnings, fix what you meant
+differently, and queue.

@@ -948,6 +948,52 @@ def _restore_rail_only(ref_text, pinned):
     return json.dumps(obj, indent=2) if touched else ref_text
 
 
+def _restore_pinned_files(ref_text, pinned):
+    """Make the rail authoritative for `file` on the rows it pins.
+
+    -> (ref_text, {tag: filename}) for whatever had to be put back.
+
+    The rail pins a tag to a picture, so `file` is not the writer's field to
+    choose on a pinned row -- and `validate` is already holding the right value
+    in `by_tag` at the moment it rejects the plan for not having it. A model
+    that has just looked at the photograph names the file after the tag:
+    `gibsonlethal.webp` came back as `hero_face.webp`, which is tidy, and wrong.
+
+    That cost two attempts rather than one. `_only_register_prose_gaps` fires
+    the tightened-schema repair -- the one that takes the empty path out of the
+    grammar -- only when EVERY error is a prose gap, and a file mismatch is not
+    one. So the round that could have been repaired properly got the weak
+    generic turn instead, and the mechanism that works was delayed until the
+    next one. Live 2026-09-02: converged on attempt 3 of 3, one from failing.
+
+    Keyed on a real tag match ONLY, and deliberately NOT a `RAIL_ONLY_FIELD`:
+    that loop DROPS a field the rail cannot supply, which is correct for `mp`
+    and destructive here. On a brief-only write the rail is empty and the
+    model's filename, read off the folder listing, is the only one there.
+    """
+    obj = _parse_obj(ref_text)
+    if not isinstance(obj, dict):
+        return ref_text, {}
+    by_tag = {}
+    for p in (pinned or []):
+        if not isinstance(p, dict):
+            continue
+        tag = str(p.get("tag") or "").lstrip("@").strip()
+        fname = str(p.get("file") or "").strip()
+        if tag and fname:
+            by_tag[tag] = fname
+    fixed = {}
+    for r in (obj.get("refs") or []):
+        if not isinstance(r, dict):
+            continue
+        tag = str(r.get("tag") or "").lstrip("@").strip()
+        want = by_tag.get(tag)
+        if want and str(r.get("file") or "").strip() != want:
+            r["file"] = want
+            fixed[tag] = want
+    return (json.dumps(obj, indent=2) if fixed else ref_text), fixed
+
+
 def _remap_pinned_tags(shot_text, ref_text, pinned):
     """Rename invented tags back to the rail's, matching on `file`.
 
@@ -1212,6 +1258,15 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
             # Before validate, so a restored `mp` is what the lints and the
             # returned plan both see, on the failure path as well as the ok one.
             ref_text = _restore_rail_only(ref_text, pinned)
+            # Same argument as `mp` above, and the same place to make it: the
+            # rail owns `file` on a row it pins, so a renamed one is repaired
+            # here rather than spending an attempt -- and, worse, blocking the
+            # tightened-schema repair by not being a prose gap.
+            ref_text, refiled = _restore_pinned_files(ref_text, pinned)
+            if refiled:
+                print(f"[{TAG}] rail filenames restored: "
+                      + ", ".join(f"@{t} -> {f}" for t, f in refiled.items()),
+                      flush=True)
         if not shot_text:
             last_errors = ["the reply contained no JSON. Answer with the two "
                            "JSON blocks and nothing else."]

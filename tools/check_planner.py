@@ -241,6 +241,31 @@ def main():
     ck("a pinned row cannot change file",
        any("cook_face.png" in e for e in errs), "; ".join(errs[:1]))
 
+    # ...but the writer loop repairs it before validate ever sees it, because
+    # the rail already holds the answer. gemma renamed gibsonlethal.webp to
+    # hero_face.webp live on 2026-09-02: one attempt for the mismatch itself,
+    # and a second because a file error is not a prose gap, so it suppressed
+    # the tightened-schema repair for a whole round.
+    healed, refiled = PL._restore_pinned_files(json.dumps(stolen), pinned)
+    ck("the rail's filename is put back", refiled == {"ref_1": "cook_face.png"},
+       repr(refiled))
+    errs2, _ = PL.validate(json.dumps(rail_shots), healed,
+                           hops=2, known_files=[p["file"] for p in pinned],
+                           pinned=pinned)
+    ck("and the repaired plan then validates", not errs2, "; ".join(errs2[:2]))
+    ck("a register needing no repair is returned unchanged",
+       PL._restore_pinned_files(healed, pinned) == (healed, {}))
+
+    # NOT a RAIL_ONLY_FIELD. That loop drops what the rail cannot supply, which
+    # would delete the only filename a brief-only write has.
+    loose = json.dumps({"refs": [{"tag": "someone", "file": "found.png",
+                                  "subject": 1, "desc": "a face"}],
+                        "subjects": {}})
+    ck("a brief-only write keeps the filename the model chose",
+       PL._restore_pinned_files(loose, []) == (loose, {}))
+    ck("and so does a tag the rail does not pin",
+       PL._restore_pinned_files(loose, pinned) == (loose, {}))
+
     extra = json.loads(json.dumps(rail))
     extra["refs"].append({"tag": "hallway", "file": "apron.png"})
     errs, _ = PL.validate(json.dumps(rail_shots), json.dumps(extra),

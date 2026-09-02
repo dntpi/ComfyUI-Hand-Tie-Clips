@@ -1854,3 +1854,58 @@ and this does not.
 The lesson is the older one, in a new place: a control that *displays* a value
 it has not committed is worse than one that displays nothing. Section 31 caught
 a lint that cried wolf; this is a dropdown that cried yes.
+
+## 35. The rail already had the answer (2026-09-02)
+
+The Arch reporter from section 34, writing their first plan once the panel
+worked:
+
+    attempt 1: subject 1 is missing name, locked, context;
+               @hero_face must keep file 'gibsonlethal.webp', not
+               'hero_face.webp'; @hero_face needs desc
+    attempt 2: subject 1 is missing name, locked, context;
+               @hero_face needs desc; @hero_outfit needs desc
+    repair turn: desc and subject prose are required by the schema
+    wrote a 3-hop plan in 3 attempt(s)
+
+It converged, one attempt from failing. The interesting line is the middle one
+on attempt 1, and not for the reason it looks like.
+
+`_only_register_prose_gaps` fires the tightened-schema repair -- the one that
+removes the empty path from the grammar, because section 31 established that
+while `"subjects": {}` is legal it is also the cheapest legal completion and no
+amount of repair prose outvotes it. That gate requires EVERY error to be a
+prose gap. A file mismatch is not one. So attempt 1 got the weak generic
+"change only what the errors name" turn, attempt 2 produced the same subject
+error again, and only then -- with the file error gone -- did the mechanism
+that actually works get to run.
+
+**One misnamed file cost two attempts: its own, and the round it kept the real
+repair from firing in.**
+
+It was never the model's field. The rail pins a tag to a picture, and
+`validate` is holding the correct filename in `by_tag` at the moment it rejects
+the plan for not having it. This is the argument already written down for `mp`
+in `_restore_rail_only` -- *spend an attempt on a rejection the rail already had
+the answer to* -- and `file` is a stronger case than `mp` ever was, because the
+model is not even guessing: it is renaming a real file to match the tag it was
+given. `gibsonlethal.webp` becomes `hero_face.webp`. Tidy, and wrong.
+
+`_restore_pinned_files` now puts it back before validate sees it, keyed on a
+real tag match, and prints what it changed.
+
+**Why it is not simply another `RAIL_ONLY_FIELD`.** That loop drops a field the
+rail cannot supply, which is exactly right for `mp` -- an invented megapixel cap
+is never wanted -- and destructive for `file`. On a brief-only write the rail is
+empty and the filename the model read off the folder listing is the only one
+there. The repair has to touch pinned rows and nothing else, which is the whole
+difference between restoring a field and owning one.
+
+Checked against the reported errors verbatim: three errors give the weak turn,
+the same three minus the filename give the tightened one. The plan that took
+three attempts should now take two, and a rail whose filenames do not resemble
+their tags -- which is most rails, since photographs arrive named by the camera
+or the download -- stops being a hazard at all.
+
+The older lesson underneath: every field the node can determine and chooses to
+reject instead is an attempt spent, and attempts are a budget of three.

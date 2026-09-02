@@ -1,0 +1,20 @@
+# What NOT to upload to the Comfy registry. `comfy node publish` zips the
+# git-tracked tree and honours this file (comfy_cli/file_utils.py:zip_files,
+# gitignore syntax). Everything here stays in git and stays on GitHub -- this
+# only trims the published artifact.
+#
+# `tools/` is the development test harness. Nothing under it is imported at
+# runtime, and it is where two of the three findings that got 1.0.0 Flagged
+# live: `subprocess.run` in check_all.py (python_command_injection_risk) and
+# `importlib.import_module` in check_planner.py (python_bytecode_manipulation).
+# The registry's YARA scan has no taint analysis, so a test runner spawning
+# pytest reads the same as a node shelling out at load. Not shipping a test
+# harness to end users is right on its own terms; clearing two false positives
+# is the bonus.
+tools/
+
+# 2.3 MB of documentation screenshots that no code path opens. README.md and
+# pyproject both reference them by absolute media.githubusercontent.com URL, so
+# the rendered listing is unaffected -- see the .gitattributes note about
+# raw.githubusercontent serving the LFS pointer instead of the image.
+docs/img/

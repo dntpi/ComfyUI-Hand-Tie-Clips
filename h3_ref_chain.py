@@ -1745,7 +1745,14 @@ class HandTieClips:
         # Everything constant across the chain, mixed into every hop key so a
         # resolution or sampler change invalidates the whole cache.
         chain_salt = {
-            "w": int(width), "h": int(height), "overlap": overlap_n,
+            "w": int(width), "h": int(height),
+            # No "overlap" here, for the reason "pin_mech" is not here either
+            # and "pin_cond" is keyed only from hop 2: the trim and the pin are
+            # both hop-2+ work (`hop 2: dropped 22 frames`, and _pin_mech_for
+            # returns "none" for index 0), so hop 1's pixels cannot depend on
+            # it. Keyed chain-wide it threw away a byte-identical cached hop 1
+            # on every overlap A/B -- half the cost of the test, on the hop the
+            # lever does not reach.
             "sampler": str(sampler_name), "scheduler": str(scheduler),
             "shift_v": float(shift_video), "shift_a": float(shift_audio),
             "ref_size": str(ref_image_size), "pin": str(pin_to_qwen),
@@ -1991,6 +1998,10 @@ class HandTieClips:
                     # needed to re-render.
                     "pin_cond": ((pin_renorm_mode, round(pin_noise_v, 4), audio_ctx)
                                  if i > 0 else None),
+                    # Same rule, moved out of chain_salt: how many frames the
+                    # previous hop hands over changes this hop's conditioning
+                    # and its trim, and nothing on hop 1.
+                    "overlap": (overlap_n if i > 0 else None),
                     # Whether this hop actually received the voice tensor.
                     # chain_salt already digests the file; without this a hop 2
                     # rendered with the clip on would be served to a later run

@@ -278,6 +278,25 @@ def check_place_handoff(shots, ref_plan=None):
     #
     # A plan with no place plates at all is a legitimate shape and says nothing
     # here: the Starter ships that way so it runs before any pictures exist.
+    #
+    # Neither does a plan that never LEAVES. The warning above is about a
+    # destination the film moves to and then holds with nothing; a chain that
+    # spends every hop in one room has no destination to lose, and dropping the
+    # plate after hop 1 there is the pin-only recipe the renderer is built for
+    # -- `active_refs` plus the `next`-mode drop exist to take unscheduled
+    # stills OFF a continue so "pin carries wardrobe and room", and
+    # ref_rail.js:424 calls it by name. Firing on a single-location chain told
+    # the author to undo the one thing the pack asks them to do, on every
+    # 2-hop kitchen plan written today.
+    #
+    # Distinct places CITED IN BEATS is the test, not places in the register: a
+    # plate nothing names is not a location the film goes to.
+    cited = {t for t in places
+             if any(("@" + t).lower() in (s.get("beat") or "").lower()
+                    for s in shots)}
+    if len(cited) < 2:
+        return warnings
+
     covered = set()
     for r in (ref_plan.get("refs") or []):
         if r.get("subject"):

@@ -115,6 +115,32 @@ def main():
             print("  FAIL  %s: warned=%s wanted=%s" % (label, got, want))
             fails.append(label)
 
+    # check_place_handoff's abandonment half is about a DESTINATION the film
+    # moves to and then holds with nothing. A chain that never leaves its one
+    # room has no destination to lose, and dropping the plate after hop 1 there
+    # is the pin-only recipe the renderer is built for -- so firing on it told
+    # the author to undo the thing the pack asks for, on every 2-hop kitchen
+    # plan written on 2026-09-02.
+    def _pl(*refs):
+        return {"refs": [dict(r) for r in refs]}
+
+    stay = [{"beat": "@ref_1 sits in @ref_2 and talks."},
+            {"beat": "@ref_1 leans back, still talking."}]
+    moves = [{"beat": "@ref_1 stands in @kitchen."},
+             {"beat": "@ref_1 reaches the @lamp_room and looks out."}]
+    for label, sh, plan, want in (
+            ("one room, plate on hop 1 only, no warning", stay,
+             _pl({"tag": "ref_2", "shots": [1]}, {"tag": "ref_1", "subject": 1}), False),
+            ("a second place, abandoned, still warns", moves,
+             _pl({"tag": "kitchen", "shots": [1]}, {"tag": "lamp_room", "shots": [1]},
+                 {"tag": "ref_1", "subject": 1}), True)):
+        got = any("never resume" in w for w in PL.check_place_handoff(sh, plan))
+        if got == want:
+            print("  ok    %s" % label)
+        else:
+            print("  FAIL  %s: warned=%s wanted=%s" % (label, got, want))
+            fails.append(label)
+
     # The last shot of any pattern that ends a chain must not be left `ongoing`.
     closers = [s for s in all_shots
                if (s["directives"].get("tail") in ("settle", "hold"))]

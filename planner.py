@@ -310,7 +310,10 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
             errors.append(
                 f"subject {num} is missing {', '.join(missing)}. Fill from "
                 f"the photograph -- prose, never an @tag. `context` is "
-                f"wardrobe and pose as they stand now.")
+                f"wardrobe and appearance, never a pose and never a "
+                f"place: it is injected on EVERY hop, so a posture here "
+                f"argues with every beat that has them doing something "
+                f"else. The beat owns what they are doing.")
 
     pinned_rows = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned_rows:
@@ -496,6 +499,49 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
                     f"rides with the garment and competes with the pin. Give it "
                     f"`shots: [1]` and name the garment in the subject's "
                     f"`context`; the pin carries it after that.")
+    except Exception:
+        pass
+
+    # `context` is injected VERBATIM on every continuation hop by
+    # `refs.continuity_line`, so a posture written into it is asserted on hops
+    # whose beats may have the subject doing something else entirely. The pack's
+    # own example is wardrobe alone -- "the apron stays tied over the grey
+    # t-shirt" -- but nothing said so and nothing checked.
+    #
+    # Live on 2026-09-02: a wardrobe plate showing her seated at a desk was
+    # correctly held to `shots: [1]`, and its POSE rode every hop anyway as
+    # "a white ribbed crop top, sitting at a wooden table" while the beats had
+    # her walking a train platform. Hop 3 obeyed the context and sat her down.
+    # The plate was excluded from the picture channel and leaked through the
+    # prose one.
+    #
+    # Presence is not the fault -- chain_00052 carried "sitting on a wooden
+    # counter" against beats that had her sitting on a counter, and it was
+    # right. The CONTRADICTION is the fault, so both halves have to be read.
+    try:
+        _POSTURE = {
+            "seated": r"\b(sits?|sitting|seated|perched|kneel\w*|crouch\w*)\b",
+            "afoot": r"\b(walk\w*|strolls?|strides?|stands?|standing|runs?|"
+                     r"running|paces?|steps? away|moves? past)\b",
+        }
+        beats_low = " ".join(str((s or {}).get("beat") or "") for s in shots).lower()
+        for num, info in sorted((subs or {}).items()):
+            ctx = str((info or {}).get("context") or "").lower()
+            if not ctx:
+                continue
+            in_ctx = {k for k, rx in _POSTURE.items() if re.search(rx, ctx)}
+            in_beats = {k for k, rx in _POSTURE.items() if re.search(rx, beats_low)}
+            clash = in_ctx and in_beats and not (in_ctx & in_beats)
+            if clash:
+                warnings.append(
+                    f"subjects.{num}.context says the subject is "
+                    f"{'/'.join(sorted(in_ctx))} while the beats have her "
+                    f"{'/'.join(sorted(in_beats))}. `context` is injected on "
+                    f"EVERY hop, so a posture in it argues with every beat that "
+                    f"disagrees -- and a pose copied from a wardrobe plate is "
+                    f"how that plate's scene rides hops it was kept off. Keep "
+                    f"`context` to wardrobe and appearance; the beat owns the "
+                    f"pose.")
     except Exception:
         pass
 
@@ -939,7 +985,8 @@ def _subjects_repair(errors):
         "The shot_plan is fine. Do not change tags or files. Do not drop a "
         "desc you already wrote. Fill every ref's `desc` (what the photograph "
         "shows) and every subject's `name`, `locked`, and `context` "
-        "(wardrobe and pose as they stand now). An empty subjects object "
+        "(wardrobe and appearance, never a pose or a place -- it is injected "
+        "on every hop and the beat owns what they are doing). An empty subjects object "
         "is rejected. Return the full ref_plan.\n\n"
         "Shape, filled from the photographs, prose never an @tag:\n"
         + json.dumps({"subjects": example}, indent=2)

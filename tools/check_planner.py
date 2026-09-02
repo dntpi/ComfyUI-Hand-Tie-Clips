@@ -421,6 +421,37 @@ def main():
         ck(label, any("spoken words is about" in w for w in ws) == want,
            "; ".join(w for w in ws if "spoken words" in w)[:110])
 
+    # `context` is injected verbatim on EVERY continuation hop, so a posture
+    # written into it is asserted on hops whose beats disagree. Live: a wardrobe
+    # plate correctly held to shots [1] leaked its POSE anyway -- "a white
+    # ribbed crop top, sitting at a wooden table" against beats walking a train
+    # platform -- and hop 3 obeyed the context and sat her down. Presence is not
+    # the fault: chain_00052 carried "sitting on a wooden counter" against beats
+    # that had her sitting on one, and was right. The contradiction is.
+    def _ctx(context, *beats):
+        sp = json.dumps({"shots": [{"id": "s%d" % (i + 1), "beat": b,
+                                    "directives": {"tail": "hold"}}
+                                   for i, b in enumerate(beats)]})
+        rf = json.dumps({"refs": [{"tag": "ref_1", "file": "cook_face.png",
+                                   "subject": 1, "retention": "fully_preserved",
+                                   "desc": "a face", "shots": [1, 2]}],
+                         "subjects": {"1": {"name": "her", "locked": "same face",
+                                            "context": context}}})
+        _, ws = PL.validate(sp, rf, hops=len(beats), known_files=kf, duration="10 s")
+        return any("context says" in w for w in ws)
+
+    for label, got, want in (
+            ("a seated context against walking beats is flagged",
+             _ctx("a white crop top, sitting at a wooden table",
+                  "she walks along the platform", "she moves past the lines"), True),
+            ("a seated context against seated beats is not",
+             _ctx("a white crop top, sitting on a wooden counter",
+                  "she sits on the counter", "she stays seated, shifting"), False),
+            ("wardrobe alone never warns",
+             _ctx("a white ribbed crop top and denim shorts",
+                  "she walks along the platform", "she slows her pace"), False)):
+        ck(label, got == want, "warned=%s wanted=%s" % (got, want))
+
     # A wardrobe plate on a continuation hop brings its own room. chain_00034
     # was this on hop 2; the 3x10 s portrait chain on 2026-09-02 was this on
     # hop 3 -- podcast_host.jpg is her sitting in a studio, it rode all three

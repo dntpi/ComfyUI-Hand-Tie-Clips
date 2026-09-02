@@ -396,6 +396,19 @@ def main():
     ck("and overruled when the rail has one",
        overruled["refs"][0].get("mp") == 0.54)
 
+    # ...including when the model kept its own tag, so the tag lookup misses.
+    # `_remap_pinned_tags` restores rail names by filename but only when the
+    # model supplied one it can match; live, gemma4-26b left @woman_face in
+    # place with mp 1e+15 and spent an attempt on a rejection the rail already
+    # had the answer to.
+    unrenamed = json.dumps({"refs": [{"tag": "woman_face", "file": "cook_face.png",
+                                      "subject": 1, "desc": "a face",
+                                      "mp": 1e15}], "subjects": {}})
+    byfile = json.loads(PL._restore_rail_only(
+        unrenamed, [{"tag": "ref_1", "file": "cook_face.png"}]))
+    ck("an unrenamed tag is matched by filename",
+       "mp" not in byfile["refs"][0], f"got {byfile['refs'][0].get('mp')!r}")
+
     bad = json.dumps({"refs": [{"tag": "ref_1", "file": "cook_face.png",
                                 "retention": "reference", "desc": "a face",
                                 "mp": 1000000000}], "subjects": {}})

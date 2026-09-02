@@ -55,6 +55,47 @@ def system_prompt():
         return fh.read()
 
 
+# | `8 s` | 35-60 | 1-2 |   -- the length table in SYSTEM_PROMPT.md
+_BEAT_ROW = re.compile(
+    r"^\|\s*`(\d+\s*s)`\s*\|\s*(\d+)\s*-\s*(\d+)\s*\|\s*(\d+)(?:\s*-\s*(\d+))?\s*\|",
+    re.M)
+
+
+def beat_table():
+    """{"8 s": (min_words, max_words, min_lines, max_lines)}, read from the prompt.
+
+    Parsed rather than restated, for the reason `schema()` reads SCHEMA.json and
+    `system_prompt()` reads the markdown: the numbers the model is told and the
+    numbers anything here checks have to be one source or they drift, and this
+    table is the one part of that document with arithmetic in it.
+    """
+    out = {}
+    try:
+        text = system_prompt()
+    except Exception:
+        return out
+    for label, w0, w1, l0, l1 in _BEAT_ROW.findall(text):
+        out[re.sub(r"\s+", " ", label)] = (int(w0), int(w1),
+                                           int(l0), int(l1 or l0))
+    return out
+
+
+def count_beat(beat):
+    """(words, spoken_lines) for one beat.
+
+    A spoken line is a single-quoted span. The delimiter test is a quote that is
+    NOT between two word characters, because the beats are full of apostrophes
+    that are: "Today's class was absolutely exhausting" is one line, not two.
+    """
+    text = str(beat or "")
+    words = len(text.split())
+    marks = [m.start() for m in re.finditer(r"'", text)]
+    delims = [i for i in marks
+              if not (i > 0 and text[i - 1].isalnum()
+                      and i + 1 < len(text) and text[i + 1].isalnum())]
+    return words, len(delims) // 2
+
+
 def schema():
     """The generated JSON Schema, for servers that support structured output.
 
@@ -134,7 +175,8 @@ def split_reply(raw):
 
 # -- validation ------------------------------------------------------------
 
-def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None):
+def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
+             duration=None):
     """Run the node's own checkers. Returns (errors, warnings).
 
     `errors` are what the node would REJECT -- they go back to the model.
@@ -188,6 +230,38 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None):
             errors.append(
                 f"shot {i + 1}: duration {dur!r} is not a valid label. "
                 f"Use one of: {', '.join(DURATION_FRAMES)}")
+
+    # Beat length against the length table, now that the hop length is known.
+    # A warning, not an error: the node renders a short beat perfectly happily,
+    # and `errors` means "what the node would REJECT". It is the loudest lint
+    # in the pack all the same -- a hop given fewer spoken lines than its row
+    # asks for leaves seconds of a visibly speaking character with nothing
+    # assigned, and the model writes its own. Every 8 s beat measured on
+    # 2026-09-02 carried one line where the row allows two, and chain_00052
+    # came back 26.7% voiced.
+    _table = beat_table()
+    for i, sh in enumerate(shots):
+        row = _table.get(str((sh or {}).get("duration")
+                             or duration or "").strip())
+        if not row:
+            continue
+        w0, w1, l0, l1 = row
+        words, spoken = count_beat((sh or {}).get("beat"))
+        label = str((sh or {}).get("duration") or duration).strip()
+        if words < w0 or words > w1:
+            warnings.append(
+                f"shot {i + 1}: the beat is {words} words; the {label} row "
+                f"wants {w0}-{w1}. "
+                + ("Written short, the model finishes the action early and "
+                   "invents something for the seconds left over."
+                   if words < w0 else
+                   "Written long, the action is truncated mid-way."))
+        if spoken < l0:
+            warnings.append(
+                f"shot {i + 1}: {spoken} spoken line(s); the {label} row wants "
+                f"{l0}" + (f"-{l1}" if l1 > l0 else "") + ". The line count is "
+                "a floor as well as a ceiling -- speaking seconds with nothing "
+                "assigned come back as invented dialogue.")
 
     # A person with pictures but no continuity text still *renders*, which is
     # why `refs.check` only warns. The writer is the one place that can fill
@@ -417,16 +491,31 @@ def _clean(exc):
 
 # -- the loop --------------------------------------------------------------
 
-def build_user_turn(brief, hops, files, pinned=None):
+def build_user_turn(brief, hops, files, pinned=None, duration=None):
     """The one user message. Names the files that actually exist, so the model
     schedules pictures it has rather than inventing plausible filenames.
 
     `pinned` is the REFERENCES rail: those tags and files are locked. The
     folder listing is the fallback for a brief-only write with an empty rail.
+
+    `duration` is the node's hop length. Without it the model gets a five-row
+    table and no way to know which row it is writing to -- the prompt tells it
+    to ASK, which a button cannot answer, so it guesses and defaults to about
+    fifty words whatever the hop length. Naming the band here is the whole
+    difference between a table and an instruction.
     """
     lines = [(brief or "").strip() or "A short scene of your choosing.",
              "",
              f"Write exactly {int(hops)} hop(s)."]
+    band = beat_table().get(str(duration or "").strip())
+    if band:
+        w0, w1, l0, l1 = band
+        lines.append(
+            f"Every hop is {duration}. That is the row of the length table you "
+            f"are writing to: {w0}-{w1} words in each beat, and "
+            + (f"{l0}-{l1} spoken lines" if l1 > l0 else
+               f"{l0} spoken line" + ("" if l0 == 1 else "s"))
+            + ". Count both in every beat before you answer.")
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned:
         lines += ["",
@@ -566,13 +655,28 @@ def _restore_rail_only(ref_text, pinned):
     obj = _parse_obj(ref_text)
     if not isinstance(obj, dict) or not pinned:
         return ref_text
-    by_tag = {str(p.get("tag") or "").lstrip("@").strip(): p
-              for p in pinned if isinstance(p, dict)}
+    by_tag, by_file = {}, {}
+    for p in pinned:
+        if not isinstance(p, dict):
+            continue
+        tag = str(p.get("tag") or "").lstrip("@").strip()
+        fname = str(p.get("file") or "").strip()
+        if tag:
+            by_tag[tag] = p
+        if fname:
+            by_file.setdefault(fname, p)
     touched = False
     for r in (obj.get("refs") or []):
         if not isinstance(r, dict):
             continue
-        row = by_tag.get(str(r.get("tag") or "").lstrip("@").strip())
+        # Tag first, then filename -- `_remap_pinned_tags` restores rail names
+        # by file but only when the model supplied one it can match, and when
+        # it does not the row still IS that rail row. Keying on the tag alone
+        # let an unrenamed @woman_face keep the mp it invented (1e+15, live)
+        # and spend an attempt on a rejection the rail already had the answer
+        # to.
+        row = (by_tag.get(str(r.get("tag") or "").lstrip("@").strip())
+               or by_file.get(str(r.get("file") or "").strip()))
         if not row:
             continue
         for field in RAIL_ONLY_FIELDS:
@@ -789,7 +893,7 @@ def _stub_missing_subjects(ref_text):
 
 
 async def write_plan(brief, hops, *, complete_fn, files=None,
-                     pinned=None, images=None,
+                     pinned=None, images=None, duration=None,
                      attempts=MAX_ATTEMPTS, use_schema=True, on_step=None):
     """Generate a plan and repair it until the node would accept it.
 
@@ -809,7 +913,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
              if pinned else list(files or []))
     rail_tags = {str(p.get("tag") or "").lstrip("@").strip()
                  for p in pinned if p.get("tag")}
-    text = build_user_turn(brief, hops, files, pinned=pinned)
+    text = build_user_turn(brief, hops, files, pinned=pinned, duration=duration)
     messages = [{"role": "system", "content": system_prompt()},
                 {"role": "user", "content": attach_images(text, images)}]
     sch = schema() if use_schema else None
@@ -855,7 +959,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         else:
             last_errors, warnings = validate(
                 shot_text, ref_text, hops=hops, known_files=files,
-                pinned=pinned)
+                pinned=pinned, duration=duration)
         if not last_errors:
             return {"ok": True, "shot_plan": shot_text, "ref_plan": ref_text,
                     "attempts": attempt, "errors": [], "warnings": warnings}

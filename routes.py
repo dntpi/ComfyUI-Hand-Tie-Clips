@@ -391,6 +391,11 @@ def register():
             hops = max(1, min(24, int(body.get("hops") or 3)))
         except (TypeError, ValueError):
             hops = 3
+        # The node's `duration` widget. The prompt's length table has a row per
+        # hop length and the model was never told which row it was writing to
+        # -- the prompt says to ASK, which a button cannot answer. Unknown or
+        # absent is fine: `build_user_turn` adds nothing and the lint no-ops.
+        duration = str(body.get("duration") or "").strip()
 
         try:
             from . import llm as _llm
@@ -456,7 +461,7 @@ def register():
         try:
             out = await _planner.write_plan(
                 brief, hops, complete_fn=complete_fn, files=files,
-                pinned=pinned, images=images)
+                pinned=pinned, images=images, duration=duration)
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:

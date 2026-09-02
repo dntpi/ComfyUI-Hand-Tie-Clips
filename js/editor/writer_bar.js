@@ -353,6 +353,11 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                 body: JSON.stringify({
                     brief: brief.value,
                     hops: Number(hops.value) || 3,
+                    // The node's hop length. The prompt's length table has a
+                    // row per duration and the model could not tell which row
+                    // it was writing to -- it is told to ask, and a button
+                    // cannot answer.
+                    duration: String(widgetByName(node, "duration")?.value || ""),
                     refs: railRefs(),
                 }),
             });

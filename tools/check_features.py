@@ -267,11 +267,72 @@ def main():
         ck("render_through=%d compiles %d hop(s)" % (rt, want),
            o[2].count("===== hop") == want)
 
+    # render_from. The replay itself needs a populated cache and a real render,
+    # so what is asserted here is the half that decides whether a user loses an
+    # hour: every misconfiguration is refused BEFORE the master tensor is
+    # allocated (~31 GB on this plan) and before a single step is sampled.
+    def raises(**kw):
+        try:
+            run(**kw)
+        except ValueError as exc:
+            return str(exc)
+        return ""
+
+    ck("render_from past render_through is refused",
+       "range is empty" in raises(render_from=5, render_through=2))
+    ck("render_from on a dry run is refused",
+       "dry run never touches it" in raises(render_from=3))
+    ck("render_from without the hop cache is refused",
+       "cache_hops must be on" in raises(render_from=3, dry_run="off",
+                                         cache_hops="off"))
+    o, log = run(render_from=99)
+    ck("render_from past the end falls back to hop 1",
+       "past the end" in log and o[2].count("===== hop") == 8)
+    o, log = run(render_from=1)
+    ck("render_from=1 is not a replay at all",
+       "come from the cache" not in log and o[2].count("===== hop") == 8)
+    o, _ = run(render_from=0)
+    ck("render_from=0 leaves the chain alone", o[2].count("===== hop") == 8)
+
     _, log = run(quality="draft", render_through=2)
     ck("draft drops the canvas", "736x416" in log and "0.30 MP" in log)
     ck("draft drops the steps", "6 steps" in log)
     _, log = run(quality="final", render_through=2)
     ck("final leaves the canvas alone", "1280x736" in log)
+
+    # The reference ceiling is per ENCODE, not per plan. This counted the whole
+    # rail until 1.1, so a plan that spread its references across shots was
+    # refused against a limit no shot came near.
+    R = sys.modules["htcpack.refs"]
+
+    def rail(*specs):
+        """specs are (tag, shots) pairs; shots=None means 'rides every shot'."""
+        return json.dumps({"refs": [
+            {"tag": t, "file": f"{t}.jpg", "shots": s} for t, s in specs]})
+
+    def ref_err(*specs):
+        try:
+            R.parse_ref_plan(rail(*specs))
+        except Exception as exc:
+            return str(exc)
+        return ""
+
+    spread = [(f"r{i}", [1 + i // 3]) for i in range(12)]
+    ck("12 references at 3 per shot is allowed", not ref_err(*spread))
+    ck("10 references all riding every shot is refused",
+       "would carry 10" in ref_err(*[(f"r{i}", None) for i in range(10)]))
+    ck("10 references landing on ONE shot is refused",
+       "shot 2 would carry 10" in ref_err(*[(f"r{i}", [2]) for i in range(10)]))
+    # The mix is the case the old plan-wide count could not see either way:
+    # 6 unscheduled + 4 on shot 3 is 10 on that shot, and 6 everywhere else.
+    ck("unscheduled references count on every shot",
+       "shot 3 would carry 10" in ref_err(
+           *([(f"a{i}", None) for i in range(6)]
+             + [(f"b{i}", [3]) for i in range(4)])))
+    ck("the refusal explains where the unscheduled ones went",
+       "counted on every shot" in ref_err(
+           *([(f"a{i}", None) for i in range(6)]
+             + [(f"b{i}", [3]) for i in range(4)])))
 
     print()
     if FAIL:

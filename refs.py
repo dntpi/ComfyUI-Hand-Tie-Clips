@@ -246,9 +246,7 @@ def parse_ref_plan(text):
         _fail("ref_plan 'refs' must be an array")
 
     refs = [_norm_ref(r, i) for i, r in enumerate(raw_refs)]
-    if len(refs) > MAX_REF_IMAGES:
-        _fail(f"ref_plan has {len(refs)} references; the encoder takes at most "
-              f"{MAX_REF_IMAGES} in one plan.")
+    _check_hop_load(refs)
     # The ordinal is derived from list position, which is what the author sees
     # in the rail. This keeps `active_refs`/`ordinals` unchanged while the
     # authored identity moves from a socket number to a filename.
@@ -272,6 +270,49 @@ def parse_ref_plan(text):
                   f"{seen_tags[r['tag']] + 1}. Tags must be unique.")
         seen_tags[r["tag"]] = i
     return {"refs": refs, "subjects": subjects}
+
+
+def _check_hop_load(refs):
+    """Fail if any single shot would carry more stills than one encode takes.
+
+    The limit is per ENCODE, not per plan -- `active_refs` is what decides who
+    turns up at each one. This counted the whole rail until 1.1, so twelve
+    references scheduled three to a shot across four shots were refused against
+    a ceiling no shot came near.
+
+    `shots: null` is counted on every shot, which is the worst case rather than
+    always the truth: under `hop_script=next` an unscheduled still is dropped
+    from continuation hops, so it really only rides hop 1. Counting it
+    everywhere can only refuse a plan that would have been fine in `next` mode,
+    never accept one that would overflow -- and the ceiling is a hard encoder
+    limit, so erring toward refusing is the right direction.
+    """
+    always = [r for r in refs if r["shots"] is None]
+    by_shot = {}
+    for r in refs:
+        for h in (r["shots"] or []):
+            by_shot.setdefault(h, []).append(r)
+
+    worst_shot, worst = None, len(always)
+    for h in sorted(by_shot):
+        if len(always) + len(by_shot[h]) > worst:
+            worst_shot, worst = h, len(always) + len(by_shot[h])
+    if worst > MAX_REF_IMAGES:
+        where = f"shot {worst_shot}" if worst_shot is not None else "every shot"
+        rides = (f" {len(always)} of them have no shots set, so they are "
+                 "counted on every shot." if always else "")
+        _fail(f"{where} would carry {worst} references; one encode takes at "
+              f"most {MAX_REF_IMAGES}.{rides}")
+    # A hop that is already full has no room for the incoming frame, and
+    # _attach_pin_to_qwen drops it rather than a still -- which turns a
+    # continuation into a fresh generate with only the invisible latent pin
+    # holding it. Better said here, once, than discovered as a hard cut.
+    if worst == MAX_REF_IMAGES:
+        where = f"shot {worst_shot}" if worst_shot is not None else "every shot"
+        print(f"[{TAG}] note: {where} carries the full {MAX_REF_IMAGES} "
+              "references, leaving no slot for the incoming frame. On a "
+              "continuation hop pin_to_qwen will be skipped there; drop one "
+              "reference if you want the pin shown to the encoder.", flush=True)
 
 
 def active_refs(refs, hop_index, wired_slots):

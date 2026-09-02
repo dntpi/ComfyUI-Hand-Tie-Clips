@@ -1552,6 +1552,22 @@ class HandTieClips:
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
                     "tooltip": "End of the soundtrack window. 0 = to the end.",
                 }),
+                # Appended 2026-09-03 -- LAST, per the note at the top of this
+                # block. `render_through` has been here since 0.4 and stops the
+                # chain; this is the other end of the same range.
+                "render_from": ("INT", {
+                    "default": 0, "min": 0, "max": 64,
+                    "tooltip": (
+                        "Start at this hop instead of hop 1. 0 starts at the "
+                        "beginning. Everything before it is replayed from the "
+                        "hop cache rather than rendered, so re-running one shot "
+                        "in the middle of a long chain costs that shot. "
+                        "Needs cache_hops=on, and every earlier hop must "
+                        "already be in the cache -- it names the first one that "
+                        "is not rather than guessing at the join. Pair it with "
+                        "render_through to render a range."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1615,7 +1631,7 @@ class HandTieClips:
             music_fit="loop", music_fade_s=1.0, soundtrack_file="",
             voice_start_s=0.0, voice_end_s=0.0,
             reference_video_start_s=0.0, reference_video_end_s=0.0,
-            music_start_s=0.0, music_end_s=0.0,
+            music_start_s=0.0, music_end_s=0.0, render_from=0,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -1709,6 +1725,46 @@ class HandTieClips:
         elif stop_at > n:
             print(f"[{TAG}] render_through={stop_at} is past the end of a "
                   f"{n}-hop plan; rendering all of it", flush=True)
+
+        # render_from is the other end of the same range, and unlike
+        # render_through it truncates nothing at all: the hops before it still
+        # run through the loop, they just have to come out of the cache instead
+        # of the sampler. Validated against the store further down, once there
+        # is a store to validate against.
+        start_at = int(render_from or 0)
+        # Inverted range first, and against the ORIGINAL render_through: `n` has
+        # already been truncated to it above, so testing start_at against `n`
+        # here would report an inverted range as "past the end of the plan" and
+        # then quietly render the whole thing.
+        if start_at > 1 and 0 < stop_at < start_at:
+            raise ValueError(
+                f"{TAG}: render_from={start_at} is past "
+                f"render_through={stop_at}, so the range is empty. "
+                "render_through is the LAST hop to render, not a count.")
+        if start_at > n:
+            print(f"[{TAG}] render_from={start_at} is past the end of a "
+                  f"{n}-hop plan; starting at hop 1", flush=True)
+            start_at = 0
+        replay_before = max(0, start_at - 1)
+        if replay_before:
+            # Checked here rather than beside the hop store, which is built much
+            # further down -- after the master tensor, which at 8 x 15 s and
+            # 1280x736 is ~31 GB. A misconfigured range must not cost that
+            # allocation before it is told it is misconfigured.
+            if dry:
+                raise ValueError(
+                    f"{TAG}: render_from={start_at} needs the hop cache, and a "
+                    "dry run never touches it. Use render_through to limit what "
+                    "a dry run compiles.")
+            if str(cache_hops) != "on":
+                raise ValueError(
+                    f"{TAG}: render_from={start_at} replays hops 1-"
+                    f"{replay_before} from the hop cache, so cache_hops must be "
+                    "on. With it off there is nothing to replay from, and the "
+                    f"join into hop {start_at} would be invented rather than "
+                    "continued.")
+            print(f"[{TAG}] render_from={start_at}: hops 1-{replay_before} come "
+                  f"from the cache, {start_at}-{n} render", flush=True)
 
         # Per-shot duration overrides, validated up front so a bad value fails
         # before any sampling happens rather than three hops in.
@@ -1877,6 +1933,14 @@ class HandTieClips:
                 budget_gb=float(cache_budget_gb), fps=FPS)
             print(f"[{TAG}] hop cache: {hop_store.root} "
                   f"(budget {float(cache_budget_gb):.0f} GB)", flush=True)
+        # Note on how render_from works, since this is where the store appears:
+        # the leading hops are NOT seeded into prev_imgs / prev_audio /
+        # prev_sampled / prev_key from here. They run through the loop like any
+        # other hop and are simply required to hit the cache. The hit branch
+        # already carries all four forward exactly as a render does -- the
+        # sampler latent especially, which decides whether the next hop joins by
+        # Motion-Context or falls back to AddGuide -- and a second copy of that
+        # logic is a second thing to get subtly and silently wrong.
         # Everything constant across the chain, mixed into every hop key so a
         # resolution or sampler change invalidates the whole cache.
         chain_salt = {
@@ -1895,8 +1959,14 @@ class HandTieClips:
             # in _pin_continue (Motion-Context when a sampler latent exists,
             # AddGuide pixels otherwise), so it belongs in the per-hop key
             # below, not in the chain-wide salt.
-            "refs": {s: _store.tensor_digest(t)
-                     for s, t in sorted(slot_images.items())},
+            # No "refs" here any more -- they are keyed per hop below.
+            #
+            # Digesting every wired reference chain-wide meant swapping the file
+            # behind @outfit moved hop 1's key even when @outfit rides only hop
+            # 5, and because the key is chained that re-rendered the entire
+            # chain. Changing one late reference cost a full run. A reference
+            # can only change the pixels of a hop it is actually handed to, so
+            # that is where it belongs.
             "voice": _store.audio_digest(voice),
             "refvid": _store.tensor_digest(reference_video),
             "start": _store.tensor_digest(start_image),
@@ -2161,6 +2231,14 @@ class HandTieClips:
                     "seed": (int(shot["seed"]) if shot.get("seed") is not None
                              else ((int(seed) + i) if seed_per_shot else int(seed))),
                     "tags": [r["tag"] for r in hop_active],
+                    # The reference PIXELS this hop is handed, not the whole
+                    # rail (see chain_salt). `base_images` is the pre-pin dict,
+                    # which is the right thing on both paths: with a ref plan it
+                    # is this hop's scheduled stills, without one it is every
+                    # wired ref, and the pin frame it excludes is already
+                    # accounted for by `prev_key`.
+                    "refs": {k: _store.tensor_digest(t)
+                             for k, t in sorted((base_images or {}).items())},
                     # Per hop, not chain-wide: hop 2 after a hop-1 cache hit
                     # has no sampler latent and falls back to AddGuide, which
                     # is a different render of the same inputs.
@@ -2200,6 +2278,19 @@ class HandTieClips:
                               f"render yet; rendering it once", flush=True)
                 hop_keys.append(hop_key)
                 cached = hop_store.get(hop_key)
+                if i < replay_before and cached is None:
+                    # Name the hop. "Cache miss" on its own sends people to the
+                    # temp folder to count files; what they need to know is
+                    # which shot moved and that the sweep may simply have
+                    # reclaimed it -- the store is under ComfyUI's temp
+                    # directory, which is deleted on startup and shutdown.
+                    raise ValueError(
+                        f"{TAG}: render_from={start_at} needs hop {i + 1} in "
+                        "the cache and it is not there. Either its inputs "
+                        "changed since it rendered -- editing an earlier shot "
+                        "moves every key after it -- or the cache was swept. "
+                        f"Render hops 1-{replay_before} first, or set "
+                        "render_from back to 0.")
 
             this_sampled = None
             if cached is not None:

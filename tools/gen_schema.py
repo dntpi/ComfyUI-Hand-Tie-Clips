@@ -219,10 +219,20 @@ def build():
                 "required": ["refs"],
                 "additionalProperties": False,
                 "properties": {
+                    # The real rule is per HOP: a plan may hold more than
+                    # MAX_REF_IMAGES so long as no single hop carries that many,
+                    # which is what refs._check_hop_load enforces. A JSON-schema
+                    # grammar cannot express "per hop", and maxItems on the array
+                    # is the only lever structured output gives us -- so the
+                    # writer is held to the safe subset instead: a plan whose
+                    # whole rail fits on one hop can never breach the real rule.
+                    # Hand-authored plans are checked against the real rule.
                     "refs": {"type": "array", "items": ref,
                              "maxItems": r.MAX_REF_IMAGES,
                              "description": f"At most {r.MAX_REF_IMAGES} "
-                                            f"pictures on any one hop."},
+                                            f"pictures on any one hop. Keep the "
+                                            f"whole list to {r.MAX_REF_IMAGES} "
+                                            f"and that always holds."},
                     "subjects": {
                         "type": "object",
                         "patternProperties": {"^[0-9]+$": subject},

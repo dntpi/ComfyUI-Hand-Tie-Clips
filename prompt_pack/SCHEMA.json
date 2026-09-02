@@ -192,7 +192,7 @@
             }
           },
           "maxItems": 9,
-          "description": "At most 9 pictures on any one hop."
+          "description": "At most 9 pictures on any one hop. Keep the whole list to 9 and that always holds."
         },
         "subjects": {
           "type": "object",

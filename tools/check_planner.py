@@ -421,6 +421,38 @@ def main():
         ck(label, any("spoken words is about" in w for w in ws) == want,
            "; ".join(w for w in ws if "spoken words" in w)[:110])
 
+    # Rule 3 applies INSIDE a hop. A beat that opens on action and speaks later
+    # has frames with a picture and no sound, and the model fills them with
+    # dialogue nobody wrote. Live on 2026-09-02: hop 1 ended silent -- which
+    # rule 5 asks for, and the audio pin duly carried one second of silence --
+    # and hop 2 still opened on invented speech over the walk. Nothing in the
+    # pack covered a hop's own opening; rules 3 and 6 are both whole-hop.
+    WALK = ("@ref_1 walks the whole length of the platform past the yellow "
+            "line and turns to face the camera, then says, ")
+    LINE = "'" + " ".join(["word"] * 25) + "' still walking as the clip ends."
+
+    def _lead(beat):
+        return json.dumps({"shots": [
+            {"id": "s1", "beat": beat, "directives": {"tail": "ongoing"}}]})
+
+    for label, beat, want in (
+            ("action before the first line with no sound is flagged",
+             WALK + LINE, True),
+            ("the same beat naming a sound is not",
+             WALK.replace("platform past", "platform, her boots knocking on "
+                          "the concrete, past") + LINE, False),
+            ("a beat that speaks straight away is not",
+             "@ref_1 says, " + LINE, False),
+            ("a beat with no dialogue at all is not",
+             "@ref_1 walks the whole length of the platform past the yellow "
+             "line and turns to face the camera, still walking as it ends.",
+             False)):
+        _, ws = PL.validate(_lead(beat), json.dumps(GOOD_REFS), hops=1,
+                            known_files=kf, duration="10 s")
+        got = any("before the first spoken line" in w for w in ws)
+        ck(label, got == want,
+           "; ".join(w for w in ws if "first spoken line" in w)[:130])
+
     # `context` is injected verbatim on EVERY continuation hop, so a posture
     # written into it is asserted on hops whose beats disagree. Live: a wardrobe
     # plate correctly held to shots [1] leaked its POSE anyway -- "a white

@@ -93,6 +93,28 @@ SPEECH_WPS = 2.5
 # catch a hop that cannot possibly be filled, not to demand wall-to-wall speech.
 SPEECH_MIN_SHARE = 0.5
 
+# Non-speech sounds a beat can hand its silent seconds to. The vocabulary is
+# the one SYSTEM_PROMPT rules 4 and 6 already teach -- narrowband, tied to a
+# thing on screen -- so the lint accepts exactly what the prompt asks for.
+_SOUND = re.compile(
+    r"\b(sound|tone|hum\w*|whir\w*|rattl\w*|clatter\w*|clink\w*|footsteps?|"
+    r"boots?|rain|traffic|buzz\w*|click\w*|creak\w*|rustl\w*|patter\w*|"
+    r"drone|murmur\w*|chatter\w*|announcement\w*|horn|engine|wind|birdsong|"
+    r"tick\w*|thud\w*|scuff\w*|squeak\w*|jingl\w*|shuffl\w*|breath\w*|"
+    r"sigh\w*|ring\w*|grind\w*|whistl\w*|siren|bell|chime\w*|static|noise|"
+    r"music|rumbl\w*|hiss\w*|splash\w*|crunch\w*|tap\w*|knock\w*|hoot\w*|"
+    r"clang\w*|scrap\w*|whoosh\w*|purr\w*|bark\w*|applause|laughter)\b",
+    re.I)
+
+# How much action may precede the first spoken line before those seconds are
+# worth a sound of their own. Eight words is roughly three seconds of screen
+# action at the rate the length table assumes -- long enough that the model has
+# frames to fill and no instruction for them. Measured against the walk-then-
+# talk hop 2 of 2026-09-02, which opened on invented dialogue over a silent
+# audio pin: hop 1 ended quiet, which rule 5 asks for, and the yap was hop 2's
+# OWN unassigned opening, which nothing in the pack covered.
+LEAD_IN_MAX_WORDS = 8
+
 
 def count_beat(beat):
     """(words, spoken_lines, spoken_words) for one beat.
@@ -107,14 +129,27 @@ def count_beat(beat):
     """
     text = str(beat or "")
     words = len(text.split())
+    spans = spoken_spans(text)
+    spoken = 0
+    for a, b in spans:
+        spoken += len(text[a + 1:b].split())
+    return words, len(spans), spoken
+
+
+def spoken_spans(beat):
+    """Character spans of the single-quoted spoken lines, in order.
+
+    Split out of `count_beat` because where the first line STARTS is its own
+    question: a beat whose opening seconds are action carries frames with a
+    picture assigned and no sound, and rule 3 applies inside a hop as well as
+    across one. See the lead-in lint in `validate`.
+    """
+    text = str(beat or "")
     marks = [m.start() for m in re.finditer(r"'", text)]
     delims = [i for i in marks
               if not (i > 0 and text[i - 1].isalnum()
                       and i + 1 < len(text) and text[i + 1].isalnum())]
-    spoken = 0
-    for a, b in zip(delims[0::2], delims[1::2]):
-        spoken += len(text[a + 1:b].split())
-    return words, len(delims) // 2, spoken
+    return list(zip(delims[0::2], delims[1::2]))
 
 
 def schema():
@@ -296,7 +331,25 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
                     f"written as talking throughout needs roughly "
                     f"{int(secs * SPEECH_WPS)}. The seconds left over are a "
                     f"person visibly mid-sentence with nothing assigned, and "
-                    f"the model fills them itself.")
+                    f"the model fills them itself. Give those seconds more "
+                    f"words, or name the sound they carry.")
+        # Rule 3 inside a hop. A beat that opens on action and speaks later has
+        # frames with a picture and no sound, and the model fills them with
+        # dialogue nobody wrote -- the same failure as a silent hop, one
+        # granularity down. Ending the PREVIOUS hop quiet does not cover it.
+        beat_text = str((sh or {}).get("beat") or "")
+        spans = spoken_spans(beat_text)
+        if spans:
+            lead = beat_text[:spans[0][0]]
+            if (len(lead.split()) > LEAD_IN_MAX_WORDS
+                    and not _SOUND.search(beat_text)):
+                warnings.append(
+                    f"shot {i + 1}: {len(lead.split())} words of action run "
+                    f"before the first spoken line and the beat names no "
+                    f"sound. Those opening seconds have a picture and no "
+                    f"audio assigned, and the model fills them with dialogue "
+                    f"nobody wrote. Name what they carry -- footsteps, room "
+                    f"tone, a passing train.")
 
     # A person with pictures but no continuity text still *renders*, which is
     # why `refs.check` only warns. The writer is the one place that can fill
@@ -645,6 +698,13 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None):
                 f"several sentences, not one. Count the spoken words too. "
                 f"A hop where nobody speaks is fine, but say so: name the "
                 f"sound the room makes instead.")
+            lines.append(
+                "If anything happens before the first spoken line -- walking "
+                "in, sitting down, turning to the camera -- name the sound "
+                "those opening seconds carry as well. An opening with a "
+                "picture and no sound assigned comes back as invented "
+                "dialogue over the action, even when the hop before it ended "
+                "silent.")
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned:
         lines += ["",

@@ -1733,3 +1733,44 @@ gemma4-26b called a white ribbed crop top "a dark top" and a daylit wooden
 kitchen "a dark kitchen interior with blue light and tiled surfaces", and no
 lint can check prose against a picture. qwen3.8 did not make that class of
 error on the same three plates.
+
+## 32. A silent pin does not buy you a silent opening (2026-09-02)
+
+Hop 2 opened on invented speech -- a burst of nothing-words over the walk,
+before the line it was actually given. The chain was clean everywhere else and
+the seed was fixed, so the first guesses were all mechanical, and all wrong.
+
+Ruled out, in order. The **LoRA**: exonerated by the user across a run of
+low-res A/Bs. **`pin_renorm=band`**: it skips the audio component outright --
+"an audio component has no bands; leaving it alone is correct, not a
+fallback" -- so it never touched the track. **A mid-utterance handover**: the
+hypothesis was that one second of audio context caught hop 1 mid-word and hop 2
+finished it. Hop 1 ends silent. There was no word to finish.
+
+What was left is the beat. `SPEECH_MIN_SHARE`'s comment had already written the
+mechanism down for the whole-hop case -- "the model fills them itself, as
+fragments or as invented dialogue" -- and rules 3 and 6 of SYSTEM_PROMPT both
+say to give silence a sound. Both are stated per hop. Hop 2 was walk-then-talk:
+it *had* dialogue, so rule 6 did not reach it, and its opening seconds carried
+a picture with no audio assigned. Rule 5 covers the join -- arrive silent
+before the previous shot ends -- and the user had done exactly that. Ending hop
+1 quiet gets you a quiet *pin*. It does not write hop 2's first two seconds.
+
+So the hole was granularity: every rule about unassigned audio was whole-hop,
+and the failure was sub-hop. Rule 3 now says so in both prompt documents, the
+checklist gained a line, `build_user_turn` names the case, and `validate` warns
+when more than `LEAD_IN_MAX_WORDS` of action run before the first spoken line
+with no sound named anywhere in the beat. `spoken_spans()` is split out of
+`count_beat` because where the first line *starts* turned out to be its own
+question.
+
+The user's own fix on hop 1 was the same shape, arrived at independently --
+"she silent smiles at the camera and waves, after a pause she says". Worth
+noting which half did the work: `check_templates` bans "silent" and "silence"
+in a beat, because at cfg 1.0 with no negative branch nothing subtracts. The
+smile and the wave are what filled the frames.
+
+**Still open.** `SPEECH_WPS = 2.5` rests on one measurement (chain_00059 hop 1,
+six words, 1.8 s voiced). Hops 2 and 3 of chain_00060 are confirmed-good
+dialogue and would make a better basis. `LEAD_IN_MAX_WORDS = 8` is reasoned
+from the length table, not measured at all.

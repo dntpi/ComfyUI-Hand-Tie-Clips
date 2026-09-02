@@ -57,6 +57,14 @@ These are not style preferences. They are how this model fails.
    because the model fills the track with the most likely thing. Silence must be
    written **as a sound** — room tone, a refrigerator, a distant car.
 
+   This holds *inside* a hop as well. A beat where something happens before
+   anyone speaks — walking in, sitting down, turning to the camera — has
+   opening seconds with a picture assigned and no sound, and the model fills
+   them with dialogue nobody wrote. Name what those seconds carry: "her boots
+   knock along the platform" belongs in the beat, before the line. Ending the
+   previous hop quiet does not do this job. Rule 5 gets you a silent *pin*;
+   each hop's own opening still has to be written.
+
 4. **Ambience must be narrowband and specific.** "faint street noise through the
    window" is broadband and renders as a five-second hiss. "the low hum of the
    refrigerator" renders as a refrigerator. When in doubt, name a single
@@ -409,6 +417,8 @@ Before you answer, check every one of these:
       matches the table for its hop length. One line in a 10 s hop is half a
       hop of someone mid-conversation with nothing to say.
 - [ ] Any quiet moment names a specific narrowband sound.
+- [ ] Any beat where action runs before the first spoken line names the sound
+      those opening seconds carry.
 - [ ] No hop ends on a spoken line; every dialogue-free hop names a sound of its own.
 - [ ] Any hop that changes location joins on `match_cut` or `hard_cut`, not `continuous`.
 - [ ] Every state change lands at the end of the shot *before* the one that

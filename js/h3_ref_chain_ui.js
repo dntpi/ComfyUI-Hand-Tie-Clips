@@ -1,7 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import {
-    el, isolateEvents, installHeightGuard, setWidgetVisibility, widgetByName,
+    createTabs, el, isolateEvents, installHeightGuard, setWidgetVisibility,
+    widgetByName,
 } from "./editor/widget_utils.js";
 import { createPlanEditor } from "./editor/plan_editor.js";
 import { createRefRail, parseRefPlan, refPlanToJson } from "./editor/ref_rail.js";
@@ -15,11 +16,20 @@ const VERSION = "v1.5.3";
  * new id those nodes would come up with NO editor at all, which looks exactly
  * like the rename having broken the pack. */
 const NODE_TYPES = new Set(["HandTieClips", "H3RefChain"]);
-const NODE_WIDTH = 560;
+// 640x480 is the 4:3 box the panel is now shaped for. It was 560 wide and a
+// tall scrolling column; with one pane visible at a time the height that column
+// needed is no longer needed all at once.
+const NODE_WIDTH = 640;
+const NODE_HEIGHT = 480;
 // Mirrors MODE_PROP in editor/plan_editor.js -- the writer forces Shots mode
 // after a plan lands, and the property is the only part of that it should touch.
 const EDITOR_MODE_PROP = "h3_editor_mode";
-const EDITOR_MIN_H = 460;
+// Which tab is showing. A node property, so it rides the saved workflow and
+// ComfyUI's restored graph rather than resetting to Script on every reload.
+const ACTIVE_TAB_PROP = "h3_active_tab";
+// One pane plus the tab strip plus RUN's summary bar. Was 460, when this had to
+// hold four stacked sections before the first scroll.
+const EDITOR_MIN_H = 360;
 const STYLE_ID = "h3rc-style";
 
 /* Widgets the editor owns. In Simple mode the plan is hidden instead.
@@ -106,19 +116,32 @@ function mountEditor(node) {
         setPlan: (p) => { refPlan = p; refBad = false; refWidget.value = refPlanToJson(p); },
         getRaw: () => refWidget.value,
         isBad: () => refBad,
-        onChange: () => node.graph?.setDirtyCanvas?.(true, true),
+        // syncBadges is declared further down; these closures only ever run on
+        // user interaction, long after the mount has finished.
+        onChange: () => {
+            syncBadges();
+            node.graph?.setDirtyCanvas?.(true, true);
+        },
         hopCount,
     });
 
     const editor = createPlanEditor(node, {
         onChange: () => {
             applyVisibility();
+            syncBadges();
             node.graph?.setDirtyCanvas?.(true, true);
         },
     });
 
     const runPanel = createRunPanel(node, {
-        onChange: () => node.graph?.setDirtyCanvas?.(true, true),
+        onChange: () => {
+            // render_from / render_through are drawn in RUN and also driven by
+            // the ⏵ button on each shot card, so a change here has to re-mark
+            // which cards the range now leaves out. Cheap: at most 24 cards,
+            // and only ever on a user gesture.
+            editor.render();
+            node.graph?.setDirtyCanvas?.(true, true);
+        },
         hopCount,
         // In Shots mode these two are decided by the plan, not by the user:
         // run() ignores `chains` and forces `hop_script=next`. They are already
@@ -154,17 +177,40 @@ function mountEditor(node) {
         },
     });
 
-    // Authoring sections scroll; RUN does not. RUN is the one section touched
-    // on every queue, and it used to be the last child of the scroller -- so
-    // it sat below however many shot cards the script had and you had to
-    // scroll the panel just to reach the summary bar. It is pinned to the
-    // bottom of the panel now, collapsed to its ~28px summary until opened.
-    const scroll = el("div", "h3e-scroll");
-    scroll.appendChild(writer.root);
-    scroll.appendChild(rail.root);
-    scroll.appendChild(mediaStrip.root);
-    scroll.appendChild(editor.root);
-    root.appendChild(scroll);
+    // One pane at a time, RUN pinned underneath.
+    //
+    // The four authoring sections used to be stacked in a single scroller, so
+    // reaching the script meant scrolling past the writer, the rail and the
+    // media strip -- and the taller the rail got, the further down the work
+    // was. They are tabs now, which is also what lets the node be a squarish
+    // box instead of a column: only one section is asking for height at a time.
+    //
+    // RUN stays outside the tab body and pinned to the bottom, which it already
+    // was, for the same reason it was moved there -- it is the one section
+    // touched on every queue.
+    const tabs = createTabs([
+        { id: "script", label: "Script", title: "The shot list", body: editor.root },
+        { id: "refs", label: "Refs", title: "Reference pictures and @tags", body: rail.root },
+        { id: "media", label: "Media", title: "Start image, reference clip, voice, soundtrack", body: mediaStrip.root },
+        { id: "write", label: "Write", title: "Draft a plan with a local model", body: writer.root },
+    ], {
+        active: node.properties?.[ACTIVE_TAB_PROP],
+        onShow: (id) => {
+            node.properties ??= {};
+            node.properties[ACTIVE_TAB_PROP] = id;
+            // WRITE is a <details> and its contents are loaded on first open --
+            // opening it here keeps that laziness (nothing is fetched until you
+            // visit the tab) while making the pane usable once you have.
+            if (id === "write") writer.root.open = true;
+            // The panel does not follow the node's height on its own; see the
+            // note on installHeightGuard. sync() grows the node if the pane now
+            // showing needs more room than the last one did.
+            node._h3HeightGuard?.sync();
+            node.graph?.setDirtyCanvas?.(true, true);
+        },
+    });
+    root.appendChild(tabs.strip);
+    root.appendChild(tabs.bodies);
     root.appendChild(runPanel.root);
 
     const domWidget = node.addDOMWidget("h3_editor", "h3_editor", root, {
@@ -186,25 +232,45 @@ function mountEditor(node) {
         setWidgetVisibility(node, base.concat(runPanel.ownedNames()));
     }
 
+    // A hidden pane still has to report. Without these the shot count and the
+    // reference count are only visible on the tab you are already looking at,
+    // which is the one place you did not need to be told.
+    const syncBadges = () => {
+        try {
+            tabs.badge("script", hopCount());
+            tabs.badge("refs", (refPlan.refs || []).length || "");
+        } catch (err) {
+            // Decoration. A bad count must never take the refresh down with it.
+            console.warn("[HandTieClips] tab badges:", err);
+        }
+    };
+
     node._h3Editor = {
         refresh() {
             refPlan = readRefPlan();
             editor.reload();
             rail.render();
             mediaStrip.render();
+            // Properties arrive with the workflow, AFTER the mount, so a loaded
+            // graph has to be told to put the writer's brief and held draft
+            // back -- the mount ran before there was anything to restore.
+            writer.restore();
             writer.syncHops();
             applyVisibility();   // syncs the run panel on the way through
+            syncBadges();
         },
         rail,
         editor,
         runPanel,
         writer,
+        tabs,
     };
 
     applyVisibility();
     rail.render();
     mediaStrip.render();
     editor.render();
+    syncBadges();
 
     // `control_after_generate` bumps the seed widget as the prompt is queued,
     // and undo rewrites widgets wholesale -- both behind this panel's back.
@@ -248,7 +314,7 @@ app.registerExtension({
             mountEditor(this);
             this.setSize([
                 Math.max(this.size[0], NODE_WIDTH),
-                Math.max(this.size[1], 640),
+                Math.max(this.size[1], NODE_HEIGHT),
             ]);
             return r;
         };

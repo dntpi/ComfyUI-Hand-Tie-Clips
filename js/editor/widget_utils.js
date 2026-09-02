@@ -394,6 +394,74 @@ export function select(options, value, onChange, { blankLabel = "—", titles = 
 }
 
 /**
+ * A tab strip over a set of panes.
+ *
+ * Generalised from the Simple/Shots toggle in plan_editor.js, which was already
+ * a two-button tab bar wearing `.h3e-modes` / `.h3e-mode`. The stylesheet has
+ * carried an `aria-pressed` selector for that pattern since it was written and
+ * nothing has ever set the attribute; this does, so the strip is legible to a
+ * screen reader and not only to the eye.
+ *
+ * `tabs` is [{ id, label, title, body }]. Panes are hidden with the `hidden`
+ * attribute rather than detached, so a pane keeps its scroll position, its
+ * focus, and any half-typed text when you come back to it. That is the whole
+ * reason not to rebuild them on switch.
+ *
+ * `onShow(id)` fires after a pane becomes visible, including for the initial
+ * one -- callers use it to persist the choice and to re-measure the node.
+ */
+export function createTabs(tabs, {
+    active, onShow, stripClass = "h3e-tabs", bodyClass = "h3e-scroll",
+} = {}) {
+    const strip = el("div", stripClass);
+    const bodies = el("div", bodyClass);
+    const byId = new Map();
+    let current = null;
+
+    for (const t of tabs) {
+        const btn = button(t.label, t.title || "", () => show(t.id),
+                           "h3e-btn h3e-mode h3e-tab");
+        const badge = el("span", "h3e-tabcount", "");
+        btn.appendChild(badge);
+        strip.appendChild(btn);
+        t.body.classList.add("h3e-pane");
+        bodies.appendChild(t.body);
+        byId.set(t.id, { tab: t, btn, badge });
+    }
+
+    function show(id) {
+        const target = byId.has(id) ? id : tabs[0]?.id;
+        if (target == null) return;
+        current = target;
+        for (const [key, e] of byId) {
+            const on = key === target;
+            e.btn.classList.toggle("h3e-on", on);
+            e.btn.setAttribute("aria-pressed", on ? "true" : "false");
+            e.tab.body.hidden = !on;
+        }
+        try {
+            onShow?.(target);
+        } catch (err) {
+            console.error("[HandTieClips] tab show handler failed:", err);
+        }
+    }
+
+    show(active);
+
+    return {
+        strip,
+        bodies,
+        show,
+        active: () => current,
+        /** Small count beside a tab's label. null or "" clears it. */
+        badge(id, text) {
+            const e = byId.get(id);
+            if (e) e.badge.textContent = text == null ? "" : String(text);
+        },
+    };
+}
+
+/**
  * Keep canvas gestures out of the panel.
  *
  * Without this a click inside a textarea also starts a node drag, and a scroll

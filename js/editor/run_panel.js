@@ -20,7 +20,9 @@
  * tooltips at all while the native dials kept theirs -- see tooltipFor().
  */
 
-import { el, widgetByName, widgetType, widgetOptions, tooltipFor } from "./widget_utils.js";
+import {
+    el, vocab, widgetByName, widgetType, widgetOptions, tooltipFor,
+} from "./widget_utils.js";
 
 const OPEN_PROP = "h3_run_open";
 
@@ -52,7 +54,10 @@ const GROUPS = [
     // touched js/, so all five fell through to native dials -- the documented
     // fallback doing its job, not a break. Order is the order you reach for
     // them: prove the plan compiles, pick the fidelity, stop short, look.
-    ["preview", ["dry_run", "quality", "render_through", "contact_sheet"]],
+    // `render_from` is next to `render_through` because the two are one
+    // control: a range. The shot cards' ⏵ buttons write both of them.
+    ["preview", ["dry_run", "quality", "render_from", "render_through",
+                 "contact_sheet"]],
     // Last because it is the last thing to happen: the bed goes on after every
     // hop is joined. The file itself is picked in MEDIA -- these four only say
     // how loud it is and how it is laid down, and are inert with nothing set.
@@ -221,6 +226,17 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
     const body = el("div", "h3e-run-body");
     root.appendChild(body);
 
+    // resolution label -> aspect label -> [w, h], from /vocab. Fetched once per
+    // browser session and shared with every other consumer of the vocabulary.
+    let CANVAS = null;
+    vocab().then((v) => {
+        CANVAS = v?.canvas || null;
+        paintDigest();
+    }).catch((err) => {
+        // The digest falls back to the two labels; nothing else needs this.
+        console.warn("[HandTieClips] canvas table unavailable:", err);
+    });
+
     /** Widgets this panel actually drew, so the caller hides exactly those. */
     const owned = [];
     const readers = [];
@@ -328,8 +344,17 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
         const v = (n) => widgetByName(node, n)?.value;
         const bits = [];
         const res = v("resolution");
-        const asp = String(v("aspect") || "").split(" ")[0];
-        if (res) bits.push(asp ? `${res} ${asp}` : String(res));
+        const asp = String(v("aspect") || "");
+        if (res) {
+            // The actual pixels, resolved in Python and published on /vocab.
+            // Deliberately not recomputed here: it is a function of an area
+            // budget, a ratio, a 32 px grid and an area cap, and a second
+            // implementation in JavaScript is a second thing to be wrong --
+            // with this one wrong in the direction of quietly disagreeing with
+            // what rendered. Falls back to the labels until the fetch lands.
+            const wh = CANVAS?.[res]?.[asp];
+            bits.push(wh ? `${wh[0]}x${wh[1]}` : `${res} ${asp.split(" ")[0]}`.trim());
+        }
         const dur = v("duration");
         // The hop count, not `chains`: with a shot plan loaded the two disagree
         // and the plan is the one run() obeys.

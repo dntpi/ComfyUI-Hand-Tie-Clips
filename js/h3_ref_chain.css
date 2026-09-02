@@ -28,6 +28,15 @@
     --h3-muted:   #9a9a9a;
     --h3-faint:   #6a6a6a;
 
+    /* Both of these were REFERENCED and never declared, so `--h3-line` made
+     * the trim bar's and the draft list's borders resolve to nothing at all,
+     * and the playhead fell back to a literal #fff that no longer matched the
+     * palette. Declared here rather than deleted because the rules that use
+     * them are right to want a hairline; they were just asking for a name that
+     * did not exist. */
+    --h3-line:    var(--h3-border-soft);
+    --h3-fg:      var(--h3-text);
+
     /* One accent. Change this line and the whole panel follows. */
     --h3-accent:  #e8ff47;
     --h3-accent-soft: color-mix(in srgb, var(--h3-accent) 10%, transparent);
@@ -206,7 +215,9 @@
 }
 .h3e-card:hover { border-color: color-mix(in srgb, var(--h3-card-accent) 70%, var(--h3-border)); }
 .h3e-card.h3e-drop,
-.h3e-card.h3e-drag-over { outline: 2px solid var(--h3-accent); outline-offset: 1px; }
+/* `.h3e-drag-over` lived here too, from before the drop target was renamed
+ * `.h3e-drop`. Nothing has set it since, so it was styling that could never
+ * appear -- deleted rather than left to be read as documentation. */
 .h3e-card.h3e-dragging { opacity: .45; }
 .h3e-card.h3e-invalid { border-left-color: var(--h3-error); }
 
@@ -255,7 +266,30 @@
     white-space: nowrap;
 }
 .h3e-timing { font-size: 10px; color: var(--h3-muted); font-variant-numeric: tabular-nums; }
-.h3e-lock { font-size: 10px; color: var(--h3-warn); }
+/* `lock` and `⏵` are buttons now, not badges -- both were states you could
+ * previously only reach by editing JSON or by counting shots yourself into two
+ * integer boxes at the bottom of RUN. They stay quiet until they are on. */
+.h3e-root .h3e-lock,
+.h3e-root .h3e-only {
+    font-size: 10px;
+    padding: 1px 6px;
+    color: var(--h3-faint);
+    background: transparent;
+    border-color: var(--h3-border-soft);
+}
+.h3e-root .h3e-lock.h3e-on {
+    color: var(--h3-warn);
+    border-color: var(--h3-warn);
+    background: transparent;
+}
+.h3e-root .h3e-only.h3e-on {
+    color: var(--h3-accent);
+    border-color: var(--h3-accent);
+    background: transparent;
+}
+/* A shot the current render range will skip. Readable, plainly not in play. */
+.h3e-card.h3e-outside { opacity: .4; }
+.h3e-card.h3e-outside:hover { opacity: .75; }
 .h3e-peek {
     flex: 1;
     min-width: 0;
@@ -839,6 +873,56 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
     flex-direction: column;
     gap: var(--h3-gap);
 }
+
+/* -- tab strip ------------------------------------------------------------
+ * The scroller above holds ONE pane now rather than four stacked sections.
+ * Built on `.h3e-mode`, which was already the Simple/Shots toggle's look --
+ * one visual language for "pick exactly one of these", not two.
+ */
+.h3e-tabs {
+    display: flex;
+    flex: 0 0 auto;
+    border: 1px solid var(--h3-border);
+    border-radius: var(--h3-radius-sm);
+    overflow: hidden;
+}
+.h3e-root .h3e-tab {
+    /* Equal quarters regardless of label length, so the strip does not reflow
+     * when a badge appears or its count gains a digit. `min-width: 0` lets a
+     * label ellipsize rather than force the strip wider than the node. */
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    gap: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.h3e-tabcount {
+    color: var(--h3-faint);
+    font-size: var(--h3-fs-xs);
+    font-variant-numeric: tabular-nums;
+}
+.h3e-tabcount:empty { display: none; }
+.h3e-root .h3e-tab.h3e-on .h3e-tabcount { color: inherit; opacity: .75; }
+/* A pane fills the scroller instead of sitting in a column of siblings.
+ * The `[hidden]` rule is NOT redundant: `display` here beats the attribute's
+ * user-agent default, and without it every pane would show at once. */
+.h3e-pane {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+.h3e-pane[hidden] { display: none !important; }
+/* WRITE is a <details> and its pane opens it on show, so the disclosure
+ * triangle would be a control that does nothing -- the same treatment RUN
+ * gets a few rules down, for the same reason. The `::after` chevron is set
+ * further down the sheet, so it has to be cleared as well as the marker. */
+.h3e-root > .h3e-scroll > .h3e-writer > summary {
+    cursor: default;
+    list-style: none;
+}
+.h3e-root > .h3e-scroll > .h3e-writer > summary::after { content: ""; }
+
 .h3e-root > .h3e-run {
     /* `0 0 auto`. It must NOT shrink: flex divides a deficit in proportion to
      * each item's content height, and the scroller's content is far taller, so
@@ -846,7 +930,10 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
      * scroller absorbs all the shrinking; its min-height is the floor that
      * stops RUN taking the whole panel, and max-height below is the ceiling. */
     flex: 0 0 auto;
-    max-height: 55%;
+    /* Was 55%, when the scroller above held all four authoring sections and
+     * could always spare the room. It holds one pane now, in a 480px-tall box,
+     * so RUN taking over half of it would leave the script with almost none. */
+    max-height: 40%;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -1002,4 +1089,51 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
     color: var(--h3-muted);
     line-height: 1.4;
     margin-bottom: 4px;
+}
+/* The draft is read in full before it is accepted, so it scrolls rather than
+ * clipping. It is the one place in the panel where a long paragraph is the
+ * point: this is the text about to be written onto the cards. */
+.h3e-writer-draft-list {
+    max-height: 46vh;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+.h3e-draft-shot {
+    border-left: 2px solid var(--h3-border);
+    padding: 2px 0 4px 8px;
+    margin-bottom: 6px;
+}
+.h3e-draft-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    margin-bottom: 2px;
+}
+.h3e-draft-no {
+    color: var(--h3-accent);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.h3e-draft-chip {
+    border: 1px solid var(--h3-border-soft);
+    padding: 0 4px;
+    white-space: nowrap;
+}
+/* Wraps. The whole complaint about this section was a sentence that stopped
+ * at 110 characters and left an ellipsis where the plan should have been. */
+.h3e-draft-beat {
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-text);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.h3e-draft-meta {
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-muted);
+    line-height: 1.4;
+    margin-top: 2px;
+    overflow-wrap: anywhere;
 }

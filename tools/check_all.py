@@ -30,6 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # before the slow ones have finished importing torch.
 CHECKS = [
     ("check_templates.py", []),
+    ("check_ui.py", []),
     ("check_prompts.py", []),
     ("check_waveform.py", []),
     ("check_canvas.py", []),

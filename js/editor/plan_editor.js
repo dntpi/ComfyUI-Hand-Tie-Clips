@@ -326,6 +326,40 @@ export function createPlanEditor(node, { onChange }) {
         onChange?.();
     }
 
+    /* -- render range -- */
+
+    /* The two widgets the per-card ⏵ buttons drive. Read back rather than
+     * cached, because the RUN panel draws the same two numbers and either side
+     * may have moved them since the cards were last drawn. */
+    function renderRange() {
+        return {
+            from: Number(widgetByName(node, "render_from")?.value) || 0,
+            through: Number(widgetByName(node, "render_through")?.value) || 0,
+        };
+    }
+
+    function setRenderRange(from, through) {
+        const f = widgetByName(node, "render_from");
+        const t = widgetByName(node, "render_through");
+        // A node definition from before 1.1 has no render_from. Setting only
+        // half a range would render from hop 1 to `through` and look like the
+        // button did something subtly different rather than nothing.
+        if (!f || !t) {
+            console.warn("[HandTieClips] render_from/render_through missing -- "
+                + "restart ComfyUI to pick up the 1.1 node definition");
+            return;
+        }
+        f.value = from;
+        t.value = through;
+        f.callback?.(f.value);
+        t.callback?.(t.value);
+    }
+
+    /** 1-based shot number against the range. 0 on either end means open. */
+    function inRange(shotNo, { from, through }) {
+        return (!from || shotNo >= from) && (!through || shotNo <= through);
+    }
+
     /* -- timing -- */
 
     function timing() {
@@ -357,7 +391,12 @@ export function createPlanEditor(node, { onChange }) {
         drag.addEventListener("dragstart", (e) => {
             e.dataTransfer.setData("text/plain", String(index));
             e.dataTransfer.effectAllowed = "move";
+            // The stylesheet has had `.h3e-card.h3e-dragging { opacity: .45 }`
+            // since the drag was written and nothing ever set the class, so the
+            // card being moved looked identical to the ones standing still.
+            card.classList.add("h3e-dragging");
         });
+        drag.addEventListener("dragend", () => card.classList.remove("h3e-dragging"));
         bar.appendChild(drag);
 
         // Collapse state is keyed by shot id, not index, so it survives a
@@ -394,11 +433,42 @@ export function createPlanEditor(node, { onChange }) {
         peek.title = peekText;
         bar.appendChild(peek);
 
-        if (shot.locked) {
-            const lock = el("span", "h3e-lock", "locked");
-            lock.title = "Reuses this shot's cached render even when its inputs changed. Needs cache_hops=on.";
-            bar.appendChild(lock);
+        // Per-shot render control. These write `render_from` / `render_through`,
+        // which have always been able to do this -- there was just nowhere to
+        // say it except two integer boxes at the bottom of the RUN panel, where
+        // you had to count your own shots to use them.
+        const range = renderRange();
+        const shotNo = index + 1;
+        if (range.from || range.through) {
+            card.classList.toggle("h3e-outside",
+                                  !inRange(shotNo, range));
         }
+        const only = button("⏵", `Render only shot ${shotNo}: everything before `
+            + "it is replayed from the hop cache and everything after is left "
+            + "alone. Needs cache_hops=on. Click again to clear.",
+            () => {
+                const now = renderRange();
+                const solo = now.from === shotNo && now.through === shotNo;
+                setRenderRange(solo ? 0 : shotNo, solo ? 0 : shotNo);
+                renderCards();
+                onChange?.();
+            }, "h3e-btn h3e-only");
+        only.classList.toggle("h3e-on",
+                              range.from === shotNo && range.through === shotNo);
+        bar.appendChild(only);
+
+        // Was a read-only badge that appeared once `locked` was set in the JSON
+        // and offered no way to set or clear it.
+        const lock = button("lock", "Reuse this shot's cached render even when "
+            + "its inputs change -- freeze it while you work on the others. "
+            + "Needs cache_hops=on.",
+            () => {
+                if (shot.locked) delete shot.locked;
+                else shot.locked = true;
+                commit();
+            }, "h3e-btn h3e-lock");
+        lock.classList.toggle("h3e-on", Boolean(shot.locked));
+        bar.appendChild(lock);
         bar.appendChild(button("×", "Delete this shot", () => {
             shots.splice(index, 1);
             commit();

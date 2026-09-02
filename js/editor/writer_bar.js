@@ -144,6 +144,40 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     let conn = null;
     let pending = null;     // {shot, ref} waiting on Accept, or null
 
+    /* Everything in this section is DOM, and the panel is mounted with
+     * `serialize: false` -- so the brief, the hop count and an un-accepted
+     * draft lived nowhere that survived a pane switch or a page reload. You
+     * could describe a scene, wait a minute for a 27B to write it, glance at
+     * another tab, and come back to an empty box.
+     *
+     * Node properties are the fix: they ride the saved workflow and ComfyUI's
+     * restored graph, and they are what `h3_editor_mode` and `h3_plan_folded`
+     * already use for exactly this. The draft is held here too -- it is the
+     * expensive thing on the screen, and discarding it silently is the worst of
+     * the three losses.
+     *
+     * The connection settings deliberately do NOT go here: they are per-machine
+     * and live in htc_llm.json, so a shared .json never points at your server. */
+    const BRIEF_PROP = "h3_writer_brief";
+    const HOPS_PROP = "h3_writer_hops";
+    const DRAFT_PROP = "h3_writer_draft";
+
+    const props = () => (node.properties ??= {});
+
+    function remember(key, value) {
+        try {
+            props()[key] = value;
+        } catch (err) {
+            console.warn("[HandTieClips] could not persist writer state:", err);
+        }
+    }
+
+    function rememberDraft() {
+        remember(DRAFT_PROP, pending
+            ? { shot: pending.shot || "", ref: pending.ref || "" }
+            : null);
+    }
+
     function summarise(shotJson, refJson) {
         let shots = [];
         try {
@@ -153,35 +187,107 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         let refs = [];
         try {
             const r = JSON.parse(refJson || "null");
-            refs = (r?.refs || []).map((x) =>
-                "@" + String(x.tag || "").replace(/^@/, ""));
+            refs = Array.isArray(r?.refs) ? r.refs : [];
         } catch (_) { refs = []; }
         return { shots, refs };
     }
 
+    /* The draft, in full.
+     *
+     * This used to show one line per shot, clipped at 110 characters, with
+     * everything except `beat` and the tag list thrown away before it was even
+     * rendered -- so the thing you were being asked to Accept or Discard was a
+     * row of sentences ending in an ellipsis. You cannot judge a plan you
+     * cannot read. Nothing is truncated here: the pane scrolls, and a beat that
+     * runs long is a beat worth seeing before it goes on the cards.
+     */
     function showDraft(shotJson, refJson) {
         pending = { shot: shotJson || "", ref: refJson || "" };
+        rememberDraft();
         draftList.textContent = "";
         const { shots, refs } = summarise(pending.shot, pending.ref);
+
         if (!shots.length) {
             draftList.appendChild(el("div", "h3e-note",
                 "The draft has no shots. Discard it and try a different brief."));
-        } else {
-            shots.forEach((s, i) => {
-                const beat = String(s.beat || "").replace(/\s+/g, " ").trim();
-                const short = beat.length > 110 ? `${beat.slice(0, 107)}…` : beat;
-                draftList.appendChild(el("div", "h3e-writer-draft-line",
-                    `${i + 1}. ${short || "(empty beat)"}`));
-            });
         }
+        shots.forEach((s, i) => {
+            const card = el("div", "h3e-draft-shot");
+            const head = el("div", "h3e-draft-head");
+            head.appendChild(el("span", "h3e-draft-no", String(i + 1)));
+            // The dials the old summary discarded. A per-shot duration or seed
+            // is exactly the kind of thing you want to catch BEFORE accepting.
+            for (const [label, value] of [
+                ["", s.duration], ["seed ", s.seed], ["steps ", s.steps],
+            ]) {
+                if (value !== undefined && value !== null && value !== "") {
+                    head.appendChild(el("span", "h3e-draft-chip",
+                                        `${label}${value}`));
+                }
+            }
+            if (s.locked) head.appendChild(el("span", "h3e-draft-chip", "locked"));
+            card.appendChild(head);
+
+            const beat = String(s.beat || "").replace(/\s+/g, " ").trim();
+            card.appendChild(el("div", "h3e-draft-beat",
+                                beat || "(empty beat)"));
+
+            const dirs = s.directives && typeof s.directives === "object"
+                ? Object.entries(s.directives)
+                    .filter(([, v]) => v)
+                    .map(([k, v]) => `${k}: ${v}`)
+                : [];
+            if (dirs.length) {
+                card.appendChild(el("div", "h3e-draft-meta", dirs.join("   ")));
+            }
+            // Which pictures ride this shot, per shot rather than as one
+            // undifferentiated list at the bottom. `shots` is 1-based.
+            const riding = refs
+                .filter((r) => !Array.isArray(r.shots) || r.shots.includes(i + 1))
+                .map((r) => "@" + String(r.tag || "").replace(/^@/, ""));
+            if (riding.length) {
+                card.appendChild(el("div", "h3e-draft-meta", riding.join("  ")));
+            }
+            draftList.appendChild(card);
+        });
+
         if (refs.length) {
-            draftList.appendChild(el("div", "h3e-count", refs.join("  ")));
+            draftList.appendChild(el("div", "h3e-draft-head",
+                                     `${refs.length} reference(s)`));
+            for (const r of refs) {
+                const bits = [
+                    "@" + String(r.tag || "").replace(/^@/, ""),
+                    r.file || "(no file)",
+                    r.subject != null ? `subject ${r.subject}` : "",
+                    r.retention || "",
+                    Array.isArray(r.shots) ? `shots ${r.shots.join(",")}`
+                                           : "every shot",
+                ].filter(Boolean);
+                draftList.appendChild(
+                    el("div", "h3e-writer-draft-line", bits.join("   ")));
+                if (r.desc) {
+                    draftList.appendChild(el("div", "h3e-draft-meta", r.desc));
+                }
+            }
         }
+
+        // The literal text Accept would write, for anyone who would rather read
+        // the JSON than the rendering of it. Same escape hatch the SCRIPT and
+        // REFERENCES sections already offer, shut by default.
+        const wrap = el("details", "h3e-json-wrap");
+        wrap.appendChild(el("summary", null, "JSON"));
+        const area = el("textarea", "h3e-json");
+        area.readOnly = true;
+        area.value = [pending.shot, pending.ref].filter(Boolean).join("\n\n");
+        wrap.appendChild(area);
+        draftList.appendChild(wrap);
+
         draft.style.display = "";
     }
 
     function discardDraft() {
         pending = null;
+        rememberDraft();
         draft.style.display = "none";
         draftList.textContent = "";
     }
@@ -408,8 +514,11 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                 // A plan that would not converge still comes back, so the
                 // errors name real shots. Showing them beats "generation
                 // failed", which tells the user nothing they can act on.
-                const errs = (j.errors || []).slice(0, 3)
-                    .map((e) => `• ${e}`).join("\n");
+                // All of them, not the first three. The status box scrolls.
+                // Capping diagnostics is how a repair loop spending an attempt
+                // on a filename mismatch stayed invisible through 1.0.0 and
+                // 1.0.1 -- the error that explained it was the fourth one.
+                const errs = (j.errors || []).map((e) => `• ${e}`).join("\n");
                 say(errs
                     ? `Gave up after ${j.attempts} attempts. The model could `
                       + `not fix:\n${errs}`
@@ -419,8 +528,7 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                     : (j.error || "the plan writer failed"), "error");
                 return;
             }
-            const warn = (j.warnings || []).slice(0, 3)
-                .map((w) => `• ${w}`).join("\n");
+            const warn = (j.warnings || []).map((w) => `• ${w}`).join("\n");
             say(`Draft of ${hops.value} hop(s) in ${j.attempts} attempt(s). `
                 + `Accept to put it on the cards, or Discard to keep what you have.`
                 + (warn ? `\n\nWorth a look before you accept:\n${warn}` : ""),
@@ -447,8 +555,33 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         }
     });
 
+    brief.addEventListener("input", () => remember(BRIEF_PROP, brief.value));
+    hops.addEventListener("input", () => remember(HOPS_PROP, hops.value));
+
+    /** Put back whatever this node was holding. Safe to call more than once. */
+    function restore() {
+        const p = props();
+        if (typeof p[BRIEF_PROP] === "string" && !brief.value) {
+            brief.value = p[BRIEF_PROP];
+        }
+        const d = p[DRAFT_PROP];
+        if (!pending && d && (d.shot || d.ref)) showDraft(d.shot, d.ref);
+    }
+    restore();
+
     return {
         root,
-        syncHops() { hops.value = String(hopCount?.() || hops.value || 3); },
+        restore,
+        syncHops() {
+            // A hop count the user typed is an instruction, not a stale value:
+            // writing four hops against a six-shot plan is a normal thing to
+            // want. Only follow the plan when nothing has been chosen here.
+            const saved = props()[HOPS_PROP];
+            if (saved) {
+                hops.value = String(saved);
+                return;
+            }
+            hops.value = String(hopCount?.() || hops.value || 3);
+        },
     };
 }

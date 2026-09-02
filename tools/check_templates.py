@@ -141,6 +141,38 @@ def main():
             print("  FAIL  %s: warned=%s wanted=%s" % (label, got, want))
             fails.append(label)
 
+    # ...and the arrival half has to carry the current place forward across a
+    # beat that names none. Comparing only against shot N-1 made a place the
+    # film never left read as newly arrived: platform / (unnamed) / platform
+    # warned on shot 3, live, for a chain that spends every hop on one
+    # platform.
+    def _b(*beats):
+        return [{"beat": b} for b in beats]
+
+    for label, sh, plan, want in (
+            ("one place, a beat that does not name it",
+             _b("walks along the @platform", "moves past the yellow lines",
+                "slows her pace on the @platform"),
+             _pl({"tag": "platform"}, {"tag": "her", "subject": 1}), False),
+            ("leaving and coming back is still a move",
+             _b("in the @kitchen", "down the @hallway", "back in the @kitchen"),
+             _pl({"tag": "kitchen"}, {"tag": "hallway"},
+                 {"tag": "her", "subject": 1}), True),
+            ("a new place with no arrival still warns",
+             _b("in the @kitchen", "across the @lamp_room floor"),
+             _pl({"tag": "kitchen"}, {"tag": "lamp_room"},
+                 {"tag": "her", "subject": 1}), True),
+            ("a beat that does the travelling does not",
+             _b("in the @kitchen", "she reaches the @lamp_room and stops"),
+             _pl({"tag": "kitchen"}, {"tag": "lamp_room"},
+                 {"tag": "her", "subject": 1}), False)):
+        got = any("is a new place" in w for w in PL.check_place_handoff(sh, plan))
+        if got == want:
+            print("  ok    %s" % label)
+        else:
+            print("  FAIL  %s: warned=%s wanted=%s" % (label, got, want))
+            fails.append(label)
+
     # The last shot of any pattern that ends a chain must not be left `ongoing`.
     closers = [s for s in all_shots
                if (s["directives"].get("tail") in ("settle", "hold"))]

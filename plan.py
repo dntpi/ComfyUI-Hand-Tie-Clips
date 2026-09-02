@@ -246,21 +246,29 @@ def check_place_handoff(shots, ref_plan=None):
         "makes her way", "makes his way", "makes their way",
     )
 
-    for i in range(1, len(shots)):
-        prev = (shots[i - 1].get("beat") or "").lower()
-        here = shots[i].get("beat") or ""
-        low = here.lower()
-        new_places = [t for t in places
-                      if ("@" + t).lower() in low and ("@" + t).lower() not in prev]
-        for tag in sorted(new_places):
-            if any(v in low for v in _ARRIVES):
-                continue
-            warnings.append(
-                f"shot {i + 1}: @{tag} is a new place and shot {i} never goes there. "
-                f"The hop opens on a live frame of the old location, so the only way "
-                f"to obey is a cut. End shot {i} with the arrival, or have shot "
-                f"{i + 1} do the travelling."
-            )
+    # Where the film currently IS, carried forward across beats that name no
+    # place at all. Comparing only against shot N-1 made a place the film never
+    # left read as newly arrived the moment one beat in the middle did not
+    # happen to name it: platform / (unnamed) / platform warned on shot 3, for
+    # a chain that spends every hop on one platform. What matters is whether
+    # this beat names somewhere OTHER than where the previous hop ended, which
+    # is what the live frame at its first frame actually shows.
+    current = set()
+    for i, s in enumerate(shots):
+        low = (s.get("beat") or "").lower()
+        named = {t for t in places if ("@" + t).lower() in low}
+        if i and current:
+            for tag in sorted(named - current):
+                if any(v in low for v in _ARRIVES):
+                    continue
+                warnings.append(
+                    f"shot {i + 1}: @{tag} is a new place and shot {i} is "
+                    f"somewhere else. The hop opens on a live frame of the old "
+                    f"location, so the only way to obey is a cut. End shot {i} "
+                    f"with the arrival, or have shot {i + 1} do the travelling."
+                )
+        if named:
+            current = named
 
     # The same defect seen from the other side. Both LM Studio models plated
     # the opening location, moved the story somewhere else, and gave the new

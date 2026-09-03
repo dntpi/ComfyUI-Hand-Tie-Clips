@@ -210,6 +210,13 @@ def anchor_pull(target, ref_mean, strength=ANCHOR_STRENGTH,
     cur = tgt.mean(dim=(0, 1, 2))
     want = (ref_mean.to(device=tgt.device, dtype=tgt.dtype) - cur) * strength
     cap = abs(float(max_shift))
+    # Whether the cap bound is worth saying out loud. A capped hop prints the
+    # same number on every channel -- a 10-hop run logged
+    # "anchor r-0.0600 g-0.0600 b-0.0600" at a location cut -- which reads like
+    # a measurement of the scene and is actually the limit, identical three
+    # times because it is one constant. The correction is right; the line was
+    # not, so it now names itself.
+    capped = float((want.abs() - cap).max())
     want = want.clamp(-cap, cap)
     # Below ~0.25/255 the correction is not visible and not worth the copy.
     if float(want.abs().max()) < 1e-3:
@@ -226,6 +233,11 @@ def anchor_pull(target, ref_mean, strength=ANCHOR_STRENGTH,
     gap = float((ref_mean.to(cur.device) - cur).mean())
     note = ("anchor " + " ".join(f"{c}{v:+.4f}" for c, v in zip("rgb", d))
             + f" (gap {gap * 255:+.1f}/255, ramp {r}f)")
+    if capped > 1e-6:
+        note += (f" -- CAPPED at {cap * 255:.1f}/255, {capped * 255:.1f}/255 "
+                 f"short of the pull it asked for. A gap this size is usually "
+                 f"the shot genuinely changing, not drift; the cap is what "
+                 f"stops it chasing that.")
     return out, note
 
 

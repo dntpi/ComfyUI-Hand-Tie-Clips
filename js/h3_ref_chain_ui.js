@@ -132,10 +132,30 @@ function mountEditor(node) {
         hopCount,
     });
 
+    /* The rail draws one "rides hops" chip per hop, from hopCount(), at the
+     * moment it renders. Nothing was telling it to render again when the hop
+     * count changed -- so adding a shot left the rail showing the old number of
+     * chips, and a reference could not be scheduled onto the new hop except by
+     * editing the JSON by hand. Both places that can change the count call
+     * this: the script (a shot added or removed) and RUN (`chains`, which is
+     * what hopCount falls back to in Simple mode).
+     *
+     * Guarded on the count actually changing, because the script's onChange
+     * also fires on every keystroke in a beat, and rebuilding the rail's DOM
+     * per character would be waste with a focus bug waiting inside it. */
+    let lastHops = hopCount();
+    const syncRailHops = () => {
+        const now = hopCount();
+        if (now === lastHops) return;
+        lastHops = now;
+        rail.render();
+    };
+
     const editor = createPlanEditor(node, {
         onChange: () => {
             applyVisibility();
             syncBadges();
+            syncRailHops();
             node.graph?.setDirtyCanvas?.(true, true);
         },
     });
@@ -147,6 +167,7 @@ function mountEditor(node) {
             // which cards the range now leaves out. Cheap: at most 24 cards,
             // and only ever on a user gesture.
             editor.render();
+            syncRailHops();
             node.graph?.setDirtyCanvas?.(true, true);
         },
         hopCount,

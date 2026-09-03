@@ -70,7 +70,29 @@ export function parseRefPlan(text) {
     // Same guard as plan_editor: valid JSON that is not a plan.
     if (data === null || typeof data !== "object") return null;
     const refs = Array.isArray(data) ? data : (data.refs || []);
-    const subjects = (Array.isArray(data) ? {} : (data.subjects || {})) || {};
+    /* Normalised, not taken as written. refs.py requires each subject to be an
+     * object of name/locked/context and hard-fails otherwise; this used to pass
+     * whatever was in the JSON straight through, so `{"1": "the cook"}` drew a
+     * subject row with three empty boxes, wrote itself back out unchanged on the
+     * next edit, and was refused by the backend only once a render was started.
+     * The editor showing an invalid plan as if it were valid is the same fault
+     * as the encoder being handed an uncited photograph: wrong, and silent.
+     *
+     * A bare string becomes `name`, which is what anyone writing one means.
+     * Anything else that is not an object becomes an empty subject rather than
+     * being dropped, so the number itself survives and the row stays visible
+     * for the author to fill in. */
+    const rawSubjects = (Array.isArray(data) ? {} : (data.subjects || {})) || {};
+    const subjects = {};
+    for (const [k, v] of Object.entries(rawSubjects)) {
+        const src = (typeof v === "string") ? { name: v }
+            : (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+        subjects[k] = {
+            name: String(src.name ?? ""),
+            locked: String(src.locked ?? ""),
+            context: String(src.context ?? ""),
+        };
+    }
     return {
         refs: refs.map((r, i) => ({
             tag: String(r.tag || "").replace(/^@/, ""),

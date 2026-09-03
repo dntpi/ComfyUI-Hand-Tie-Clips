@@ -252,9 +252,9 @@ None of it is required by the node itself. Missing a pack, its nodes load as red
 5. Optional: a `voice_file`, a `start_image_file`, a look `reference_video_file` — all picked in the **MEDIA** strip, all files under `input/h3_refs`
 6. Queue, and wire the **`info`** output to a Preview Text node — it prints the fully assembled prompt for every hop
 
-![The REFERENCES rail, the MEDIA strip and the SCRIPT cards](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/editor-panels.png)
+![The editor's four tabs, with SCRIPT open on a ten-shot plan](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/editor-tabs.png)
 
-*The three panels that make up the editor. Each reference row carries its picture, the subject it belongs to, how much of it to keep, its pixel budget and a plain-language description; the chips under it are the hops it rides. Below, one card per hop with its own directives.*
+*Four tabs -- SCRIPT, REFS, MEDIA, WRITE -- each with its count, and RUN pinned below them. SCRIPT is one card per hop: the beat, its duration, and its own join, camera, framing, pace and tail, with `lock` and the range button on the card header.*
 
 Keep later-hop beats on **what happens next**. Do not re-describe the face; the photos, the register and the pin already carry it.
 
@@ -459,6 +459,10 @@ directive layer, the continuation scaffolding, the identity lock and the
 `<Picture N>` citations are all assembled at render time, so until now the first
 sight of the real prompt was in the log of a render you had already paid for.
 
+![`lock` and the range button on the shot cards](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/shot-lock-range.png)
+
+*`lock` freezes a take you like; the `⏵` beside it sets the render range to that shot alone.*
+
 `render_through=N` stops after N hops. With `cache_hops=on` the hops you already
 rendered stay on disk, so 3 → 5 → 8 builds a chain up in stages and only ever
 renders the new hops. The plan is not truncated: shot 4 still knows it is shot
@@ -607,7 +611,9 @@ The **MEDIA** strip takes a first frame, a look reference clip, a voice
 reference and a music bed — all files under `input/h3_refs`, all picked in the
 panel, none of them a `Load Image` node you have to wire.
 
-![The MEDIA strip, with a voice reference and a soundtrack loaded](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/media-panel.png)
+![The MEDIA tab with a reference clip loaded](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/reference-clip.png)
+
+*A reference clip with its in/out scrubber, the description that tells the encoder what the clip is **for**, and `video input size` -- which decodes the plate straight to the size you pick instead of loading it at source resolution first.*
 
 Each audio slot has a scrubber with an in/out window, and it is worth using.
 H3 encodes the **whole** voice file into the conditioning with no cap, and every

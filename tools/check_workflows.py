@@ -196,6 +196,19 @@ def main():
         named = [n["type"] for n in nodes if "widgets_values_named" in n]
         ck("no stale widgets_values_named", not named, str(sorted(set(named))))
 
+        # Only the video may reach output/. The Starter shipped a SaveImage on
+        # `contact_sheet` through 1.1: it wrote a PNG on every single run --
+        # including a 16x16 placeholder when contact_sheet was off, which is its
+        # default -- and because ComfyUI's queue lists saved outputs, that PNG
+        # became the thing the queue showed instead of the video. The seam chart
+        # next to it was already a PreviewImage and never had either problem.
+        # Diagnostics preview; only the deliverable saves.
+        saves = [n["type"] for n in nodes
+                 if n["type"] in ("SaveImage", "SaveAnimatedWEBP",
+                                  "SaveAnimatedPNG")]
+        ck("no diagnostic image is written to output/", not saves,
+           str(sorted(set(saves))))
+
         # The on-canvas board, where there is one.
         cards = [n for n in nodes if n["type"] == "MarkdownNote"]
         if cards:

@@ -823,6 +823,18 @@ def main():
     ck("a remote host does not",
        not LM.shares_this_gpu("http://192.0.2.1:1234"))
 
+    # 1.0.2 replaced an address-set intersection with a bind test. The old code
+    # asked the OS for this machine's own name and enumerated every address
+    # behind it, which is host enumeration however local the intent, and the
+    # Comfy registry's YARA scan is right to read it that way. A bind answers
+    # the same question and looks like nothing. Asserted at source level rather
+    # than by behaviour because the two implementations agree on every input a
+    # checker can name -- the difference is only visible in the text.
+    with open(LM.__file__, encoding="utf-8") as _fh:
+        _llm_src = _fh.read()
+    ck("no host enumeration in llm.py",
+       "gethostname" not in _llm_src and "gethostbyname" not in _llm_src)
+
     n, note = asyncio.run(LM.unload_all("http://192.0.2.1:1234", "some-model"))
     ck("a remote writer is never evicted", n == 0, note)
     ck("and it says why", "another machine" in note, note)

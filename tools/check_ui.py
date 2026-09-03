@@ -119,6 +119,58 @@ def balance(src):
     return True, ""
 
 
+def redeclarations(src):
+    """`const`/`let` names declared twice in one block. -> list of complaints.
+
+    A parse error, and the worst kind this pack can ship. The module dies before
+    it defines anything, so ComfyUI logs one console.warn among its own and the
+    node falls back to raw widgets -- which looks exactly like the pack failing
+    to install, and sends you looking at your custom_nodes folder rather than at
+    the one line that broke.
+
+    It happened for real: a `const ws` for the reference-clip decode size landed
+    in the same block as the `const ws` that had held the trim start widget
+    since the file was written. Every other check in this file passed, because
+    none of them look at scope. Delimiters balanced, imports resolved, no dead
+    CSS -- and the editor did not exist.
+
+    Brace depth is tracked over the STRIPPED source, so a name inside a comment
+    or a string cannot trigger it. Scope is approximated by depth alone, which
+    is not what a JS engine does: this will not catch a shadow across function
+    boundaries at the same depth, and it may complain about two `const` in
+    sibling blocks that an engine is happy with. Both are acceptable. The cost
+    of a false positive is renaming a variable; the cost of the false negative
+    is the node silently having no UI.
+    """
+    decl = re.compile(r"\b(?:const|let)\s+([A-Za-z_$][A-Za-z0-9_$]*)")
+    depth, seen, out = 0, {0: {}}, []
+    i, line = 0, 1
+    while i < len(src):
+        ch = src[i]
+        if ch == "\n":
+            line += 1
+        elif ch in "{([":
+            depth += 1
+            seen.setdefault(depth, {})
+        elif ch in "})]":
+            seen.pop(depth, None)
+            depth -= 1
+        else:
+            m = decl.match(src, i)
+            if m:
+                name = m.group(1)
+                prev = seen[depth].get(name)
+                if prev:
+                    out.append("%s at line %d, already at line %d"
+                               % (name, line, prev))
+                else:
+                    seen[depth][name] = line
+                i = m.end()
+                continue
+        i += 1
+    return out
+
+
 def main():
     files = js_files()
     print("delimiters")
@@ -128,6 +180,12 @@ def main():
         sources[path] = src
         ok, why = balance(src)
         ck(os.path.relpath(path, HERE).replace(os.sep, "/"), ok, why)
+
+    print("\nnothing is declared twice in one block")
+    for path in files:
+        bad = redeclarations(sources[path])
+        ck(os.path.relpath(path, HERE).replace(os.sep, "/"),
+           not bad, "; ".join(bad))
 
     print("\nimports resolve to real exports")
     imp = re.compile(r"import\s*\{([^}]*)\}\s*from\s*[\"']([^\"']+)[\"']")

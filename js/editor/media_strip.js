@@ -212,8 +212,11 @@ export function createMediaStrip(node, { onChange } = {}) {
         // float32 at source resolution. "match H3" spends none of that. The
         // lower rungs go below what core would use, which is the only setting
         // here that changes what the model sees.
-        const ws = sizeName && widgetByName(node, sizeName);
-        if (ws) {
+        // NOT `ws` -- that is the trim START widget, declared at the top of this
+        // same block. Redeclaring it is a parse error, which takes the whole
+        // module down and drops the node back to raw widgets.
+        const wsize = sizeName && widgetByName(node, sizeName);
+        if (wsize) {
             const row = el("div", "h3e-trimrow");
             row.appendChild(el("span", "h3e-media-label", "decode at"));
             const sel = el("select", "h3e-media-size");
@@ -222,19 +225,19 @@ export function createMediaStrip(node, { onChange } = {}) {
                 + "without the memory: a 10 s 4K plate costs ~36 GB decoded at "
                 + "source and ~4.5 GB at H3's size. A clip already smaller is "
                 + "left alone -- this never scales up.";
-            for (const opt of (ws.options?.values || [])) {
+            for (const opt of (wsize.options?.values || [])) {
                 const o = el("option", null, String(opt));
                 o.value = String(opt);
                 sel.appendChild(o);
             }
-            sel.value = String(ws.value ?? "");
-            sel.addEventListener("change", () => commit(node, ws, sel.value));
+            sel.value = String(wsize.value ?? "");
+            sel.addEventListener("change", () => commit(node, wsize, sel.value));
             row.appendChild(sel);
             trims.appendChild(row);
             const syncSize = () => {
                 row.style.display = String(w.value || "") ? "" : "none";
                 if (document.activeElement !== sel) {
-                    sel.value = String(ws.value ?? "");
+                    sel.value = String(wsize.value ?? "");
                 }
             };
             trimRows.push(syncSize);

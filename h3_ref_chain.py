@@ -222,8 +222,8 @@ def _canvas(resolution, aspect):
 
     Computed, not tabulated. Eleven aspects across five rungs is fifty-five
     tuples to hand-author and keep consistent; the formula that replaces them
-    reproduces thirteen of the fifteen that shipped in 1.0.x exactly, and the
-    other two are pinned in LEGACY_CANVAS with the reason written down.
+    reproduces nine of the fifteen that shipped in 1.0.x exactly, and the other
+    six are pinned in LEGACY_CANVAS with the reason written down.
     """
     key = (str(resolution), str(aspect))
     if key in LEGACY_CANVAS:

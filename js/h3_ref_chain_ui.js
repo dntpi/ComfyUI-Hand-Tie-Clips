@@ -317,10 +317,17 @@ app.registerExtension({
         nodeType.prototype.onNodeCreated = function () {
             const r = onNodeCreated?.apply(this, arguments);
             mountEditor(this);
-            this.setSize([
-                Math.max(this.size[0], NODE_WIDTH),
-                Math.max(this.size[1], NODE_HEIGHT),
-            ]);
+            // Exact, not Math.max. LiteGraph sizes a fresh node from its widget
+            // count, and this node has 48 -- so the computed height is already
+            // far past 480 and a max() never brought anything down to the 4:3
+            // box it was written to produce. The editor hides those widgets, so
+            // the height they imply is not a floor worth respecting.
+            //
+            // Creation only. A node arriving from a saved workflow keeps
+            // whatever size its author dragged it to; onConfigure does not do
+            // this, and resizing somebody's graph on load would be worse than
+            // the wrong default ever was.
+            this.setSize([NODE_WIDTH, NODE_HEIGHT]);
             return r;
         };
 

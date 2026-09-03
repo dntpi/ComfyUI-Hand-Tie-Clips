@@ -209,6 +209,21 @@ def main():
         ck("no diagnostic image is written to output/", not saves,
            str(sorted(set(saves))))
 
+        # The node opens at the size the editor was designed for. A saved
+        # workflow's `size` wins over anything the JS sets, because configure()
+        # runs after onNodeCreated -- so shipping a stale one silently defeats
+        # the default. Both workflows carried 968x1426 through the whole 1.1 UI
+        # rework: the pre-1.1 column height, from when the panel really was one
+        # long downward scroll. The tabs went in, the default became a 4:3 box,
+        # every check passed, and the shipped graphs still opened as a column.
+        for n in nodes:
+            if n["type"] != "HandTieClips":
+                continue
+            size = n.get("size") or [0, 0]
+            ck("the node ships at its designed 4:3 size",
+               [int(size[0]), int(size[1])] == [640, 480],
+               "%sx%s" % (size[0], size[1]))
+
         # The on-canvas board, where there is one.
         cards = [n for n in nodes if n["type"] == "MarkdownNote"]
         if cards:

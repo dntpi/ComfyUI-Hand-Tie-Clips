@@ -514,6 +514,23 @@ def shares_this_gpu(base_url):
     and ComfyUI on a desktop had the laptop's model unloaded mid-workflow. An
     unload is only ever a courtesy to the local card; reaching across the
     network to evict someone else's model is a bug, not a feature.
+
+    The address is answered by trying to bind it. A bind succeeds only for an
+    address this machine actually holds, which is the question being asked.
+    Through 1.0.1 this instead asked the OS for our own name, resolved it, and
+    intersected that set with the target's -- the same answer by a longer route,
+    and one a static scanner is right to read as host enumeration. Binding needs
+    no such lookup, covers addresses that a name lookup would never have
+    mentioned, and cannot be fooled by a stale hosts-file entry.
+
+    Nothing in this file may reintroduce that lookup; tools/check_planner.py
+    asserts the absence at source level, because the reason it went is invisible
+    from the code that replaced it.
+
+    `getaddrinfo` with no service returns port 0, so the bind takes an ephemeral
+    port and can never collide with the LLM server itself. SOCK_DGRAM because
+    nothing is being connected -- the socket exists for one syscall and is shut
+    immediately.
     """
     host = (urllib.parse.urlparse(normalise_base(base_url)).hostname or "")
     if not host:
@@ -521,11 +538,22 @@ def shares_this_gpu(base_url):
     if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
         return True
     try:
-        here = {ai[4][0] for ai in socket.getaddrinfo(socket.gethostname(), None)}
-        there = {ai[4][0] for ai in socket.getaddrinfo(host, None)}
+        addrs = socket.getaddrinfo(host, None)
     except OSError:
         return False
-    return bool(here & there)
+    for family, _, _, _, sockaddr in addrs:
+        try:
+            s = socket.socket(family, socket.SOCK_DGRAM)
+        except OSError:
+            continue
+        try:
+            s.bind(sockaddr)
+            return True
+        except OSError:
+            pass
+        finally:
+            s.close()
+    return False
 
 
 async def _unload_one(session, base, model):

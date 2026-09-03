@@ -1954,3 +1954,49 @@ The general shape, and section 34's lesson one level down: a control that
 displays a value it has not committed is bad, and a generator that emits a
 value it could not compute is the same bug wearing a different hat. Neither
 one fails; both produce something that looks like an answer.
+
+## 37. Asking the OS who we are (2026-09-03)
+
+1.0.1 came back Flagged from the Comfy registry with one finding, down from
+1.0.0's three: the `.comfyignore` that stopped shipping `tools/` cleared the
+`subprocess.run` and `importlib` hits, which is the first hard evidence that
+the exclusion is honoured inside the published zip.
+
+What is left is `python_network_operations`, matching the literal string
+`aiohttp.ClientSession` four times in `llm.py`. 0.4.5 is still Active because
+that file had no HTTP client at all until 1.0.0 -- the WRITE panel brought one.
+So this is new code meeting an old rule, not a scanner that moved.
+
+That finding cannot be coded away. The rule has no taint analysis and never
+looks at a destination, `DEFAULT_BASE` is `127.0.0.1:1234`, `shares_this_gpu`
+refuses to send an unload anywhere but this machine, and every alternative
+client -- requests, httpx, urllib -- sits in the same rule family. Rewriting to
+dodge a string match would be worse code in exchange for nothing.
+
+A user's tip is what made this release worth cutting anyway: *"don't include
+Claude's test workflows, or os probing."* The first half was already done. The
+second half was true and I had not looked for it.
+
+`shares_this_gpu` answered "is the writer on this machine" by asking the OS for
+our own name, resolving it to every address behind it, resolving the target,
+and intersecting the two sets. The intent is local and the function exists to
+*prevent* reaching across a network -- it was added after someone's laptop had
+its model evicted by a desktop. None of that is visible to a static scanner,
+which sees a program enumerating its own host's identity, and that reading is
+fair. It happened not to fire this round. It is exactly the shape that does.
+
+It binds instead. An address binds only if this machine holds it, which is the
+question, asked directly rather than by comparing two resolver results. It is
+also the better implementation: no name lookup, correct for addresses a name
+lookup would never have returned, and immune to a stale hosts-file entry. The
+LAN case that motivated the original -- LM Studio local, typed in as
+`192.168.x.x` rather than `localhost` -- still works, which a loopback-only
+rewrite would have silently broken.
+
+Two things worth keeping from how this went. The first draft removed the call
+and then explained the removal in a docstring that used the function's name
+twice, leaving the string in the file for a scanner that matches strings; the
+count went from two to zero only after rereading. And the guard in
+`check_planner.py` is a source-level assertion rather than a behavioural one,
+because both implementations agree on every input a checker can name. The
+difference only exists in the text, so the text is what gets asserted.

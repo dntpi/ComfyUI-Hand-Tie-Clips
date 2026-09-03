@@ -255,9 +255,14 @@ def main():
     # give 1344x736, and a saved 1.0.x workflow must not quietly change size.
     ck("dry-run images carries the planned geometry",
        tuple(out[0].shape) == (1, 736, 1280, 3), str(tuple(out[0].shape)))
-    o2, _ = run(resolution="0.98 MP")
-    ck("the current top rung resolves to 1312x736",
-       tuple(o2[0].shape) == (1, 736, 1312, 3), str(tuple(o2[0].shape)))
+    o2, _ = run(resolution="768p (0.98 MP)")
+    ck("the native tier resolves to 1344x768",
+       tuple(o2[0].shape) == (1, 768, 1344, 3), str(tuple(o2[0].shape)))
+    # The v1.1 pre-release label aliases forward rather than resolving to the
+    # size its own arithmetic gave it, which was 1312x736.
+    o3, _ = run(resolution="0.98 MP")
+    ck("a v1.1 pre-release label aliases onto the tier it meant",
+       tuple(o3[0].shape) == (1, 768, 1344, 3), str(tuple(o3[0].shape)))
     ck("audio is silent, not None", out[1]["waveform"].abs().max() == 0)
     ck("info carries every compiled prompt", out[2].count("===== hop") == 8)
     ck("contact sheet is built on a dry run", out[3].shape[1] > 100)
@@ -295,7 +300,7 @@ def main():
     ck("render_from=0 leaves the chain alone", o[2].count("===== hop") == 8)
 
     _, log = run(quality="draft", render_through=2)
-    ck("draft drops the canvas", "736x416" in log and "0.30 MP" in log)
+    ck("draft drops the canvas", "800x448" in log and "448p" in log)
     ck("draft drops the steps", "6 steps" in log)
     _, log = run(quality="final", render_through=2)
     ck("final leaves the canvas alone", "1280x736" in log)

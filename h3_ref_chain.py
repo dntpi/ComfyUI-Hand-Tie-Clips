@@ -83,7 +83,7 @@ TAG = "HandTieClips"
 # quality=draft. Low enough to be genuinely fast, high enough that blocking,
 # camera and whether a join lands are all still readable. Both values are in
 # the cache key already, so a draft never overwrites the matching final.
-DRAFT_RESOLUTION = "0.30 MP"
+DRAFT_RESOLUTION = "448p (0.34 MP)"
 DRAFT_STEPS = 6
 
 # H3's canvas rules, mirrored from comfy_extras/nodes_minimax_h3.py
@@ -116,41 +116,66 @@ ASPECTS = {
 }
 DEFAULT_ASPECT = "16:9 landscape"
 
-# Area budget per resolution label. 0.98 MP is the top rung because H3's own
-# cap is 768*1344 = 1.03 MP and the short edge wants to be 768; asking for more
-# only buys a scale-down.
+# Short edge per resolution label. H3 is a 768-short-edge model: core's
+# adapt_canvas pins the short edge and derives the long one from the ratio,
+# capping the area at 768*1344. It does NOT work from an area budget, and the
+# distinction is not cosmetic -- 16:9 at the native tier is 1344x768, which an
+# area formula asking for "0.98 megapixels" of 10^6 pixels never reaches.
+#
+# The MP figure in each label is that tier at 16:9, in MEBIpixels (1024*1024),
+# which is where the number everyone quotes comes from: 1344*768 = 1_032_192,
+# and 1_032_192 / 1_048_576 = 0.984. It is quoted because people search for it.
+# It is exact for 16:9 only -- the same tier at 4:3 is 1024x768, which is
+# 0.75 MP -- so the label names the tier and the parenthesis is a signpost, not
+# a specification. tools/check_canvas.py asserts the 16:9 figure matches.
 RESOLUTIONS = {
-    "0.98 MP": 0.98,
-    "0.75 MP": 0.75,
-    "0.60 MP": 0.60,
-    "0.45 MP": 0.45,
-    "0.30 MP": 0.30,
+    "768p (0.98 MP)": 768,      # native
+    "640p (0.70 MP)": 640,
+    "576p (0.56 MP)": 576,
+    "512p (0.44 MP)": 512,
+    "448p (0.34 MP)": 448,
 }
-DEFAULT_RESOLUTION = "0.98 MP"
+DEFAULT_RESOLUTION = "768p (0.98 MP)"
 
-# Sizes that shipped in 1.0.x and are NOT what the area formula gives.
+# The complete 1.0.x canvas table, pinned.
 #
-# The formula agrees with nine of the old fifteen tuples on its own -- every
-# square, and both 16:9/9:16 at 0.3 and 0.7 MP. It disagrees on six, all in the
-# 16:9/9:16 column, because that column was hand-tuned for ratio fidelity rather
-# than derived from the area: at 0.2 and 0.5 MP the old sizes are a grid step
-# taller than the budget gives, and at 1.0 MP the long edge was held at 1280
-# instead of the 1344 the area allows.
+# Through 1.0.x this was five hand-authored resolution labels by three aspects.
+# Those labels are off the dropdown now and no formula here reproduces them --
+# they were never derived from the short edge, and half of them are not what an
+# area budget gives either. So all fifteen are pinned verbatim rather than
+# approximated, because width and height are in `chain_salt`: resolving them
+# differently would re-render every chain a 1.0.x user has on disk AND change
+# the pixels of a graph they already signed off.
 #
-# They are pinned rather than recomputed because width and height are in
-# `chain_salt`: resolving them differently would re-render every chain a 1.0.x
-# user has on disk AND change the pixels of a graph they have already signed
-# off. These labels are off the dropdown, so nothing new can select one; this
-# exists only so an old saved workflow keeps rendering what it always rendered.
-# tools/check_canvas.py asserts both halves of that -- these stay pinned, and
-# the other nine keep agreeing with the formula.
-LEGACY_CANVAS = {
-    ("0.2 MP", "16:9 landscape"): (608, 352),
-    ("0.2 MP", "9:16 portrait"): (352, 608),
-    ("0.5 MP", "16:9 landscape"): (960, 544),
-    ("0.5 MP", "9:16 portrait"): (544, 960),
-    ("1.0 MP", "16:9 landscape"): (1280, 736),
-    ("1.0 MP", "9:16 portrait"): (736, 1280),
+# Nothing new can select one of these -- this exists only so an old saved
+# workflow keeps rendering what it always rendered. tools/check_canvas.py
+# asserts every entry against the table as it shipped.
+LEGACY_CANVAS = {}
+for _mp, _cells in {
+    "0.2 MP": {"16:9 landscape": (608, 352), "9:16 portrait": (352, 608),
+               "1:1 square": (448, 448)},
+    "0.3 MP": {"16:9 landscape": (736, 416), "9:16 portrait": (416, 736),
+               "1:1 square": (544, 544)},
+    "0.5 MP": {"16:9 landscape": (960, 544), "9:16 portrait": (544, 960),
+               "1:1 square": (704, 704)},
+    "0.7 MP": {"16:9 landscape": (1120, 640), "9:16 portrait": (640, 1120),
+               "1:1 square": (832, 832)},
+    "1.0 MP": {"16:9 landscape": (1280, 736), "9:16 portrait": (736, 1280),
+               "1:1 square": (992, 992)},
+}.items():
+    for _asp, _wh in _cells.items():
+        LEGACY_CANVAS[(_mp, _asp)] = _wh
+# The v1.1 pre-release labels. They shipped to nobody, but this repo's own
+# workflows and any graph saved while v1.1 was in progress carry them, and they
+# named the right tier under a wrong arithmetic. Alias rather than pin: these
+# should resolve to the tier they were trying to describe, not to the sizes the
+# area formula gave them.
+LEGACY_ALIAS = {
+    "0.98 MP": "768p (0.98 MP)",
+    "0.75 MP": "640p (0.70 MP)",
+    "0.60 MP": "576p (0.56 MP)",
+    "0.45 MP": "512p (0.44 MP)",
+    "0.30 MP": "448p (0.34 MP)",
 }
 DURATION_FRAMES = {
     # Every value satisfies align_frame_count (n % 17 == 5) at FPS 24, so the
@@ -174,74 +199,69 @@ OVERLAP_FRAMES = {
 MC_CONTEXT_LENGTHS = frozenset(str(v) for v in OVERLAP_FRAMES.values())
 
 
-def _fit_canvas(ratio, mp):
-    """An area budget snapped onto H3's grid: nearest 32 per axis, under the cap.
+def _fit_canvas(ratio, short_edge):
+    """comfy_extras.nodes_minimax_h3.adapt_canvas, with the short edge a knob.
 
-    Round-to-nearest rather than floor, matching core's adapt_canvas -- flooring
-    both axes loses up to 63 px of each edge and skews the ratio toward whichever
-    side happened to round down.
+    Line for line the same arithmetic as core, which is the point: pin the short
+    edge, derive the long edge from the ratio, scale down if the area cap is
+    exceeded, round each axis to the nearest 32. Core hard-codes BASE_SHORT_EDGE
+    = 768; this takes it as an argument so the draft tiers below native run the
+    identical path rather than a second implementation that agrees with it only
+    at one rung.
+
+    v1.1 briefly derived both axes from a megapixel budget instead. That is a
+    different algorithm wearing the same rounding, and it disagreed with core at
+    EVERY aspect ratio -- 16:9 came out 1312x736 against core's 1344x768, and
+    4:3 came out 1152x864 against 1024x768. The tell was in core's own docstring
+    ("768-short-edge canvas with 768*1344 area cap") the whole time.
     """
-    area = max(0.05, float(mp)) * 1_000_000.0
-    w, h = math.sqrt(area * ratio), math.sqrt(area / ratio)
+    short = max(CANVAS_MULTIPLE, int(short_edge))
+    if ratio >= 1.0:
+        w, h = short * ratio, float(short)
+    else:
+        w, h = float(short), short / ratio
     if w * h > CANVAS_AREA_CAP:
-        s = math.sqrt(CANVAS_AREA_CAP / (w * h))
-        w, h = w * s, h * s
+        scale = math.sqrt(CANVAS_AREA_CAP / (w * h))
+        w, h = w * scale, h * scale
     m = CANVAS_MULTIPLE
-    w = max(m, int(round(w / m)) * m)
-    h = max(m, int(round(h / m)) * m)
-    # Rounding up on both axes can cross the cap the scale above just enforced.
-    # Trim the long edge until it fits; one step is almost always enough.
-    while w * h > CANVAS_AREA_CAP and max(w, h) > m:
-        if w >= h:
-            w -= m
-        else:
-            h -= m
-    return int(w), int(h)
-
-
-def _parse_mp(label, default=None):
-    """The megapixel number out of a label like `0.7 MP`.
-
-    This is what keeps the retired 1.0.x labels resolving to the sizes they
-    always did: their number goes through the same formula and lands on the same
-    tuple. A label nobody can read is worth a line of output -- the old code
-    returned 1280x736 for any unrecognised input and said nothing, so a typo in
-    an API-driven graph rendered at the wrong size with no evidence.
-    """
-    try:
-        return float(str(label).strip().split()[0])
-    except (ValueError, IndexError):
-        fallback = RESOLUTIONS[DEFAULT_RESOLUTION] if default is None else default
-        print(f"[{TAG}] unreadable resolution {label!r}; using {fallback} MP",
-              flush=True)
-        return fallback
+    return (max(m, int(round(w / m)) * m), max(m, int(round(h / m)) * m))
 
 
 def _canvas(resolution, aspect):
     """(width, height) for a resolution label and an aspect label.
 
-    Computed, not tabulated. Eleven aspects across five rungs is fifty-five
-    tuples to hand-author and keep consistent; the formula that replaces them
-    reproduces nine of the fifteen that shipped in 1.0.x exactly, and the other
-    six are pinned in LEGACY_CANVAS with the reason written down.
+    Three paths, in order. A 1.0.x label is pinned to the exact tuple it shipped
+    with. A v1.1 pre-release label is aliased onto the tier it was trying to
+    name. Anything current goes through core's arithmetic.
+
+    An unreadable label is worth a line of output: before 1.1 this returned
+    1280x736 for any unrecognised input and said nothing, so a typo in an
+    API-driven graph rendered at the wrong size with no evidence anywhere.
     """
-    key = (str(resolution), str(aspect))
-    if key in LEGACY_CANVAS:
-        w, h = LEGACY_CANVAS[key]
-        print(f"[{TAG}] resolution {resolution!r} is a 1.0.x label: holding "
-              f"{w}x{h} so this workflow keeps the pixels it was built with. "
-              f"Choose a current resolution to move onto the computed grid.",
+    res, asp = str(resolution), str(aspect)
+    if (res, asp) in LEGACY_CANVAS:
+        w, h = LEGACY_CANVAS[(res, asp)]
+        print(f"[{TAG}] resolution {res!r} is a 1.0.x label: holding {w}x{h} so "
+              f"this workflow keeps the pixels it was built with. Choose a "
+              f"current resolution to move onto the 768p tier ladder.",
               flush=True)
         return w, h
-    ratio = ASPECTS.get(str(aspect))
+    if res in LEGACY_ALIAS:
+        moved = LEGACY_ALIAS[res]
+        print(f"[{TAG}] resolution {res!r} was a v1.1 pre-release label and its "
+              f"sizes were wrong; reading it as {moved!r}.", flush=True)
+        res = moved
+    ratio = ASPECTS.get(asp)
     if ratio is None:
-        print(f"[{TAG}] unknown aspect {aspect!r}; using {DEFAULT_ASPECT}",
+        print(f"[{TAG}] unknown aspect {asp!r}; using {DEFAULT_ASPECT}",
               flush=True)
         ratio = ASPECTS[DEFAULT_ASPECT]
-    mp = RESOLUTIONS.get(str(resolution))
-    if mp is None:
-        mp = _parse_mp(resolution)
-    return _fit_canvas(ratio[0] / ratio[1], mp)
+    short = RESOLUTIONS.get(res)
+    if short is None:
+        short = RESOLUTIONS[DEFAULT_RESOLUTION]
+        print(f"[{TAG}] unknown resolution {resolution!r}; using "
+              f"{DEFAULT_RESOLUTION}", flush=True)
+    return _fit_canvas(ratio[0] / ratio[1], short)
 
 
 def _duration_frames(duration):

@@ -102,9 +102,11 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > description field.
 >
 > Output size is computed rather than tabulated: eleven aspect ratios from 21:9
-> to 9:21 across five megapixel rungs, every one on H3's 32 px grid and under
-> its 768×1344 cap. **The top rung is 0.98 MP, and 16:9 there is 1312×736** —
-> the hop cache invalidates once because of it. Saved 1.0.x workflows keep the
+> to 9:21 across five short-edge tiers, every one on H3's 32 px grid and under
+> its 768×1344 cap. H3 is a 768-short-edge model, so **the top rung is 768p and
+> 16:9 there is 1344×768** — the size MiniMax states as native, and the same
+> number core's own `adapt_canvas` produces. The hop cache invalidates once
+> because of it. Saved 1.0.x workflows keep the
 > exact pixels they were built with. And changing a reference picture now
 > re-renders only the hops that picture rides, instead of the whole chain.
 
@@ -263,7 +265,7 @@ Two modes:
 
 Only one of them is on screen at a time, so there is never a text box quietly doing nothing.
 
-Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls, and the hop cache. Its title line summarises the run — `1312x736 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both.
+Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls, and the hop cache. Its title line summarises the run — `1344x768 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both.
 
 **`tone_compensate`** lives in that panel's *join & pin* group. The H3 denoiser biases each hop's tone, so a chain gets steadily brighter; this measures the bias on the overlap each hop regenerated and undoes it, correcting each hop against the previous **corrected** one so the whole chain lands on hop 1's tone. `frame_shift` is the mode to reach for: all three modes remove the drift equally well (within 0.4/255 of each other), but `gain_bias` and `lut` pair pixels between a frame and its *regeneration*, which fits a slope that is not really there and flattens contrast a little more with every hop. `frame_shift` uses frame averages only, so it can shift but never distort. **Measured on a 3-hop render: chain drift 5.6/255 without it, 0.3/255 with it.** Worth turning on for anything past two hops. It ships off because enabling it also clamps the master to 0..1, and because the correction grows with hop count — by hop 10 it is subtracting ~23/255 and will start crushing blacks. Switching modes never invalidates the hop cache, so it is free to A/B. Do **not** judge it by whether the seams flatten to zero: real scene brightness changes across a cut should survive, and they do.
 
@@ -462,14 +464,14 @@ rendered stay on disk, so 3 → 5 → 8 builds a chain up in stages and only eve
 renders the new hops. The plan is not truncated: shot 4 still knows it is shot
 4, keeps its own seed, and keys the same way it will in the full run.
 
-`quality=draft` forces 0.30 MP and 6 steps — enough to read blocking, camera and
+`quality=draft` forces the 448p tier and 6 steps — enough to read blocking, camera and
 whether a join lands. Resolution and steps are both in the cache key, so a draft
 never overwrites the final it stands in for; the two simply cost two entries.
 
 Treat it as a **fidelity** lever rather than a speed one. Measured at ~42 s/hop
-against ~45 s/hop at 7 steps: if you already render at 0.30 MP and 6–8 steps —
+against ~45 s/hop at 7 steps: if you already render at 448p and 6–8 steps —
 the regime this pack targets — draft saves almost nothing, and `dry_run` is the
-fast button. Draft earns its place when your final is genuinely heavier, 0.98 MP
+fast button. Draft earns its place when your final is genuinely heavier, 768p
 at 14 steps.
 
 ## Contact sheet
@@ -585,7 +587,7 @@ The DiT pin is the previous hop’s **sampler latent** through Motion-Context wh
 
 | | |
 |---|---|
-| resolution | 0.98 MP (1312×736 landscape) |
+| resolution | 768p (1344×768 landscape) |
 | duration | 10 s (243 frames) |
 | overlap | 0.9 s (22 frames) |
 | steps | 8, with a 4-step turbo LoRA — the regime this node targets |

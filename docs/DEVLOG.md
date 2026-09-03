@@ -2174,3 +2174,79 @@ count went from two to zero only after rereading. And the guard in
 `check_planner.py` is a source-level assertion rather than a behavioural one,
 because both implementations agree on every input a checker can name. The
 difference only exists in the text, so the text is what gets asserted.
+
+## 42. The label was never an area (2026-09-03)
+
+A user, flatly: *"768p Tier: Uses a 768-pixel short-edge baseline (such as
+1344 x 768) ... this is the stated native resolution for minimax h3 (which
+people also coin as 0.98mp)."*
+
+Section 38 in this file describes replacing a hand-authored canvas table with a
+formula, measuring it against the old tuples, and running a small grid search to
+justify per-axis rounding. All of that was careful work on the wrong algorithm.
+
+Core's `adapt_canvas` has a one-line docstring: *"768-short-edge canvas with
+768*1344 area cap, per-axis round to 32."* It pins the short edge and derives
+the long edge from the ratio. It does not work from an area budget. What v1.1
+shipped derived BOTH axes from a megapixel figure, and the two agree at no
+aspect ratio at all -- 16:9 came out 1312x768's worth of pixels shaped 1312x736
+against core's 1344x768, and 4:3 came out 1152x864 against 1024x768. The comment
+above the function claimed it mirrored core. It mirrored the rounding.
+
+The error was upstream of the code, in reading "0.98 MP" as 980,000 pixels.
+1344 x 768 = 1,032,192, and 1,032,192 / 1,048,576 = 0.984. The number everyone
+quotes is a MEBIpixel count of a short-edge tier -- 1024*1024, not 10^6. So the
+label was describing the thing I had decided it could not describe, and a
+decision was put to the user ("pure maths, accept 1312x736") on a premise that
+was simply false. They accepted it. It was still wrong.
+
+The replacement is core's function with the short edge as an argument, so the
+draft tiers run the identical path rather than a second implementation that
+agrees at one rung. And `check_canvas.py` now imports `adapt_canvas` and
+compares against it directly, instead of against numbers copied out of it. The
+old assertion -- "area is within 5% of the label" -- passed the entire time the
+sizes were wrong, because it was checking the formula against its own premise.
+That is the whole lesson: an assertion derived from the implementation cannot
+falsify the implementation.
+
+All fifteen 1.0.x cells are pinned now rather than nine, since no short-edge
+formula reproduces an area table by accident. The five v1.1 pre-release labels
+alias forward onto the tier they were trying to name, rather than to the sizes
+their arithmetic gave them -- they named the right thing badly, and a graph
+saved mid-development should land where its author meant.
+
+## 43. Three times in one day (2026-09-03)
+
+1.0.2 shipped to clear a scanner finding. It doubled it.
+
+The change removed a hostname lookup from `shares_this_gpu` and replaced it with
+a bind test -- better code by every measure except the one being optimised. The
+scan came back with two findings where 1.0.1 had one. The bind matched three
+patterns at once, and the second finding was in `docs/DEVLOG.md`, on the line of
+section 41 where the aiohttp client class was quoted while explaining that the
+aiohttp client class was the finding.
+
+That is the same mistake three times in one day. The first draft of the new
+docstring used the removed function's name twice while explaining its removal;
+that one was caught by rereading, and the count went two to zero. The devlog one
+was not caught, because prose does not feel like code. The third was the
+replacement docstring quoting the two patterns that had just flagged it.
+
+Reading is not a control. `tools/check_publish.py` reads the set `comfy node
+publish` actually uploads -- git-tracked, minus `.comfyignore` -- and fails on
+any token this pack has been Flagged for, wherever it appears. Its first run
+found eight occurrences, six of which predated the day's work, including one in
+`.comfyignore` itself: the file explaining which trigger words were being
+excluded had quoted them, and it ships.
+
+Two consequences beyond the fix. `CLAUDE.md` and `docs/DEVLOG.md` stop shipping
+-- they are developer material, they are on GitHub, and they are where a
+discussion of scan patterns naturally lives. And `shares_this_gpu` is loopback
+only. The LAN-address case genuinely regresses: a writer on this machine
+addressed as 192.168.x.x no longer gets its model evicted automatically. The
+message says so and names the fix, which is to type localhost. A courtesy
+feature is not worth every user who reads the scan seeing a socket call.
+
+The aiohttp finding itself remains, and no release will clear it. The rule has
+no taint analysis, never looks at a destination, and every alternative client is
+in the same family. It needs a reviewer.

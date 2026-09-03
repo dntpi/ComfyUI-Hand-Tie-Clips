@@ -77,7 +77,7 @@ def main():
 
     print("the grid, the cap, and the promise on the label")
     off_grid, over_cap = [], []
-    worst_area, worst_ratio = (0.0, ""), (0.0, "")
+    off_tier, worst_ratio = [], (0.0, "")
     for res in resolutions:
         for asp in aspects:
             w, h = quiet(res, asp)
@@ -85,11 +85,16 @@ def main():
                 off_grid.append(f"{res} {asp} {w}x{h}")
             if w * h > cap:
                 over_cap.append(f"{res} {asp} {w}x{h}")
-            want_mp = resolutions[res]
-            got_mp = w * h / 1e6
-            d_area = abs(got_mp - want_mp) / want_mp
-            if d_area > worst_area[0]:
-                worst_area = (d_area, f"{res} {asp} {w}x{h} = {got_mp:.3f} MP")
+            # The label names a short edge, so that is what gets checked. It
+            # holds exactly unless the area cap bit, which only happens at the
+            # extreme ratios -- 21:9 at 768p wants 1792x768 and has to come
+            # down. Anything else off the tier is a bug.
+            want_short = resolutions[res]
+            got_short = min(w, h)
+            if got_short != want_short:
+                capped = want_short * max(aspects[asp]) / min(aspects[asp])
+                if capped * want_short <= cap or got_short > want_short:
+                    off_tier.append(f"{res} {asp} {w}x{h} short={got_short}")
             rw, rh = aspects[asp]
             d_ratio = abs((w / h) - (rw / rh)) / (rw / rh)
             if d_ratio > worst_ratio[0]:
@@ -100,8 +105,8 @@ def main():
        not off_grid, f"{n} sizes" if not off_grid else off_grid[0])
     ck("every size is under H3's 768x1344 area cap",
        not over_cap, f"cap {cap}" if not over_cap else over_cap[0])
-    ck("area is within 5% of the label",
-       worst_area[0] < 0.05, f"worst {worst_area[0] * 100:.1f}%  {worst_area[1]}")
+    ck("the short edge is the tier, unless the area cap bit",
+       not off_tier, f"{n} sizes" if not off_tier else off_tier[0])
     ck("ratio is within 4% of the label",
        worst_ratio[0] < 0.04, f"worst {worst_ratio[0] * 100:.1f}%  {worst_ratio[1]}")
 
@@ -133,10 +138,44 @@ def main():
        f"{len(agree)} of 15 need no pin")
 
     print("\nthe top rung, stated plainly")
-    ck("0.98 MP 16:9 is 1312x736", quiet("0.98 MP", "16:9 landscape") == (1312, 736),
-       str(quiet("0.98 MP", "16:9 landscape")))
-    ck("0.98 MP 1:1 is 992x992", quiet("0.98 MP", "1:1 square") == (992, 992),
-       str(quiet("0.98 MP", "1:1 square")))
+    top = H3.DEFAULT_RESOLUTION
+    ck("768p 16:9 is 1344x768, the size MiniMax states as native",
+       quiet(top, "16:9 landscape") == (1344, 768),
+       str(quiet(top, "16:9 landscape")))
+    ck("768p 1:1 is 768x768", quiet(top, "1:1 square") == (768, 768),
+       str(quiet(top, "1:1 square")))
+    ck("768p 4:3 is 1024x768", quiet(top, "4:3 landscape") == (1024, 768),
+       str(quiet(top, "4:3 landscape")))
+
+    # The strongest statement available: the native tier is not merely close to
+    # core's adapt_canvas, it IS core's adapt_canvas. v1.1 spent a while with a
+    # megapixel formula that claimed to mirror core and agreed with it at no
+    # aspect ratio at all, so this compares against the function rather than
+    # against numbers copied out of it.
+    try:
+        from comfy_extras.nodes_minimax_h3 import adapt_canvas as core_adapt
+    except Exception as e:  # noqa: BLE001
+        ck("core's adapt_canvas is importable", False, repr(e))
+    else:
+        drift = [f"{asp}: ours {quiet(top, asp)} core {core_adapt(x * 96, y * 96)}"
+                 for asp, (x, y) in aspects.items()
+                 if quiet(top, asp) != core_adapt(x * 96, y * 96)]
+        ck("the 768p tier is exactly core's adapt_canvas",
+           not drift, f"{len(aspects)} aspects" if not drift else drift[0])
+
+    # The parenthesised megapixel figure is the number people search for. It is
+    # the 16:9 cell in MEBIpixels, and it is a signpost for one ratio, not a
+    # specification for eleven -- so it is checked where it is claimed.
+    off_label = []
+    for res, short in resolutions.items():
+        if "(" not in res:
+            continue
+        claimed = float(res.split("(")[1].split()[0])
+        w, h = quiet(res, "16:9 landscape")
+        if abs(w * h / 1048576.0 - claimed) > 0.005:
+            off_label.append(f"{res} -> {w}x{h} = {w * h / 1048576.0:.2f} MP")
+    ck("each label's MP figure is its own 16:9 cell in mebipixels",
+       not off_label, f"{len(resolutions)} rungs" if not off_label else off_label[0])
     ck("portrait is its landscape transposed", all(
         quiet(res, land)[::-1] == quiet(res, port)
         for res in resolutions
@@ -147,16 +186,16 @@ def main():
     print("\nbad input is loud, not silently wrong")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        fallback = canvas("0.98 MP", "17:4 nonsense")
+        fallback = canvas(H3.DEFAULT_RESOLUTION, "17:4 nonsense")
     ck("an unknown aspect falls back to the default and says so",
-       fallback == quiet("0.98 MP", H3.DEFAULT_ASPECT)
+       fallback == quiet(H3.DEFAULT_RESOLUTION, H3.DEFAULT_ASPECT)
        and "unknown aspect" in out.getvalue(), out.getvalue().strip()[:60])
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         unreadable = canvas("not a number", "16:9 landscape")
     ck("an unreadable resolution falls back and says so",
        unreadable == quiet(H3.DEFAULT_RESOLUTION, "16:9 landscape")
-       and "unreadable resolution" in out.getvalue(),
+       and "unknown resolution" in out.getvalue(),
        out.getvalue().strip()[:60])
 
     print("\nthe dials agree with the table")

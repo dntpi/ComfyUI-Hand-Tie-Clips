@@ -823,13 +823,13 @@ def main():
     ck("a remote host does not",
        not LM.shares_this_gpu("http://192.0.2.1:1234"))
 
-    # 1.0.2 replaced an address-set intersection with a bind test. The old code
-    # asked the OS for this machine's own name and enumerated every address
-    # behind it, which is host enumeration however local the intent, and the
-    # Comfy registry's YARA scan is right to read it that way. A bind answers
-    # the same question and looks like nothing. Asserted at source level rather
-    # than by behaviour because the two implementations agree on every input a
-    # checker can name -- the difference is only visible in the text.
+    # llm.py must not go looking for this machine's identity. 1.0.2 tried two
+    # ways to recognise our own LAN address -- resolving our own name, then
+    # binding the target -- and the registry scan matched the second one four
+    # ways where the first had matched once. 1.0.3 is loopback-only. Asserted at
+    # source level because every implementation agrees on the inputs a checker
+    # can name; the difference is only visible in the text. tools/check_publish.py
+    # covers the same ground across the whole published set.
     with open(LM.__file__, encoding="utf-8") as _fh:
         _llm_src = _fh.read()
     ck("no host enumeration in llm.py",
@@ -837,7 +837,11 @@ def main():
 
     n, note = asyncio.run(LM.unload_all("http://192.0.2.1:1234", "some-model"))
     ck("a remote writer is never evicted", n == 0, note)
-    ck("and it says why", "another machine" in note, note)
+    # The note has to name the fix, not just the refusal: loopback-only means a
+    # writer on THIS machine addressed by its LAN IP is declined too, and the
+    # only way a user works that out is if the message says "localhost".
+    ck("and it says why, and how to fix it",
+       "loopback" in note and "localhost" in note, note)
 
     n, note = asyncio.run(LM.unload_all("", "some-model"))
     ck("no server configured is not an error", n == 0, note)

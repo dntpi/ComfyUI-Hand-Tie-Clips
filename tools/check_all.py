@@ -31,6 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CHECKS = [
     ("check_templates.py", []),
     ("check_ui.py", []),
+    ("check_publish.py", []),
     ("check_prompts.py", []),
     ("check_waveform.py", []),
     ("check_canvas.py", []),

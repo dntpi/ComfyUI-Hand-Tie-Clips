@@ -5,12 +5,15 @@
 #
 # `tools/` is the development test harness. Nothing under it is imported at
 # runtime, and it is where two of the three findings that got 1.0.0 Flagged
-# live: `subprocess.run` in check_all.py (python_command_injection_risk) and
-# `importlib.import_module` in check_planner.py (python_bytecode_manipulation).
-# The registry's YARA scan has no taint analysis, so a test runner spawning
-# pytest reads the same as a node shelling out at load. Not shipping a test
-# harness to end users is right on its own terms; clearing two false positives
-# is the bonus.
+# live -- the process spawn in check_all.py and the dynamic import in
+# check_planner.py. The registry's YARA scan has no taint analysis, so a test
+# runner starting pytest reads the same as a node shelling out at load. Not
+# shipping a test harness to end users is right on its own terms; clearing two
+# false positives is the bonus.
+#
+# The trigger words are described here rather than quoted, because this file
+# ships. Quoting them put them in the published zip, where the scanner reads
+# them exactly as it would read code. tools/check_publish.py enforces that.
 tools/
 
 # 2.3 MB of documentation screenshots that no code path opens. README.md and
@@ -18,3 +21,14 @@ tools/
 # the rendered listing is unaffected -- see the .gitattributes note about
 # raw.githubusercontent serving the LFS pointer instead of the image.
 docs/img/
+
+# Developer documentation. CLAUDE.md is instructions for an agent working on
+# this repo and DEVLOG.md is 2000+ lines of build history; neither is of any use
+# to someone installing the pack, and both are on GitHub for anyone who wants
+# them. They also discuss the registry's own scan patterns by name, and 1.0.2
+# proved that a scan finding can be raised against a sentence in a markdown
+# file: docs/DEVLOG.md:1966 was Flagged for quoting a class name while
+# explaining why it had been Flagged. README.md and PROMPTING.md still ship --
+# those are for users.
+CLAUDE.md
+docs/DEVLOG.md

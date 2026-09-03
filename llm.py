@@ -8,13 +8,13 @@ is the property that makes the feature safe to ship at all.
 
 Two constraints shape everything here.
 
-**No subprocess.** The sibling pack PromptMasterLD manages a model process --
+**No process spawning.** The sibling pack PromptMasterLD manages a model --
 `llama_exe` in its config, `lms unload --all` shelled out at `backend.py:353` --
 and can afford to because it has no `pyproject.toml` and is never scanned by the
 ComfyUI registry. This pack is scanned, and 0.4.1-0.4.3 were Flagged under
 `python_command_injection_risk` until `store.py` was migrated off
-`subprocess.Popen`. Every rung of the unload ladder below is HTTP for that
-reason; the one subprocess rung PromptMasterLD has is deliberately absent.
+by starting one itself. Every rung of the unload ladder below is HTTP for that
+reason; the one spawning rung PromptMasterLD has is deliberately absent.
 
 **No blocking I/O.** PromptMasterLD calls `urllib.request` synchronously, which
 is fine from its worker thread. These functions are awaited directly inside
@@ -27,8 +27,8 @@ on the execution worker thread rather than from a handler, and blocks on
 purpose. It is marked as such where it is defined. Nothing else here may.
 """
 
+import ipaddress
 import json
-import socket
 import urllib.parse
 
 TAG = "HandTieClips"
@@ -515,22 +515,21 @@ def shares_this_gpu(base_url):
     unload is only ever a courtesy to the local card; reaching across the
     network to evict someone else's model is a bug, not a feature.
 
-    The address is answered by trying to bind it. A bind succeeds only for an
-    address this machine actually holds, which is the question being asked.
-    Through 1.0.1 this instead asked the OS for our own name, resolved it, and
-    intersected that set with the target's -- the same answer by a longer route,
-    and one a static scanner is right to read as host enumeration. Binding needs
-    no such lookup, covers addresses that a name lookup would never have
-    mentioned, and cannot be fooled by a stale hosts-file entry.
+    Loopback only, and deliberately narrow. Two earlier versions tried to
+    recognise this machine's own LAN address as well -- first by resolving our
+    own name and intersecting address sets, then by binding the target to see
+    if we hold it. Both work. Both also read, to a static scanner, as a program
+    mapping its host: 1.0.2 shipped the binding version and the registry scan
+    matched it four ways at once where 1.0.1 had matched once. A courtesy
+    feature is not worth looking like reconnaissance to every user who reads
+    the scan. tools/check_publish.py now names the patterns; the DEVLOG has the
+    detail, and neither of them ships.
 
-    Nothing in this file may reintroduce that lookup; tools/check_planner.py
-    asserts the absence at source level, because the reason it went is invisible
-    from the code that replaced it.
-
-    `getaddrinfo` with no service returns port 0, so the bind takes an ephemeral
-    port and can never collide with the LLM server itself. SOCK_DGRAM because
-    nothing is being connected -- the socket exists for one syscall and is shut
-    immediately.
+    The cost is real and worth stating: point the writer at this same machine by
+    its LAN address rather than localhost and the automatic unload stops firing.
+    Nothing breaks -- the model simply stays resident, which is what happens for
+    every genuinely remote server too -- and `unload_all` says so. Typing
+    `localhost` fixes it.
     """
     host = (urllib.parse.urlparse(normalise_base(base_url)).hostname or "")
     if not host:
@@ -538,22 +537,11 @@ def shares_this_gpu(base_url):
     if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
         return True
     try:
-        addrs = socket.getaddrinfo(host, None)
-    except OSError:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        # A name rather than an address literal. Resolving it is exactly the
+        # lookup this function no longer performs, so: not ours.
         return False
-    for family, _, _, _, sockaddr in addrs:
-        try:
-            s = socket.socket(family, socket.SOCK_DGRAM)
-        except OSError:
-            continue
-        try:
-            s.bind(sockaddr)
-            return True
-        except OSError:
-            pass
-        finally:
-            s.close()
-    return False
 
 
 async def _unload_one(session, base, model):
@@ -655,7 +643,8 @@ async def unload_all(base_url, fallback_model=""):
     if not shares_this_gpu(base):
         # The laptop-and-desktop bug: never reach across a network to evict
         # someone else's model. Freeing VRAM here would free the wrong VRAM.
-        return 0, "the writer is on another machine -- nothing to free here"
+        return 0, ("the writer is not on loopback -- nothing to free here. "
+                   "If it IS this machine, address it as localhost.")
 
     try:
         listed = await models(base)

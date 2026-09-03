@@ -1789,6 +1789,25 @@ class HandTieClips:
         # stop point later re-uses every hop already on disk instead of
         # renumbering them into fresh misses.
         stop_at = int(render_through or 0)
+        # render_from is the other end of the same range, and unlike
+        # render_through it truncates nothing at all: the hops before it still
+        # run through the loop, they just have to come out of the cache instead
+        # of the sampler. Validated against the store further down, once there
+        # is a store to validate against.
+        start_at = int(render_from or 0)
+        # An impossible range is refused BEFORE anything is announced. Both
+        # halves of that matter. Against the original `render_through`, because
+        # `n` is truncated to it below and testing against the truncated value
+        # reports an inverted range as "past the end of the plan" and then
+        # renders everything. And before the print below, because that print
+        # says "rendering hops 1-2" -- which was the last thing in the log
+        # ahead of a refusal to render anything at all.
+        if start_at > 1 and 0 < stop_at < start_at:
+            raise ValueError(
+                f"{TAG}: render_from={start_at} is past "
+                f"render_through={stop_at}, so the range is empty. "
+                "render_through is the LAST hop to render, not a count.")
+
         if 0 < stop_at < n:
             print(f"[{TAG}] render_through={stop_at}: rendering hops 1-{stop_at} "
                   f"of {n}; the rest of the plan is untouched", flush=True)
@@ -1799,21 +1818,6 @@ class HandTieClips:
             print(f"[{TAG}] render_through={stop_at} is past the end of a "
                   f"{n}-hop plan; rendering all of it", flush=True)
 
-        # render_from is the other end of the same range, and unlike
-        # render_through it truncates nothing at all: the hops before it still
-        # run through the loop, they just have to come out of the cache instead
-        # of the sampler. Validated against the store further down, once there
-        # is a store to validate against.
-        start_at = int(render_from or 0)
-        # Inverted range first, and against the ORIGINAL render_through: `n` has
-        # already been truncated to it above, so testing start_at against `n`
-        # here would report an inverted range as "past the end of the plan" and
-        # then quietly render the whole thing.
-        if start_at > 1 and 0 < stop_at < start_at:
-            raise ValueError(
-                f"{TAG}: render_from={start_at} is past "
-                f"render_through={stop_at}, so the range is empty. "
-                "render_through is the LAST hop to render, not a count.")
         if start_at > n:
             print(f"[{TAG}] render_from={start_at} is past the end of a "
                   f"{n}-hop plan; starting at hop 1", flush=True)

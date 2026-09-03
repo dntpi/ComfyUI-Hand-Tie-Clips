@@ -59,6 +59,24 @@ def measure(images, hops, overlap, window):
     means = frame_means(images)
     total = int(means.shape[0])
     cuts, hop_len = seam_positions(total, int(hops), int(overlap))
+
+    # Geometry that cannot be a joined chain. Every hop is longer than the
+    # overlap it is joined by -- that is what an overlap is -- so a derived hop
+    # length at or below it means these frames did not come from a join.
+    #
+    # The case that produces it in practice is a dry run: the chain hands back
+    # one placeholder frame at the resolution the plan resolved to, this node is
+    # still wired up, and it dutifully reported "derived hop length 11.5 frames"
+    # and a seam position, for a clip with no seams in it. A measurement of
+    # nothing, printed in the same shape as a real one.
+    if hop_len is not None and hop_len <= int(overlap):
+        return [], hop_len, (
+            f"nothing to measure: {total} frame(s) across {int(hops)} hop(s) is "
+            f"{hop_len:.1f} frames per hop, which is not longer than the "
+            f"{int(overlap)}-frame overlap. These frames are not a joined chain "
+            f"-- a dry run hands back a single placeholder frame, and that is "
+            f"the usual reason to see this.")
+
     note = ""
     if hop_len is not None and abs(hop_len - round(hop_len)) > 0.01:
         note = (f"hop length works out to {hop_len:.2f} frames, which is not a "

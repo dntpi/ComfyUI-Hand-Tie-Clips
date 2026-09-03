@@ -77,15 +77,31 @@ class HTCChainPreview:
     def run(self, images, audio=None, info="", unique_id=None):
         frames = int(images.shape[0]) if images is not None else 0
         video_s = frames / float(FPS)
+        # A dry run compiles prompts and hands back ONE placeholder frame at the
+        # resolution the plan resolved to. Reporting A/V drift from that is
+        # reporting a number about nothing: the run printed "1f / 0.04s video,
+        # 0.02s audio, drift -18 ms", which reads exactly like a measurement of
+        # a real chain and describes a frame that was never rendered.
+        #
+        # `info` is how it is known, rather than a frame count: the chain writes
+        # its DRY RUN banner as the first line, so this is what actually
+        # happened rather than a guess from the shape of the tensor.
+        dry = str(info or "").lstrip().startswith("DRY RUN")
         payload = {
             "node_id": unique_id,
             "frames": frames,
             "video_s": round(video_s, 3),
             "width": int(images.shape[2]) if frames else 0,
             "height": int(images.shape[1]) if frames else 0,
+            "dry_run": dry,
         }
 
-        if isinstance(audio, dict) and audio.get("waveform") is not None:
+        if dry:
+            print(f"[{TAG}] dry run: prompts compiled, nothing rendered -- "
+                  f"no drift to measure. The placeholder is "
+                  f"{payload['width']}x{payload['height']}, the size the plan "
+                  f"resolved to.", flush=True)
+        elif isinstance(audio, dict) and audio.get("waveform") is not None:
             wav = audio["waveform"]
             sr = int(audio.get("sample_rate") or 0)
             if sr:

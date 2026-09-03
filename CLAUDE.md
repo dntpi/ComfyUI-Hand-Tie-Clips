@@ -322,6 +322,10 @@ Offline results (`frame_shift`, synthetic): recovers a planted additive shift to
 2. **Chained re-roll.** Revert strength. Change one word in hop 2 only. Hop 1 cache hit, hop 2 renders.
 3. Confirm the same join at the top rung -- **768p** (`1344×768`) as of 1.1, **1.0 MP** (`1280×736`) before it -- before calling it shipped. Keep `seed_per_shot`. 777777 was join-hostile on the old 5 s pin-only graph; do not treat that seed as the only one.
 
+**Top rung verified (user, 2026-09-03).** `1344×768` from `768p (0.98 MP)` / `16:9 landscape`, 3 hops, **192f (8.0 s) each**, overlap 22f, 8 steps `er_sde`/`beta_57`, `hop_script=next`, `pin_to_qwen=last frame`. Joins judged good. ~2 min 15 s per hop on a 5090. This replaces `1280×736`, which 1.1 moved off and which had nothing behind it for the whole release until this run.
+
+Run that check at **8 s, not 5 s**. The node warns that `join=continuous` at 5 s (124f) drops the airlock and that 8 s / 15 s is the join-validation canvas -- so a top-rung join judged at 5 s tells you about the duration, not about the canvas.
+
 **chain_00030_.mp4 / chain_00031_.mp4 / the keyframe-completion re-queue.** Hard cut at hop 2, f124, onto the outfit still’s commercial kitchen. Drink beat ran; pin did not. Official hop 2 cannot join at 8 steps.
 
 **chain_00033_.mp4.** Short hop-2 drink beat, flatten did not fire (card was already short). Still hard-cut. Two findings: (1) `_assemble_next` still prepended register `subject_prose` (`subject_definitions:` + `retention_analysis:`), so hop 2 was a Ref2VA generate again. (2) Console: `8 steps euler/simple`, not `res_multistep/beta`. `tail: settle` also led the compiled beat, so hop 2 opened on “eases to a rest.” Header stripped; tail moved after the beat.

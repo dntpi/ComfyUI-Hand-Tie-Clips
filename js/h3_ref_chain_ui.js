@@ -16,11 +16,18 @@ const VERSION = "v1.5.3";
  * new id those nodes would come up with NO editor at all, which looks exactly
  * like the rename having broken the pack. */
 const NODE_TYPES = new Set(["HandTieClips", "H3RefChain"]);
-// 640x480 is the 4:3 box the panel is now shaped for. It was 560 wide and a
-// tall scrolling column; with one pane visible at a time the height that column
-// needed is no longer needed all at once.
-const NODE_WIDTH = 640;
-const NODE_HEIGHT = 480;
+// The size a node OPENS at: 4:3, and large enough to read a two-shot script and
+// the whole RUN panel without dragging anything first. 640x480 was the first
+// attempt at "4:3 box" and got the ratio right and the scale wrong -- a default
+// nobody can use without resizing is not a default.
+//
+// This is NOT the minimum. NODE_MIN_WIDTH is, and it stays small on purpose: a
+// node that cannot be made narrow is worse on a laptop than a node that opens
+// small is on a desktop. The two were the same constant until that was noticed,
+// so raising the default would silently have raised the floor with it.
+const NODE_WIDTH = 1200;
+const NODE_HEIGHT = 900;
+const NODE_MIN_WIDTH = 560;
 // Mirrors MODE_PROP in editor/plan_editor.js -- the writer forces Shots mode
 // after a plan lands, and the property is the only part of that it should touch.
 const EDITOR_MODE_PROP = "h3_editor_mode";
@@ -220,7 +227,7 @@ function mountEditor(node) {
     });
     domWidget.serialize = false;
 
-    installHeightGuard(node, domWidget, { minHeight: EDITOR_MIN_H, minWidth: NODE_WIDTH });
+    installHeightGuard(node, domWidget, { minHeight: EDITOR_MIN_H, minWidth: NODE_MIN_WIDTH });
 
     function applyVisibility() {
         // The rail always owns ref_plan; the plan widget's visibility follows

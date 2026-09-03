@@ -221,7 +221,7 @@ def main():
                 continue
             size = n.get("size") or [0, 0]
             ck("the node ships at its designed 4:3 size",
-               [int(size[0]), int(size[1])] == [640, 480],
+               [int(size[0]), int(size[1])] == [1200, 900],
                "%sx%s" % (size[0], size[1]))
 
         # The on-canvas board, where there is one.

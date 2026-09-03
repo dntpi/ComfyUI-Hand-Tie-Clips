@@ -28,6 +28,7 @@ file, so the loaders and the safety check are testable without a running server
 """
 from __future__ import annotations
 
+import math
 import os
 
 TAG = "HandTieClips"
@@ -295,45 +296,77 @@ def load_image(name, cap_mp=0.0):
         return None
 
 
-VIDEO_SIZES = ("match H3", "640p", "576p", "512p", "448p", "384p")
-DEFAULT_VIDEO_SIZE = "match H3"
+# An AREA budget, not a short edge. The output canvas is a short-edge ladder
+# because H3 is a 768-short-edge model and that is what core's adapt_canvas
+# pins. A reference clip is the opposite case: it arrives at whatever aspect it
+# was shot at, and this control exists to bound MEMORY. A short edge does not
+# bound memory across aspects -- a 21:9 clip at a 640 short edge is 0.96 MP and
+# a 1:1 clip at the same 640 is 0.41 MP, a factor of more than two for the same
+# label. An area does, which is the whole job.
+#
+# Decimal megapixels here, 10^6, which is what the number normally means. Note
+# the output ladder's parenthetical uses MEBIpixels, because "0.98 MP" for
+# 1344x768 is a community figure computed against 1024*1024 and people search
+# for it. Different quantities, deliberately: one is a signpost on a tier name,
+# this one is the specification.
+VIDEO_SIZES = ("0.3 MP", "0.4 MP", "0.5 MP", "0.6 MP", "0.7 MP",
+               "0.8 MP", "0.9 MP", "1.0 MP", "MAX")
+DEFAULT_VIDEO_SIZE = "MAX"
+# Labels that have been the default at some point and may sit in a saved graph.
+# "match H3" is what MAX was called before the ladder became megapixels; the
+# short-edge rungs are still honoured by the parser below but no longer offered.
+LEGACY_VIDEO_SIZES = {"match H3": "MAX"}
 
 
-def video_target(width, height, size="match H3"):
+def video_target(width, height, size=DEFAULT_VIDEO_SIZE):
     """The size a reference clip should be DECODED at. -> (w, h) or None.
 
-    None means "leave it alone", which is what a source already smaller than
-    the target gets. Nothing here ever scales up: H3 does not, and inventing
-    pixels for a reference plate is worse than the plate being small.
+    None means "leave it alone", which is what a source already smaller than the
+    target gets. Nothing here ever scales up: H3 does not, and inventing pixels
+    for a reference plate is worse than the plate being small.
 
-    "match H3" asks core what it would resize this clip to anyway
-    (`adapt_canvas`, then core's own never-upscale branch), so decoding at that
-    size changes the pixels the model sees by nothing but the resampling
-    kernel. Every other value is a short edge below it -- fidelity traded for
-    memory, which is the only reason to pick one.
+    MAX asks core what it would resize this clip to anyway (`adapt_canvas`, then
+    core's own never-upscale branch), so decoding there changes the pixels the
+    model sees by nothing but the resampling kernel. Every megapixel value is a
+    budget below that -- fidelity traded for memory, the only reason to pick one.
 
-    Core resizes late, after the whole clip is decoded, stacked and converted
-    to float32. That is where the cost is: a 10 s 4K plate costs ~36 GB of
-    system RAM to hand over ~4.5 GB of pixels that core immediately throws
-    away. This function exists so the throwing away happens first.
+    A size we choose is never overridden downstream: core keeps a clip smaller
+    than its own target rather than scaling it back up, so whatever this returns
+    is what the encoder gets.
+
+    Core resizes late, after the whole clip is decoded, stacked and cast to
+    float32. That is where the cost is: a 10 s 4K plate costs ~36 GB of system
+    RAM to hand over ~4.5 GB of pixels core immediately throws away. This
+    function exists so the throwing away happens first.
     """
     w, h = int(width), int(height)
     if w <= 0 or h <= 0:
         return None
-    if str(size) != DEFAULT_VIDEO_SIZE:
-        try:
-            edge = int(str(size).rstrip("pP"))
-        except ValueError:
-            print(f"[{TAG}] unknown reference clip size {size!r}; "
-                  f"using {DEFAULT_VIDEO_SIZE}", flush=True)
-            return video_target(w, h)
-        if edge >= min(w, h):
-            return None                      # never up
-        scale = edge / float(min(w, h))
+    label = LEGACY_VIDEO_SIZES.get(str(size), str(size))
+
+    if label != "MAX":
+        area = None
+        if label.rstrip("pP").isdigit() and label[-1] in "pP":
+            # Retired short-edge rung. Still honoured so a graph saved while
+            # v1.1 was in progress does not silently change size.
+            edge = int(label[:-1])
+            if edge >= min(w, h):
+                return None
+            scale = edge / float(min(w, h))
+        else:
+            try:
+                area = float(label.split()[0]) * 1_000_000.0
+            except (ValueError, IndexError):
+                print(f"[{TAG}] unknown video input size {size!r}; using MAX",
+                      flush=True)
+                return video_target(w, h, "MAX")
+            if area >= w * h:
+                return None                  # never up
+            scale = math.sqrt(area / float(w * h))
         return (max(32, round(w * scale / 32) * 32),
                 max(32, round(h * scale / 32) * 32))
 
-    # "match H3": core's own arithmetic, asked of core rather than copied.
+    # MAX: core's own arithmetic, asked of core rather than copied.
     try:
         from comfy_extras.nodes_minimax_h3 import adapt_canvas  # noqa: PLC0415
     except Exception:  # noqa: BLE001 -- headless or a core without the node

@@ -1625,15 +1625,18 @@ class HandTieClips:
                 "reference_video_size": (list(_media.VIDEO_SIZES), {
                     "default": _media.DEFAULT_VIDEO_SIZE,
                     "tooltip": (
-                        "How large to DECODE the reference clip. 'match H3' "
-                        "asks core what it would resize the clip to anyway, so "
-                        "the model sees the same pixels and the memory is not "
-                        "spent -- a 10 s 4K plate costs about 36 GB of system "
-                        "RAM decoded at source and about 4.5 GB decoded at "
-                        "H3's size. A clip already smaller than that is left "
-                        "alone; nothing here ever scales up. The lower rungs "
-                        "trade reference fidelity for memory, which is the "
-                        "only reason to pick one."
+                        "How large to decode the reference clip, as an area "
+                        "budget. MAX asks core what it would resize the clip "
+                        "to anyway, so the model sees the same pixels and the "
+                        "memory is not spent -- a 10 s 4K plate costs about "
+                        "36 GB of system RAM decoded at source and about "
+                        "4.5 GB at MAX. The megapixel values go below that, "
+                        "trading reference detail for memory. A clip already "
+                        "smaller than the value you pick is left alone; "
+                        "nothing here ever scales up. Megapixels are decimal "
+                        "here -- 0.5 MP is 500,000 pixels, whatever the clip's "
+                        "aspect ratio, which is the point of budgeting by area "
+                        "rather than by edge."
                     ),
                 }),
             },

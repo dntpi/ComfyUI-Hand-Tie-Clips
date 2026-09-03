@@ -218,13 +218,15 @@ export function createMediaStrip(node, { onChange } = {}) {
         const wsize = sizeName && widgetByName(node, sizeName);
         if (wsize) {
             const row = el("div", "h3e-trimrow");
-            row.appendChild(el("span", "h3e-media-label", "decode at"));
+            row.appendChild(el("span", "h3e-media-label", "video input size"));
             const sel = el("select", "h3e-media-size");
-            sel.title = "Decode size for the clip. 'match H3' is the size core "
+            sel.title = "How large to decode the clip. MAX is the size core "
                 + "would resize it to anyway, so the model sees the same pixels "
                 + "without the memory: a 10 s 4K plate costs ~36 GB decoded at "
-                + "source and ~4.5 GB at H3's size. A clip already smaller is "
-                + "left alone -- this never scales up.";
+                + "source and ~4.5 GB at MAX. The megapixel values go below "
+                + "that, trading reference detail for memory. A clip already "
+                + "smaller than the value you pick is left alone -- this never "
+                + "scales up.";
             for (const opt of (wsize.options?.values || [])) {
                 const o = el("option", null, String(opt));
                 o.value = String(opt);

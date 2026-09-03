@@ -2250,3 +2250,51 @@ feature is not worth every user who reads the scan seeing a socket call.
 The aiohttp finding itself remains, and no release will clear it. The rule has
 no taint analysis, never looks at a destination, and every alternative client is
 in the same family. It needs a reviewer.
+
+## 44. Decoding a plate to throw most of it away (2026-09-03)
+
+A user, relaying another: *"for reference clip, someone was mentioning the
+ability to do a resize on the input -- to save on memory and speed. LD
+promptmaster has this feature as well."*
+
+Section 40's closing note said reference-video resizing was deferred because
+"core already scales ref video down, so the cost is disk and load time, not
+quality." The first half is true. The second half looks at the wrong place.
+
+Core does resize -- but at the far end, in `MiniMaxH3ReferenceToVideo.execute`,
+after `load_video` has decoded every frame at source resolution, stacked them,
+and converted the stack to float32. For a 10 s 4K plate that is about 36 GB of
+system RAM spent to deliver about 4.5 GB of pixels that core then discards.
+Nothing about the output changes; the memory is simply spent before anyone
+looks at whether it was needed. That is not a missing feature, it is a defect,
+and it was sitting behind a sentence I had written to explain why there was
+nothing to do here.
+
+So there are two changes, and only one of them is the requested feature.
+
+`load_video` now computes the decode size before the loop and hands it to
+`frame.reformat`, so libswscale scales inside the decoder and a full-resolution
+RGB array is never built. The default, "match H3", asks core's own
+`adapt_canvas` what it would have resized to and never scales up -- a clip
+already below the tier is left exactly alone, which is what core does too. On
+the default path the model therefore sees the same pixels through a different
+resampling kernel, and nothing else moves.
+
+The requested part is the rungs below that: 640p through 384p, trading
+reference fidelity for memory. Measured on a 226-frame 960x544 plate, which is
+already under the tier and so gets nothing from the defect fix: 1.42 GB and
+6.1 s at source, 0.70 GB and 2.0 s at 384p. Three times faster is more than the
+pixel count explains -- the RGB conversion and the float32 cast cost more than
+the decode does.
+
+Third, free: `load_video` has accepted `max_frames` since it was written and
+nobody passed it. Core truncates a reference clip to the hop's frame count, so
+a 60 s plate on a 10 s hop decoded 1440 frames to use 243. It is passed now,
+bounded by the LONGEST hop -- bounding by the shortest would cut frames core
+might still have wanted.
+
+The lesson is the one from section 42 wearing different clothes. Both times a
+conclusion was reached by reasoning about what the code must be doing rather
+than reading where the cost actually lands, and both times the reasoning was
+written down confidently enough that it stopped anyone looking again. A user
+asking "possible?" was what reopened it.

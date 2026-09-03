@@ -799,6 +799,17 @@
  * sentence squeezed into a 104px cell is unreadable for the same reason a
  * waveform is. */
 .h3e-media-desc { width: 100%; }
+/* Sized to its content rather than stretched: unlike the description
+ * beside it, this is a five-item combo and a full-width one reads as a
+ * more important control than it is. */
+.h3e-media-size {
+    background: var(--h3-sunken);
+    color: var(--h3-text);
+    border: 1px solid var(--h3-border-soft);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font: inherit;
+}
 
 
 /* -- trim bar -------------------------------------------------------------

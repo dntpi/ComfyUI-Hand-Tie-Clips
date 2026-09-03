@@ -295,7 +295,57 @@ def load_image(name, cap_mp=0.0):
         return None
 
 
-def load_video(name, max_frames=None, start=0.0, end=0.0):
+VIDEO_SIZES = ("match H3", "640p", "576p", "512p", "448p", "384p")
+DEFAULT_VIDEO_SIZE = "match H3"
+
+
+def video_target(width, height, size="match H3"):
+    """The size a reference clip should be DECODED at. -> (w, h) or None.
+
+    None means "leave it alone", which is what a source already smaller than
+    the target gets. Nothing here ever scales up: H3 does not, and inventing
+    pixels for a reference plate is worse than the plate being small.
+
+    "match H3" asks core what it would resize this clip to anyway
+    (`adapt_canvas`, then core's own never-upscale branch), so decoding at that
+    size changes the pixels the model sees by nothing but the resampling
+    kernel. Every other value is a short edge below it -- fidelity traded for
+    memory, which is the only reason to pick one.
+
+    Core resizes late, after the whole clip is decoded, stacked and converted
+    to float32. That is where the cost is: a 10 s 4K plate costs ~36 GB of
+    system RAM to hand over ~4.5 GB of pixels that core immediately throws
+    away. This function exists so the throwing away happens first.
+    """
+    w, h = int(width), int(height)
+    if w <= 0 or h <= 0:
+        return None
+    if str(size) != DEFAULT_VIDEO_SIZE:
+        try:
+            edge = int(str(size).rstrip("pP"))
+        except ValueError:
+            print(f"[{TAG}] unknown reference clip size {size!r}; "
+                  f"using {DEFAULT_VIDEO_SIZE}", flush=True)
+            return video_target(w, h)
+        if edge >= min(w, h):
+            return None                      # never up
+        scale = edge / float(min(w, h))
+        return (max(32, round(w * scale / 32) * 32),
+                max(32, round(h * scale / 32) * 32))
+
+    # "match H3": core's own arithmetic, asked of core rather than copied.
+    try:
+        from comfy_extras.nodes_minimax_h3 import adapt_canvas  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 -- headless or a core without the node
+        return None
+    cw, ch = adapt_canvas(w, h)
+    if w * h <= cw * ch:
+        return None                          # core would keep it; so do we
+    return int(cw), int(ch)
+
+
+def load_video(name, max_frames=None, start=0.0, end=0.0,
+               size=DEFAULT_VIDEO_SIZE):
     """A clip as an IMAGE batch `[N,H,W,3]`, or None.
 
     `start`/`end` are the trim window in seconds; see `clip_window`. H3 already
@@ -325,12 +375,33 @@ def load_video(name, max_frames=None, start=0.0, end=0.0):
             lo, hi = clip_window(start, end, secs) if secs > 0 else (0.0, 0.0)
             first = int(round(lo * fps))
             last = int(round(hi * fps)) if hi > 0 else 0
+            target = video_target(vs.codec_context.width,
+                                  vs.codec_context.height, size)
+            if target:
+                print(f"[{TAG}] reference clip {name!r}: decoding "
+                      f"{vs.codec_context.width}x{vs.codec_context.height} "
+                      f"at {target[0]}x{target[1]} ({size})", flush=True)
             for i, frame in enumerate(container.decode(video=0)):
                 if i < first:
                     continue
                 if last and i >= last:
                     break
-                frames.append(frame.to_ndarray(format="rgb24"))
+                if target:
+                    # Scaled by libswscale on the way out of the decoder, so a
+                    # full-resolution RGB array is never built. BILINEAR is the
+                    # reformat default; AREA is what you want going down by more
+                    # than a factor of two, and PyAV has not always exposed the
+                    # argument -- hence the probe rather than an assumption.
+                    try:
+                        frame = frame.reformat(width=target[0], height=target[1],
+                                               format="rgb24",
+                                               interpolation="AREA")
+                    except (TypeError, ValueError):
+                        frame = frame.reformat(width=target[0], height=target[1],
+                                               format="rgb24")
+                    frames.append(frame.to_ndarray())
+                else:
+                    frames.append(frame.to_ndarray(format="rgb24"))
                 if max_frames and len(frames) >= int(max_frames):
                     break
         if not frames:

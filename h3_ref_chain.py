@@ -1620,6 +1620,22 @@ class HandTieClips:
                         "empty and the prompt is exactly what it was."
                     ),
                 }),
+                # Appended 2026-09-03 -- LAST, per the note at the top of this
+                # block.
+                "reference_video_size": (list(_media.VIDEO_SIZES), {
+                    "default": _media.DEFAULT_VIDEO_SIZE,
+                    "tooltip": (
+                        "How large to DECODE the reference clip. 'match H3' "
+                        "asks core what it would resize the clip to anyway, so "
+                        "the model sees the same pixels and the memory is not "
+                        "spent -- a 10 s 4K plate costs about 36 GB of system "
+                        "RAM decoded at source and about 4.5 GB decoded at "
+                        "H3's size. A clip already smaller than that is left "
+                        "alone; nothing here ever scales up. The lower rungs "
+                        "trade reference fidelity for memory, which is the "
+                        "only reason to pick one."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1685,6 +1701,7 @@ class HandTieClips:
             reference_video_start_s=0.0, reference_video_end_s=0.0,
             music_start_s=0.0, music_end_s=0.0, render_from=0,
             reference_video_desc="",
+            reference_video_size=None,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -1855,9 +1872,16 @@ class HandTieClips:
         # before anything expensive starts. Each returns exactly what the socket
         # it replaced delivered, so everything downstream is unchanged.
         start_image = _media.load_image(start_image_file) if start_image_file else None
+        # max_frames: core truncates a reference clip to the hop's frame count
+        # (`frames[:frame_count]` in nodes_minimax_h3.py) AFTER decoding all of
+        # it, so a 60 s plate on a 10 s hop decodes 1440 frames to use 243. The
+        # longest hop is the upper bound -- never the shortest, or a clip would
+        # be cut before core had the chance not to need it.
         reference_video = (_media.load_video(
             reference_video_file,
-            start=float(reference_video_start_s), end=float(reference_video_end_s))
+            max_frames=max(lengths) if lengths else length,
+            start=float(reference_video_start_s), end=float(reference_video_end_s),
+            size=reference_video_size or _media.DEFAULT_VIDEO_SIZE)
             if reference_video_file else None)
         voice = (_media.load_audio(voice_file,
                                    start=float(voice_start_s), end=float(voice_end_s))
@@ -2034,6 +2058,11 @@ class HandTieClips:
             # that is where it belongs.
             "voice": _store.audio_digest(voice),
             "refvid": _store.tensor_digest(reference_video),
+            # tensor_digest already covers the pixels, and the pixels change
+            # with the size -- but only once the clip is decoded. Naming the
+            # setting keeps the key readable when a cache miss has to be
+            # explained to somebody.
+            "refvid_size": str(reference_video_size or _media.DEFAULT_VIDEO_SIZE),
             "start": _store.tensor_digest(start_image),
             # A cached hop rendered under different LoRAs or a different
             # attention path is not the same hop, so what has been patched onto

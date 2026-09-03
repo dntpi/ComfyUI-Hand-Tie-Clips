@@ -28,27 +28,28 @@ import { createTrimBar, forgetPeaks } from "./trim_bar.js";
 const SLOTS = [
     ["start_image_file", "image", "first frame",
      "Pins hop 1's opening frame. Ignored on later hops -- they are pinned by the join.",
-     null, null],
+     null, null, null],
     ["reference_video_file", "video", "reference clip",
      "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that.",
-     "reference_video", "reference_video_desc"],
+     "reference_video", "reference_video_desc", "reference_video_size"],
     ["voice_file", "audio", "voice",
      "Voice or timbre reference for hop 1 as <Audio 1>. Later hops use the pin.",
-     "voice", null],
+     "voice", null, null],
     // Not a reference at all: this one is never shown to the model. It is mixed
     // under the finished chain after the last hop is joined, so it sits here
     // because this is where you look for audio -- not because it behaves like
     // its neighbours. The dials that shape it live in RUN > soundtrack.
     ["soundtrack_file", "audio", "soundtrack",
      "Music bed mixed under the whole chain once it is joined. Not a reference -- the model never hears it.",
-     "music", null],
+     "music", null, null],
 ];
 
 /** The widget names this strip owns, so the caller hides exactly those. */
-export const MEDIA_WIDGETS = SLOTS.flatMap(([name, , , , trim, desc]) => [
+export const MEDIA_WIDGETS = SLOTS.flatMap(([name, , , , trim, desc, size]) => [
     name,
     ...(trim ? [`${trim}_start_s`, `${trim}_end_s`] : []),
     ...(desc ? [desc] : []),
+    ...(size ? [size] : []),
 ]);
 
 function commit(node, w, value) {
@@ -102,7 +103,7 @@ export function createMediaStrip(node, { onChange } = {}) {
         for (const b of bars) b.render();
     }
 
-    for (const [name, kind, label, tip, trim, descName] of SLOTS) {
+    for (const [name, kind, label, tip, trim, descName, sizeName] of SLOTS) {
         const w = widgetByName(node, name);
         if (!w) {
             // A widget this build does not define is skipped, not warned about,
@@ -203,6 +204,41 @@ export function createMediaStrip(node, { onChange } = {}) {
             };
             trimRows.push(syncDesc);
             syncDesc();
+        }
+
+        // How large to DECODE the clip. Not a crop and not a quality dial for
+        // the render: core resizes a reference video to H3's canvas anyway, but
+        // only after the whole thing has been decoded, stacked and converted to
+        // float32 at source resolution. "match H3" spends none of that. The
+        // lower rungs go below what core would use, which is the only setting
+        // here that changes what the model sees.
+        const ws = sizeName && widgetByName(node, sizeName);
+        if (ws) {
+            const row = el("div", "h3e-trimrow");
+            row.appendChild(el("span", "h3e-media-label", "decode at"));
+            const sel = el("select", "h3e-media-size");
+            sel.title = "Decode size for the clip. 'match H3' is the size core "
+                + "would resize it to anyway, so the model sees the same pixels "
+                + "without the memory: a 10 s 4K plate costs ~36 GB decoded at "
+                + "source and ~4.5 GB at H3's size. A clip already smaller is "
+                + "left alone -- this never scales up.";
+            for (const opt of (ws.options?.values || [])) {
+                const o = el("option", null, String(opt));
+                o.value = String(opt);
+                sel.appendChild(o);
+            }
+            sel.value = String(ws.value ?? "");
+            sel.addEventListener("change", () => commit(node, ws, sel.value));
+            row.appendChild(sel);
+            trims.appendChild(row);
+            const syncSize = () => {
+                row.style.display = String(w.value || "") ? "" : "none";
+                if (document.activeElement !== sel) {
+                    sel.value = String(ws.value ?? "");
+                }
+            };
+            trimRows.push(syncSize);
+            syncSize();
         }
     }
 

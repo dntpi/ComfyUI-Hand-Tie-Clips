@@ -114,7 +114,38 @@ def main():
        isinstance(H3.MASTER_SPILL_BYTES, int) and H3.MASTER_SPILL_BYTES > 0,
        f"{H3.MASTER_SPILL_BYTES / 2**30:.0f} GiB")
 
-    print("orphan cleanup")
+    print("the spill file cleans up after itself")
+    # The bug this exists to prevent: the first version wrote an ordinary file
+    # and relied on the NEXT run sweeping it. ComfyUI holds the previous run's
+    # IMAGE output, so the mapping was still open, os.remove raised, and the
+    # handler passed silently -- 9 GB per render, unnoticed. Delete-on-close
+    # makes the lifetime automatic, and this asserts BOTH halves of it.
+    before = _spills(_root)
+    H3.MASTER_SPILL_BYTES = 0
+    try:
+        live = H3._alloc_master(24, h, w)
+        made = _spills(_root) - before
+        ck("a spill file exists while the tensor is alive", len(made) == 1, str(made))
+        live[0, 0, 0, 0] = 0.5
+        ck("it is writable while mapped", float(live[0, 0, 0, 0]) == 0.5)
+        mapping = getattr(live, "_htc_mmap", None)
+        del live
+        if mapping is not None:
+            mapping._mmap.close()
+        del mapping
+        gc.collect()
+        ck("it removes itself once nothing holds it",
+           not (_spills(_root) & made),
+           "no sweep required, and a killed process cleans up too")
+    finally:
+        H3.MASTER_SPILL_BYTES = big
+        for n in _spills(_root) - before:
+            try:
+                os.remove(os.path.join(_root, n))
+            except OSError:
+                pass
+
+    print("sweep, as a safety net for older builds")
     import folder_paths
     root = folder_paths.get_temp_directory()
     os.makedirs(root, exist_ok=True)

@@ -2356,14 +2356,27 @@ ranges, in order. The right primitive for that is a mapping, and it is
 nearly a drop-in. The writer earns its place on the latent sidecar, which is
 the opposite shape -- and that is where it went.
 
-Cleanup is the part that needed thought. The returned IMAGE is backed by its
+Cleanup is the part that needed thought, and the first answer was wrong in a
+way that only a real render exposed. The returned IMAGE is backed by its
 mapping, so the file cannot be removed while `run()` still has to hand it
-back, which means cleanup happens on the NEXT run rather than this one.
-Since ComfyUI also wipes its temp directory at startup, an orphan survives
-at most until the next chain or the next restart, and there is never more
-than one. On Windows a live mapping cannot be unlinked at all, so a file
-still in use raises and is skipped -- the guard is the operating system, not
-a lock file.
+back. The original plan was therefore to sweep stale files on the NEXT run,
+relying on Windows refusing to unlink a live mapping as the guard.
+
+**It never reclaimed anything.** ComfyUI keeps the previous run's output in
+its execution cache, so the mapping is still open when the next run starts;
+`os.remove` raised, and the handler passed on `OSError` without a word. Two
+renders left two 9 GB files on disk. The docstring asserted "there is never
+more than one" and the checker only tested a stale file that nothing held,
+so both the code and its test agreed with each other and neither agreed with
+reality. Ten renders would have been 92 GB of silent disk.
+
+Delete-on-close removes the problem rather than policing it. Windows has it
+natively as `O_TEMPORARY`; POSIX gets the same by unlinking the name while
+the descriptor stays open. The bytes then live exactly as long as something
+is using them, and a hard kill cleans up too, because the kernel closes the
+handles. The sweep stays as a safety net for files written by the previous
+build, and it now REPORTS what it could not remove instead of swallowing it
+-- silence is what let this go unnoticed.
 
 Two things the analysis this came from had wrong, both caught by writing it.
 `numpy` was not already imported in `h3_ref_chain.py`; it is now. And the

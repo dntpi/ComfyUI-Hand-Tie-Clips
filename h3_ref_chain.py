@@ -911,21 +911,50 @@ def _condition_pin_latent(lat, anchor, mode="off", noise=0.0, seed=0):
 MASTER_SPILL_BYTES = 2 << 30            # 2 GiB
 
 
+def _open_self_deleting(path, nbytes):
+    """A file sized to `nbytes` that removes itself when its last handle closes.
+
+    The first version of this spilled to an ordinary file and swept stale ones
+    on the next run. That was wrong, and measurably so: ComfyUI holds the
+    previous run's IMAGE output in its execution cache, so the mapping is still
+    open when the next run starts, `os.remove` raises, and the sweep skipped it
+    -- silently, because the handler passed on OSError. Two renders left two
+    9 GB files behind. The docstring claimed "there is never more than one".
+
+    Delete-on-close removes the whole problem instead of policing it. Windows
+    has it natively as `O_TEMPORARY`; POSIX gets the same behaviour by
+    unlinking immediately while the descriptor stays open. Either way the
+    bytes live exactly as long as something is using them, the file never
+    appears in a listing after that, and a crashed process cleans up on exit
+    because the kernel closes its handles.
+    """
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_TEMPORARY", 0)
+    fh = os.fdopen(os.open(path, flags), "r+b")
+    try:
+        fh.truncate(int(nbytes))
+        if not hasattr(os, "O_TEMPORARY"):
+            os.unlink(path)          # POSIX: the inode outlives the name
+    except Exception:
+        fh.close()
+        raise
+    return fh
+
+
 def _sweep_master_spills(keep):
-    """Delete master spill files left by earlier runs.
+    """Remove spill files a previous BUILD or a hard kill left behind.
 
-    The returned IMAGE is backed by its mapping, so the file cannot be removed
-    while `run()` still has to hand it back -- which means cleanup has to happen
-    on the NEXT run rather than this one. ComfyUI wipes its temp directory at
-    startup as well, so an orphan survives at most until the next chain or the
-    next restart, and there is never more than one.
+    Self-deleting files make this a safety net rather than the mechanism: it
+    exists for files written by the version of this code that did not use
+    delete-on-close, and for anything a `kill -9` orphaned before the handle
+    was open. It should normally find nothing.
 
-    On Windows a live mapping cannot be unlinked, so a file still in use raises
-    and is skipped. That is the guard, not an accident.
+    A file that cannot be removed is reported rather than swallowed. Silence is
+    what let 18 GB accumulate unnoticed the first time.
     """
     import folder_paths
     root = folder_paths.get_temp_directory()
-    freed = 0
+    freed = stuck = 0
     try:
         names = os.listdir(root)
     except OSError:
@@ -941,10 +970,17 @@ def _sweep_master_spills(keep):
             os.remove(path)
             freed += n
         except OSError:
-            pass                        # in use, or gone already
+            try:
+                stuck += os.path.getsize(path)
+            except OSError:
+                pass                    # gone between the listing and here
     if freed:
         print(f"[{TAG}] reclaimed {freed / 2**30:.1f} GB from an earlier "
               f"master spill", flush=True)
+    if stuck:
+        print(f"[{TAG}] {stuck / 2**30:.1f} GB of old master spills could not "
+              f"be removed (still mapped by this process). They clear when "
+              f"ComfyUI restarts; temp/ is wiped at startup.", flush=True)
 
 
 def _alloc_master(total_frames, height, width):
@@ -989,7 +1025,8 @@ def _alloc_master(total_frames, height, width):
         os.makedirs(root, exist_ok=True)
         path = os.path.join(root, f"htc_master_{uuid.uuid4().hex}.raw")
         _sweep_master_spills(path)
-        arr = np.memmap(path, dtype=np.float32, mode="w+", shape=shape)
+        fh = _open_self_deleting(path, nbytes)
+        arr = np.memmap(fh, dtype=np.float32, mode="r+", shape=shape)
         out = torch.from_numpy(arr)
         # Name the owner. The mapping is already kept alive by the tensor's
         # storage, so this changes no lifetime -- it gives anything that needs
@@ -999,7 +1036,7 @@ def _alloc_master(total_frames, height, width):
         # makes a view.
         out._htc_mmap = arr
         print(f"[{TAG}] master buffer: {gb:.1f} GB spilled to disk "
-              f"({os.path.basename(path)})", flush=True)
+              f"({os.path.basename(path)}, self-deleting)", flush=True)
         return out
     except Exception as e:  # noqa: BLE001
         # Falling back is correct -- a chain that renders slowly beats one that

@@ -130,7 +130,7 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 
 **Writing for it:** [PROMPTING.md](PROMPTING.md) is the authoring guide — the rules that come from what this model actually does, not from taste. The node's **WRITE** bar hands the whole job to a local model: describe the scene in a sentence and it fills the script and the reference rows for you. [prompt_pack/](prompt_pack/) is the same writer as a copy-paste prompt, for when you would rather work in a chat window.
 
-Each hop is native **MiniMax H3 Reference-to-Video**. Hops after the first are guided by the **previous hop's sampler AV latent** via `ComfyUI-H3-Motion-Context` when that pack is installed (22 picture frames + 24-frame end-aligned audio). Stock `MiniMaxH3AddGuide` is the fallback when Motion-Context is missing or the previous hop was a pixel cache hit. Voice stays as a reference every hop. Identity stills ride hop 1; later hops use the pin for wardrobe and room unless a ref lists those hops in `shots`. A 5 s hop drops the airlock on a continuous join — validate seams at 8 s or 15 s.
+Each hop is native **MiniMax H3 Reference-to-Video**. Hops after the first are guided by the **previous hop's sampler AV latent** via `ComfyUI-H3-Motion-Context` when that pack is installed (22 picture frames + 24-frame end-aligned audio). Stock `MiniMaxH3AddGuide` is the fallback when Motion-Context is missing or the previous hop was a pixel cache hit. Voice rides every hop under `hop_script=verbatim`; under `next` — which a shot plan forces, so it is the default path whenever you use SHOTS — the voice is a hop 1 reference only, and the console says `voice ref stays off this continue` when it drops. Identity stills ride hop 1; later hops use the pin for wardrobe and room unless a ref lists those hops in `shots`. A 5 s hop drops the airlock on a continuous join — validate seams at 8 s or 15 s.
 
 This is not the seamless-chain pack. No airlock script, no Motion-Context, no interior patch.
 
@@ -301,6 +301,24 @@ Fields, all optional except `beat`:
 | `locked` | Reuse this shot's cached render even when its inputs changed -- freeze a take you like while you rewrite the hops around it. Needs `cache_hops=on`, and give the shot an `id`. Not to be confused with `subjects.N.locked`, which is identity text. |
 | `id` | Stable name, used as the cache pointer. Generated if absent. |
 
+### Hops of different lengths
+
+`duration` is per shot, and everything downstream sizes itself around it — the master buffer, the reference-video decode and the per-hop cache key all read the real lengths:
+
+```json
+{
+  "shots": [
+    {"beat": "She slams the drawer shut.",            "duration": "5 s",  "directives": {"join": "cut", "pace": "urgent"}},
+    {"beat": "She crosses to the window, still talking.", "duration": "15 s", "directives": {"join": "continuous", "camera": "push_in"}},
+    {"beat": "She stops and looks back."}
+  ]
+}
+```
+
+The third shot has no `duration`, so it takes the widget's. Labels are the widget's too — `5 s`, `7 s`, `8 s`, `10 s`, `15 s`. That set is fixed, not arbitrary: every value has to land on H3's frame grid (`n % 17 == 5` at 24 fps), so there is no `6.5 s`. Editing one shot's length invalidates that hop and the hops after it, and nothing before it.
+
+**Short hops cut, long hops flow.** Overlap is chain-wide — 0.9 s by default — so a 5 s hop asking for `join: continuous` spends a fifth of itself on the airlock, and the node prints a note saying so. That constraint matches how you would edit anyway: quick beats take a cut, flowing takes want length.
+
 ### Directives
 
 | axis | options |
@@ -417,7 +435,7 @@ The node lints both and prints what it finds before you render.
   "refs": [
     {"tag": "hero_face",   "file": "cook_face.jpg",   "subject": 1, "retention": "fully_preserved"},
     {"tag": "hero_outfit", "file": "cook_apron.jpg",  "subject": 1, "retention": "partially_copy"},
-    {"tag": "kitchen",     "file": "kitchen_wide.jpg", "retention": "reference"}
+    {"tag": "kitchen",     "file": "kitchen_wide.jpg", "retention": "reference", "mp": 0.3}
   ],
   "subjects": {
     "1": {"name": "the cook", "locked": "the same face, the same short dark hair"}
@@ -430,6 +448,10 @@ The node lints both and prints what it finds before you render.
 `subject` groups pictures per person. This matters: declaring every picture as a photo of `<Subject 1>` makes the model render the *average* of two different people.
 
 `retention` says how much of a picture carries over — `fully_preserved` (face and bone structure exactly), `partially_copy` (the garment and its cut), `reference` (layout, surfaces and light, i.e. a place). Refs with a subject default to `fully_preserved`; everything else defaults to `reference`.
+
+`mp` caps one picture's pixel budget in megapixels. It is a **token dial, not a quality one**: H3 turns every reference into `latent_h × latent_w` entries — pixel area ÷ 256 — and attends over all of them on every step of every hop, so a location plate costing what a face costs is waste. A 0.3 MP place plate is ~1,170 tokens; a 2 MP portrait is ~7,800. Absent (or `0`) means no cap. The rail offers 0.3–2.0; `ref_plan` accepts up to 16.
+
+> **The dial is inert at the default.** On `ref_image_size=match` every reference is first scaled down to the output's pixel area, and `mp` only ever caps *further* — so at 768p (~1.03 MP) the 1.5 and 2.0 settings change nothing. The real per-reference resolution control is `ref_image_size=max` **plus** `mp`, never `mp` on its own.
 
 Add `"shots": [1, 2]` to a ref to keep it out of the hops it does not belong in. On a continuation chain (`hop_script=next` / a shot plan), omitting `shots` means **hop 1 only** — right for a place plate, which beats the pin if it rides a hop set somewhere else. **Put face plates on every hop:** a hop with no face reference comes back a different person and no later hop recovers.
 
@@ -573,7 +595,7 @@ Three widgets tune the pin, all defaulting to their pre-existing behaviour:
 | widget | default | what it does |
 |---|---|---|
 | `audio_pin_frames` | `24` | Audio context handed to the pin, in frames. 24 is one second on the model's 40 Hz grid. Longer audio context costs conditioning rows but **no delivered frames**, so it is the cheap lever on speech that breaks across a join — try `96` (4 s) for continuous dialogue. |
-| `pin_renorm` | `off` | Rescales each pinned latent so its spread matches the one hop 2 established. The pin's own sigma climbs hop over hop and that inflated pin conditions the next one, so texture ratchets along a long chain. A scalar rescale moves no structure, so it cannot blur detail. Video and audio are corrected separately — their sigmas drift by different amounts. Worth turning on for 3+ hops. |
+| `pin_renorm` | `off` | Rescales each pinned latent back toward the first pinned hop's, to fight the texture ratchet — measured at +4.2% mid-band per join, flat inside each hop. Both modes are scalar rescales, so neither moves structure or can blur detail, and video and audio are corrected separately because their statistics drift independently. **`band`** matches the high-band fraction, which is the statistic the ratchet actually moves — a 12.74% band drift went to −0.04% under it. **`sigma`** matches total spread: it is the original lever, kept for old workflows (saved as `on` before 0.5) and measurably the wrong statistic — total sigma *falls* across a chain whose picture is baking, so it corrects the wrong way and left that same 12.74% drift unchanged. Use `band` for 3+ hops. |
 | `pin_noise` | `0.0` | Mixes seeded noise into the pin — the other half of the same fix. Small values only; measured gains reverse above `0.10`, which is why the range stops there. |
 
 The DiT pin is the previous hop’s **sampler latent** through Motion-Context when present (no decode/re-encode; audio window ends at the join). AddGuide on decoded frames is the fallback. `pin_to_qwen` still shows the incoming state to the text encoder:

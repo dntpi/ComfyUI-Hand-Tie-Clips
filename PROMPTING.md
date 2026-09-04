@@ -485,6 +485,17 @@ alignment (`n % 17 == 5` at 24 fps).
 
 A shot may override the chain with `"duration": "7 s"`, using the same labels.
 
+### Short hops cut, long hops flow
+
+Overlap is chain-wide — 0.9 s by default — and it comes out of every hop that joins
+continuously. A 5 s hop asking for `join: continuous` therefore spends a fifth of
+itself on the airlock, and the node prints a note saying so. A lucky seed still
+joins, but 8 s and 15 s are the canvases the join was validated on.
+
+This is not a limitation to write around. It is the same instinct you would edit
+with: a quick beat takes a cut, a flowing take wants length. Give the short shots
+`join: cut` and spend the continuous joins on the long ones.
+
 ---
 
 ## Read it before you render it

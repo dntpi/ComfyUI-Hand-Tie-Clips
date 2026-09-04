@@ -902,6 +902,11 @@ def _condition_pin_latent(lat, anchor, mode="off", noise=0.0, seed=0):
     return new, anchor
 
 
+def _core_add_guide(cond, latent, **kw):
+    """MiniMaxH3AddGuide at frame 0 -- the one shape this pack ever needs."""
+    return MiniMaxH3AddGuide.execute(cond, latent, 0, **kw)
+
+
 def _pin_mech_for(hop_index, overlap_n, prev_sampled):
     """Which mechanism `_pin_continue` will pick, without doing the work.
 
@@ -1868,6 +1873,29 @@ class HandTieClips:
                         "join at 5 s.",
                         flush=True,
                     )
+        # anchor=restart, checked up front: it needs a photograph to restart ON,
+        # and it is a cut by construction -- the hop opens on the reference
+        # pose, not where the previous hop ended. Asking for a continuous join
+        # across a restart is asking for two incompatible things.
+        for _i, _sh in enumerate(shots):
+            if str((_sh or {}).get("anchor") or "") != "restart":
+                continue
+            if _i == 0:
+                raise ValueError(
+                    f"{TAG}: shot 1 cannot be anchor=restart -- hop 1 is already "
+                    "a chain start. Remove it, or move it to a later shot.")
+            if start_image is None:
+                raise ValueError(
+                    f"{TAG}: shot {_i + 1} is anchor=restart but no start image "
+                    "is set. A restart re-anchors the chain on that photograph; "
+                    "without one there is nothing to restart from. Set "
+                    "start_image_file in MEDIA, or remove the anchor.")
+            if ((_sh.get("directives") or {}).get("join")) == "continuous":
+                raise ValueError(
+                    f"{TAG}: shot {_i + 1} is anchor=restart with "
+                    "join=continuous. A restart is a cut -- it opens on the "
+                    "start image's pose, not the previous hop's last frame. "
+                    "Use join=cut (or match_cut) on that shot.")
         for i, ln in enumerate(lengths):
             if overlap_n >= ln:
                 raise ValueError(
@@ -2327,10 +2355,20 @@ class HandTieClips:
             # must show staleness before queuing or it reads as a bug.
             hop_key = None
             cached = None
-            pin_mech_pred = _pin_mech_for(i, overlap_n, prev_sampled)
+            hop_restart = i > 0 and str(shot.get("anchor") or "") == "restart"
+            if hop_restart:
+                print(f"[{TAG}] hop {i + 1}: ANCHOR RESTART -- start image is "
+                      f"frame 0, the previous hop is not relayed", flush=True)
+            pin_mech_pred = ("none" if hop_restart
+                             else _pin_mech_for(i, overlap_n, prev_sampled))
             pin_mech_used = pin_mech_pred
             if hop_store is not None:
-                hop_key = _store.hop_key(prev_key, {
+                # `None`, not prev_key, on a restart: the hop genuinely does
+                # not depend on its predecessor, so chaining it would re-render
+                # every restart whenever anything earlier moved -- and later
+                # hops should chain from the restart, which they do because
+                # this key becomes their prev_key.
+                hop_key = _store.hop_key(None if hop_restart else prev_key, {
                     "chain": chain_salt,
                     "block": block,
                     "len": hop_length,
@@ -2350,6 +2388,9 @@ class HandTieClips:
                     # has no sampler latent and falls back to AddGuide, which
                     # is a different render of the same inputs.
                     "pin_mech": pin_mech_pred,
+                    # Explicit, not implied by pin_mech="none": a restart also
+                    # drops prev_key, and a key must say what produced it.
+                    "restart": hop_restart,
                     # Only from hop 2. Hop 1 has no pin -- `_pin_mech_for`
                     # returns "none" for index 0 and the conditioning branch is
                     # `elif i > 0` -- so its frames cannot depend on these
@@ -2423,12 +2464,20 @@ class HandTieClips:
                 )
                 cond, latent = _result(packed)[0], _result(packed)[1]
 
-                if i == 0 and start_image is not None:
-                    cond = _result(MiniMaxH3AddGuide.execute(
-                        cond, latent, 0, vae=vae, audio_vae=None,
-                        image=start_image[:1], audio=None,
-                    ))[0]
-                elif i > 0:
+                if (i == 0 or hop_restart) and start_image is not None:
+                    # A restart hop is a chain start. It gets the photograph as
+                    # its frame-0 anchor exactly as hop 1 does, and NOTHING from
+                    # the previous hop reaches it -- no sampler latent, no
+                    # decoded tail. That is the entire point: every hop
+                    # otherwise inherits its predecessor's end state, and a
+                    # clip's end is its most settled moment, so motion and
+                    # lighting response decay hop over hop. A restart bounds
+                    # that accumulation to the distance between restarts
+                    # instead of letting it run the length of the chain.
+                    cond = _result(_core_add_guide(
+                        cond, latent, vae=vae, audio_vae=None,
+                        image=start_image[:1], audio=None))[0]
+                elif i > 0 and not hop_restart:
                     pin_latent = prev_sampled
                     if pin_latent is not None:
                         pin_latent, pin_anchor = _condition_pin_latent(

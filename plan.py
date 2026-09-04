@@ -36,10 +36,28 @@ TAG = "HandTieClips"
 # hand-authored shot_plan lost it the first time anyone touched a card. Leaving
 # it out means _norm_shot's unknown-field error names it and points at `shots`.
 _SHOT_KEYS = {"id", "beat", "directives", "prose",
-              "seed", "steps", "duration", "locked", "tone"}
+              "seed", "steps", "duration", "locked", "tone", "anchor"}
 
 
 TONE_VALUES = ("", "free", "rebase")
+
+# A shot's `anchor` opt-out of the relay. "" keeps the shipped behaviour: the
+# hop is pinned to the previous hop's sampler latent (or its decoded pixels).
+# "restart" makes the hop a CHAIN START -- `start_image` becomes its frame-0
+# anchor exactly as hop 1 gets, and nothing from the previous hop reaches it.
+#
+# Why the field exists. Every hop inherits its predecessor's END state, and a
+# clip's end is its most settled moment, so motion, lighting response and
+# contrast decay hop over hop. Measured on a 6-hop chain with identical beats:
+# the subject's movement fell 39%, the background's brightness swing fell 64%,
+# and the correlation between lighting and head position went from +0.58 to
+# -0.49 -- it inverted. No presentation lever stops that, because they all
+# still hand the next hop the same settled state. A restart bounds the
+# accumulation to the distance between restarts.
+#
+# It is a CUT, by construction: the hop opens on the reference photograph's
+# pose, not where the previous hop ended.
+ANCHOR_VALUES = ("", "restart")
 
 
 def _tone_field(v, where):
@@ -50,6 +68,19 @@ def _tone_field(v, where):
     if v not in TONE_VALUES:
         raise ValueError(
             f"{TAG}: {where}tone must be one of {[x for x in TONE_VALUES if x]} "
+            f"(or omitted), got {v!r}"
+        )
+    return v
+
+
+def _anchor_field(v, where):
+    """Validate a shot's `anchor`. -> "" | "restart"."""
+    if v in (None, "", False):
+        return ""
+    v = str(v).strip().lower()
+    if v not in ANCHOR_VALUES:
+        raise ValueError(
+            f"{TAG}: {where}anchor must be {[x for x in ANCHOR_VALUES if x]} "
             f"(or omitted), got {v!r}"
         )
     return v
@@ -100,6 +131,7 @@ def _norm_shot(raw, i):
         "duration": (str(raw["duration"]).strip() or None) if raw.get("duration") else None,
         "locked": bool(raw.get("locked")),
         "tone": _tone_field(raw.get("tone"), where),
+        "anchor": _anchor_field(raw.get("anchor"), where),
     }
 
 

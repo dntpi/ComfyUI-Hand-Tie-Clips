@@ -127,7 +127,7 @@
                 "enum": [
                   "restart"
                 ],
-                "description": "Re-anchor the chain on the start image at this hop instead of relaying the previous one. Bounds the quality decay on a long chain: every hop otherwise inherits its predecessor's most settled frames, so motion and lighting response fade the further in you go. It is a CUT -- the hop opens on the start image's pose, not where the previous hop ended -- so pair it with join 'cut' and write the beat as a fresh start. Needs a start image, never on shot 1, and only on a chain long enough to need one (roughly every 4-6 hops)."
+                "description": "Re-anchor the chain on the start image at this hop instead of relaying the previous one. Bounds the quality decay on a long chain: every hop otherwise inherits its predecessor's most settled frames, so motion and lighting response fade the further in you go. It is a CUT -- the hop opens on the start image's pose, not where the previous hop ended -- so pair it with join 'hard_cut' and write the beat as a fresh start. Needs a start image, never on shot 1, and only on a chain long enough to need one (roughly every 4-6 hops)."
               }
             }
           },

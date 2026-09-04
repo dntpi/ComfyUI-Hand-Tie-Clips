@@ -1895,7 +1895,7 @@ class HandTieClips:
                     f"{TAG}: shot {_i + 1} is anchor=restart with "
                     "join=continuous. A restart is a cut -- it opens on the "
                     "start image's pose, not the previous hop's last frame. "
-                    "Use join=cut (or match_cut) on that shot.")
+                    "Use join=hard_cut or match_cut on that shot.")
         for i, ln in enumerate(lengths):
             if overlap_n >= ln:
                 raise ValueError(

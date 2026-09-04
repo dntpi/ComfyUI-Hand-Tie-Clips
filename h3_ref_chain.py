@@ -1884,7 +1884,11 @@ class HandTieClips:
                 raise ValueError(
                     f"{TAG}: shot 1 cannot be anchor=restart -- hop 1 is already "
                     "a chain start. Remove it, or move it to a later shot.")
-            if start_image is None:
+            # `start_image_file`, not `start_image`: this validation runs
+            # before any media is loaded, which is the whole point of it -- a
+            # bad plan should fail on the queue, not three hops in. Whether the
+            # named file actually loads is a separate check further down.
+            if not str(start_image_file or "").strip():
                 raise ValueError(
                     f"{TAG}: shot {_i + 1} is anchor=restart but no start image "
                     "is set. A restart re-anchors the chain on that photograph; "

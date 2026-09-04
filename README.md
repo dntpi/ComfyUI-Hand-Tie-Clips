@@ -410,6 +410,33 @@ The node lints both and prints what it finds before you render.
 
 `prompt_pack/` is the same writer as a copy-paste prompt for a chat window.
 
+## Reference media: three clips, three voices
+
+H3 takes **9 reference pictures, 3 reference videos and 3 standalone reference
+audios**. Pictures go through the REFS rail (see below). The clips and voices
+are in **MEDIA**, one slot each until 1.2:
+
+| slot | cited as | notes |
+|---|---|---|
+| `reference clip` 1-3 | `<Video 1..3>` | motion/look plates the whole chain reads |
+| `voice` 1-3 | `<Audio 1..3>` | timbre references for hop 1 |
+
+**Numbering is dense.** Fill slots 1 and 3 and you get `<Video 1>` and
+`<Video 2>` — there is no gap. That means **clearing a slot renumbers the ones
+after it**, so a beat that names an ordinal will cite a different clip. Refer to
+media by what it is, not by its number, unless you are sure the slots above it
+are filled.
+
+**Reference clips now carry their own sound.** Each clip's audio track is
+decoded and handed to the model alongside its picture. Before 1.2 a reference
+clip arrived silent even when the file had sound. A clip with no usable audio
+track just passes silent and says so in the log.
+
+**Trim them.** Every reference audio is attended on every step of every hop, and
+H3 encodes the whole file. With one voice the trim window was an optimisation;
+with three it is not. Slots 2 and 3 share slot 1's `reference video size`, which
+is a decode budget rather than a creative setting.
+
 ## Reference register
 
 ```json

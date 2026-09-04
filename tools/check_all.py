@@ -39,6 +39,7 @@ CHECKS = [
     ("check_texture.py", []),
     ("check_workflows.py", []),
     ("check_features.py", []),
+    ("check_media_slots.py", []),
     ("check_planner.py", []),
     ("gen_schema.py", ["--check"]),
 ]

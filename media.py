@@ -446,7 +446,7 @@ def load_video(name, max_frames=None, start=0.0, end=0.0,
         return None
 
 
-def load_audio(name, start=0.0, end=0.0):
+def load_audio(name, start=0.0, end=0.0, kinds=("audio",)):
     """A take as ComfyUI's AUDIO dict, or None.
 
     Shape is `[batch, channels, samples]`, which is what every AUDIO consumer
@@ -469,7 +469,10 @@ def load_audio(name, start=0.0, end=0.0):
     token the DiT attends over on every step of every hop. An untrimmed
     three-minute take is a large, silent, permanent tax on the render.
     """
-    path = resolve(name, kinds={"audio"})
+    # `kinds` is a parameter so a VIDEO can be asked for its own soundtrack:
+    # core takes ref_video_audios paired with each reference clip, and a clip
+    # handed over silent is a channel left at zero. Default is unchanged.
+    path = resolve(name, kinds=set(kinds))
     if path is None:
         return None
     try:

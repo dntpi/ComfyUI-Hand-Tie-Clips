@@ -2298,3 +2298,66 @@ conclusion was reached by reasoning about what the code must be doing rather
 than reading where the cost actually lands, and both times the reasoning was
 written down confidently enough that it stopped anyone looking again. A user
 asking "possible?" was what reopened it.
+
+## 48. The sidecar was a pickle, and did not need to be (2026-09-04)
+
+`store.py` wrote the hop's sampler latent with `torch.save` and read it back
+with `weights_only=False`. The comment beside the read was honest about why
+-- this is our own dict, written by our own `put()`, into ComfyUI's temp
+directory, not a downloaded checkpoint -- and it was true. It was also the
+next thing a registry scanner reaches for after the subprocess work in 0.4.1
+through 0.4.3, and being right about a finding is not the same as not having
+one.
+
+Nothing about the payload needed a pickle. The awkward member is `samples`,
+which is a `comfy.nested_tensor.NestedTensor`, and `latents.parts()` has
+decomposed that into plain tensors since the pin levers needed exactly that
+decomposition. A flat dict of tensors plus a small JSON header is a
+safetensors file wearing a different name, and safetensors is already a hard
+dependency of ComfyUI. The sidecar is now `.latent.safetensors`: components
+as `samples.N`, tensor members of the dict as `extra.<key>`, scalar members
+in the header.
+
+Three things this had to get right, and they are asserted in
+`tools/check_latent_sidecar.py` rather than argued for here.
+
+Bit-identical, not close. A cached hop's latent becomes the next hop's
+Motion-Context pin, so a chain resumed from cache that differs at all from
+an uninterrupted one would mean the cache changes the output -- the single
+thing it must never do. The test round-trips through a real file on disk and
+requires `torch.equal`, not a tolerance.
+
+Every member survives, including ones this code has never seen. A latent
+dict that came back missing a key would be quietly not the latent that was
+stored, so an unrepresentable member refuses the whole write rather than
+dropping it. That refusal costs nothing, because the caller already had a
+correct answer for it: cache the frames, skip the latent, fall back to the
+pixel pin. That path was built when latents were first stored and it is
+exercised here rather than added.
+
+Old `.pt` entries are not read. The extension changed, so they are simply
+invisible, and `_get_latent`'s docstring already promised what happens then
+-- entries written by an older build have no sidecar and keep working. Not
+reading them is the point: keeping a compatibility path would keep
+`weights_only=False` in the file, which is the thing being removed.
+
+The interesting part was the first version being wrong in a way only the
+repository's own tooling caught. It recorded the container's module and
+qualname in the header and rebuilt it with `importlib.import_module`, which
+is more general and reads to a registry scanner as
+`python_bytecode_manipulation`. `check_publish.py` failed on it immediately.
+Trading the pickle finding for a dynamic-import finding would have been a
+lateral move dressed up as a fix, and the generality bought nothing:
+`parts()` recognises exactly two shapes, a bare tensor and a nested one. The
+header now names which, and the rebuild is a static import. If core ever
+moves `NestedTensor`, that import raises, the existing handler logs it and
+the hop falls back to the pixel pin -- loud, and already handled.
+
+Worth stating plainly, because the analysis this came from got it backwards
+at first: the incremental-writer machinery from silveroxides'
+unifiedefficientloader is not what this wanted. Its cleverness is a reserved
+header that lets you stream thousands of tensors whose shapes you do not
+know yet. This is a handful of tensors of known shape written at once. Plain
+`save_file` is the whole job. The place that machinery would earn its keep
+is the master frame buffer, and that is the opposite direction -- one
+tensor, known shape, contiguous ranges, which wants a memmap instead.

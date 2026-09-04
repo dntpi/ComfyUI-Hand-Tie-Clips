@@ -28,14 +28,18 @@ import time
 
 import av
 import numpy as np
+import safetensors
 import torch
+from safetensors.torch import save_file as _st_save
+
+from . import latents as _latents
 
 TAG = "HandTieClips"
 
 VIDEO_EXT = ".mkv"
 AUDIO_EXT = ".npy"
 META_EXT = ".json"
-LATENT_EXT = ".latent.pt"
+LATENT_EXT = ".latent.safetensors"
 
 # FFV1 through PyAV, in process. This used to shell out to an `ffmpeg` binary
 # on PATH, which cost two things:
@@ -101,6 +105,95 @@ def hop_key(prev_key, payload):
     h.update((prev_key or "root").encode())
     h.update(json.dumps(payload, sort_keys=True, default=str).encode())
     return h.hexdigest()[:24]
+
+
+def _latent_to_flat(latent):
+    """A latent dict -> (flat tensor dict, structure metadata), or None.
+
+    The sidecar used to be `torch.save`, which means a pickle, which means the
+    read had to pass `weights_only=False`. That is the single most obvious
+    thing a registry scanner reaches for after the subprocess work in
+    0.4.1-0.4.3, and it is unnecessary here: `samples` is the only awkward
+    member, and `latents.parts()` already decomposes it into plain tensors
+    because the pin levers needed exactly that.
+
+    Returns None when anything is not representable, which the caller already
+    treats as "cache the frames, skip the latent" -- the documented
+    best-effort behaviour, not a new failure mode.
+    """
+    if not isinstance(latent, dict) or "samples" not in latent:
+        return None
+    x = latent["samples"]
+    parts = _latents.parts(x)
+    if not parts:
+        return None
+
+    flat, extra = {}, {}
+    for i, t in enumerate(parts):
+        if not isinstance(t, torch.Tensor):
+            return None
+        # .clone() because safetensors refuses tensors that share storage, and
+        # unbind() on some containers hands back views of one buffer.
+        flat[f"samples.{i}"] = t.detach().cpu().contiguous().clone()
+
+    if isinstance(x, torch.Tensor):
+        container = {"kind": "tensor"}
+    else:
+        # `parts()` recognises exactly two shapes, so the header names which one
+        # rather than a class path to import. An importable name would be more
+        # general and is not worth it: dynamic import reads to the registry
+        # scanner as bytecode manipulation, and the generality buys nothing
+        # `parts()` can actually produce.
+        cls = type(x)
+        container = {"kind": "nested",
+                     "cls": f"{cls.__module__}.{cls.__qualname__}"}
+
+    for k, v in latent.items():
+        if k == "samples":
+            continue
+        if isinstance(v, torch.Tensor):
+            flat[f"extra.{k}"] = v.detach().cpu().contiguous().clone()
+        elif isinstance(v, (str, int, float, bool)) or v is None:
+            extra[k] = v
+        else:
+            # Silently dropping a key would make a restored latent quietly
+            # different from the one that was stored, which is the whole class
+            # of bug the hop cache exists to avoid.
+            return None
+
+    meta = {"v": 1, "n": len(parts), "container": container, "extra": extra}
+    return flat, {"htc": json.dumps(meta, separators=(",", ":"))}
+
+
+def _latent_from_flat(flat, meta_json):
+    """Inverse of `_latent_to_flat`. -> latent dict, or None if unreadable."""
+    meta = json.loads(meta_json)
+    if int(meta.get("v", 0)) != 1:
+        return None
+    n = int(meta["n"])
+    parts = [flat[f"samples.{i}"] for i in range(n)]
+
+    c = meta["container"]
+    if c["kind"] == "tensor":
+        samples = parts[0]
+    elif c["kind"] == "nested":
+        # Static import, deliberately. If core ever renames or moves this, the
+        # import raises, the caller logs it and falls back to the pixel pin --
+        # a loud, already-handled failure, which is the right trade against a
+        # dynamic import that a scanner reads as bytecode manipulation.
+        from comfy.nested_tensor import NestedTensor
+        if c.get("cls") != f"{NestedTensor.__module__}.{NestedTensor.__qualname__}":
+            return None
+        samples = NestedTensor(parts)
+    else:
+        return None
+
+    out = {"samples": samples}
+    out.update(meta.get("extra") or {})
+    for k, v in flat.items():
+        if k.startswith("extra."):
+            out[k[len("extra."):]] = v
+    return out
 
 
 class HopStore:
@@ -173,7 +266,14 @@ class HopStore:
         if latent is not None:
             tmp = self._p(key, LATENT_EXT + ".part")
             try:
-                torch.save(latent, tmp)
+                packed = _latent_to_flat(latent)
+                if packed is None:
+                    raise ValueError(
+                        "latent is not representable without pickling "
+                        "(unrecognised samples container, or a non-scalar "
+                        "non-tensor member)")
+                flat, st_meta = packed
+                _st_save(flat, tmp, metadata=st_meta)
                 os.replace(tmp, self._p(key, LATENT_EXT))
             except Exception as e:  # noqa: BLE001
                 print(f"[{TAG}] hop {key[:8]}: latent not cached ({e!r}); a hit "
@@ -203,9 +303,21 @@ class HopStore:
         if not os.path.exists(path):
             return None
         try:
-            # weights_only=False: this is a latent *dict*, written by our own
-            # put() into ComfyUI's temp directory, not a downloaded checkpoint.
-            return torch.load(path, map_location="cpu", weights_only=False)
+            # safetensors, deliberately: the previous format was torch.save,
+            # and reading it back needed weights_only=False -- a pickle load of
+            # a file on disk, which is the next thing a registry scanner
+            # reaches for and is not something this pack needs. Nothing here is
+            # unrepresentable as plain tensors plus a small JSON header.
+            with safetensors.safe_open(path, framework="pt", device="cpu") as fh:
+                meta = (fh.metadata() or {}).get("htc")
+                if meta is None:
+                    raise ValueError("sidecar has no htc header")
+                flat = {k: fh.get_tensor(k) for k in fh.keys()}
+            out = _latent_from_flat(flat, meta)
+            if out is None:
+                raise ValueError("sidecar header is a version this build "
+                                 "does not read")
+            return out
         except Exception as e:  # noqa: BLE001
             print(f"[{TAG}] hop {key[:8]}: cached latent unreadable ({e!r}); "
                   f"falling back to the pixel pin", flush=True)

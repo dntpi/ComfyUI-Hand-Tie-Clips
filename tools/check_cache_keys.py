@@ -30,6 +30,7 @@ to agree, because a fingerprint that always changes is a cache that never hits.
 """
 from __future__ import annotations
 
+import functools
 import importlib.util
 import os
 import sys
@@ -147,7 +148,40 @@ def main():
        != fp(_Patcher(transformer=dit(_closure_configured(0.50)))),
        "the SLA sparsity regression")
 
-    print("mutable run state is still excluded")
+    print("settings reached through a binding")
+    # A node hands the model `self.method` rather than `self`, or a
+    # functools.partial rather than a closure. Both are callable, both have an
+    # empty __dict__ of their own, and neither has cells -- so before they were
+    # unwrapped, both collapsed to a constant and every setting behind them was
+    # invisible. These are the object bug and the SLA bug in their third and
+    # fourth binding shapes.
+    class _Bound:
+        def __init__(self, reuse_threshold=0.05):
+            self.reuse_threshold = reuse_threshold
+
+        def patch(self, *a, **kw):
+            return None
+
+    ck("a bound method carries its instance's settings",
+       fp(_Patcher(transformer=dit(_Bound(0.05).patch)))
+       != fp(_Patcher(transformer=dit(_Bound(0.20).patch))),
+       "vars() on a bound method sees the function, not the instance")
+    ck("two identical bound methods agree",
+       fp(_Patcher(transformer=dit(_Bound(0.05).patch)))
+       == fp(_Patcher(transformer=dit(_Bound(0.05).patch))))
+
+    def _plain_override(*a, **kw):
+        return None
+
+    ck("a functools.partial carries its keywords",
+       fp(_Patcher(transformer=dit(functools.partial(_plain_override, sparsity=0.90))))
+       != fp(_Patcher(transformer=dit(functools.partial(_plain_override, sparsity=0.50)))),
+       "no __name__, no cells, empty __dict__")
+    ck("a functools.partial carries its positional args",
+       fp(_Patcher(transformer=dit(functools.partial(_plain_override, 0.90))))
+       != fp(_Patcher(transformer=dit(functools.partial(_plain_override, 0.50)))))
+
+    print("mutable run state")
     shared = {"calls": 0}
 
     def _with_state():
@@ -156,9 +190,32 @@ def main():
         return _override
     before = fp(_Patcher(transformer=dit(_with_state())))
     shared["calls"] += 17
-    ck("a counter the sampler advances does not move the key",
+    ck("a counter in a closure cell does not move the key",
        before == fp(_Patcher(transformer=dit(_with_state()))),
-       "hashing it would miss the cache on every queue")
+       "hashing a mutable container would miss the cache on every queue")
+
+    # The other half of that tradeoff, asserted rather than left implicit: a
+    # PUBLIC SCALAR attribute is hashed even when the node mutates it, so a
+    # node carrying a step counter on itself moves the fingerprint between runs
+    # and the cache stops hitting while it is installed. That is deliberate --
+    # this pack renders twice rather than serving the wrong frames once -- but
+    # it is a real cost, and the run log prints the fingerprint so it can be
+    # seen rather than guessed at. If this assertion ever flips, the tradeoff
+    # was changed and the docstring on `_object_scalars` needs to change with it.
+    class _Counting:
+        def __init__(self):
+            self.reuse_threshold = 0.05
+            self.cnt = 0
+
+        def __call__(self, *a, **kw):
+            return None
+
+    counting = _Counting()
+    seen = fp(_Patcher(transformer=dit(counting)))
+    counting.cnt += 7
+    ck("a public scalar counter DOES move the key (documented cost)",
+       seen != fp(_Patcher(transformer=dit(counting))),
+       "wasteful, not wrong -- see _object_scalars")
 
     print()
     if FAIL:

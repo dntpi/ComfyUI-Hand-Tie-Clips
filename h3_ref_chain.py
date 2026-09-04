@@ -424,6 +424,47 @@ def _model_fingerprint(model):
                  and (isinstance(v, (str, int, float, bool)) or v is None)]
         return "{" + ",".join(parts) + "}" if parts else ""
 
+    def _callable_scalars(fn, depth=0):
+        """Settings a callable carries, whichever way it carries them.
+
+        There are four ways a node hands a configured callable to the model and
+        all four have to reach the hash, because they are interchangeable from
+        the installing node's point of view and indistinguishable from here:
+
+          * a closure          -- cells               (`_closure_scalars`)
+          * a configured instance -- its attributes   (`_object_scalars`)
+          * a BOUND METHOD of a configured instance -- neither. `vars()` on a
+            bound method proxies to the underlying *function's* `__dict__`,
+            which is empty, so the instance's settings were invisible; only
+            `__qualname__` survived. A node registering `self.forward` rather
+            than `self` is the object case one attribute away.
+          * a `functools.partial` -- neither either. It has no `__name__`, no
+            `__qualname__`, no `__closure__`, and an empty `__dict__`, so it
+            collapsed to the constant "fn()" exactly as a bare instance did.
+            Everything it carries is in `func`, `args` and `keywords`.
+
+        Depth-bounded because `partial` can wrap `partial`.
+        """
+        parts = [_closure_scalars(fn), _object_scalars(fn)]
+        if depth <= 3:
+            owner = getattr(fn, "__self__", None)
+            if owner is not None:
+                parts.append("@" + type(owner).__name__ + _object_scalars(owner))
+            inner = getattr(fn, "func", None)
+            if inner is not None and callable(inner):
+                bound = ["<" + _callable_scalars(inner, depth + 1)]
+                for a in (getattr(fn, "args", None) or ()):
+                    bound.append(repr(a) if isinstance(a, (str, int, float, bool)) or a is None
+                                 else type(a).__name__)
+                kw = getattr(fn, "keywords", None) or {}
+                for k in sorted(kw, key=str):
+                    v = kw[k]
+                    bound.append(f"{k}=" + (repr(v)
+                                            if isinstance(v, (str, int, float, bool)) or v is None
+                                            else type(v).__name__))
+                parts.append(",".join(bound) + ">")
+        return "".join(parts)
+
     def _scalars(obj, depth=0):
         """Only names and scalars -- tensors and mutable state are not stable."""
         if depth > 3:
@@ -440,7 +481,7 @@ def _model_fingerprint(model):
         if isinstance(obj, (str, int, float, bool)) or obj is None:
             return repr(obj)
         if callable(obj):
-            return _closure_scalars(obj) + _object_scalars(obj)
+            return _callable_scalars(obj)
         return type(obj).__name__ + _object_scalars(obj)
 
     h.update(_scalars(transformer).encode())
@@ -2084,8 +2125,15 @@ class HandTieClips:
             hop_store = _store.HopStore(
                 os.path.join(folder_paths.get_temp_directory(), "h3_ref_chain_hops"),
                 budget_gb=float(cache_budget_gb), fps=FPS)
+            # The fingerprint is printed because it is the one cache input a
+            # user cannot see and cannot derive. If a run that should have hit
+            # re-rendered everything, this line moving between two runs says so
+            # in one glance -- and a node that mutates a public scalar attribute
+            # on itself between queues (see `_object_scalars`) is exactly the
+            # case that would otherwise look like the cache is simply broken.
             print(f"[{TAG}] hop cache: {hop_store.root} "
-                  f"(budget {float(cache_budget_gb):.0f} GB)", flush=True)
+                  f"(budget {float(cache_budget_gb):.0f} GB, model {model_fp})",
+                  flush=True)
         # Note on how render_from works, since this is where the store appears:
         # the leading hops are NOT seeded into prev_imgs / prev_audio /
         # prev_sampled / prev_key from here. They run through the loop like any

@@ -357,10 +357,15 @@ to 4 off disk. Hop 6 was rendered *from* hop 5, so it has to. **Edit the
 earliest hop you dislike and work forward** -- that way each hop is paid for
 once.
 
-Anything chain-wide re-renders everything: resolution, aspect, overlap, sampler,
-scheduler, either shift, `ref_image_size`, `pin_to_qwen`, the LoRA stack, or
-**any reference picture** (keyed on pixels, so a re-crop counts even under the
-same filename). That is the usual reason the cache looks broken.
+Anything chain-wide re-renders everything: resolution, aspect, sampler,
+scheduler, either shift, `ref_image_size`, the checkpoint, or the LoRA stack.
+That is the usual reason the cache looks broken.
+
+Some levers are cheaper than they look. `overlap`, `pin_to_qwen` and the pin
+settings only reach hop 2 onward, so flipping one re-renders hops 2+ and leaves
+hop 1 on disk. A reference picture is keyed on the hops it actually rides -- so
+a re-crop counts even under the same filename, but swapping the file behind a
+ref that only rides hop 5 leaves hops 1-4 alone.
 
 Loved a hop? Put `"locked": true` and a stable `"id"` on that shot and it keeps
 that exact take even when its inputs move. Unrelated to `subjects.N.locked`,

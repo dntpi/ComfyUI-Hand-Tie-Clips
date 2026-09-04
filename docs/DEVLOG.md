@@ -2342,12 +2342,27 @@ numbers -- a reuse threshold, a window, a step cap -- carried on the
 instance.
 
 `_object_scalars` reads an object's public scalar attributes before falling
-back to its type name. It accepts a tradeoff worth writing down: a scalar
-attribute that a node mutates during a run will move the fingerprint between
-runs and stop the cache hitting while that node is installed. Wasteful, not
-wrong, and the right direction for a pack that would rather render twice
-than serve the wrong frames once. Mutable containers are still excluded,
-which is what keeps a sampler's own step counter out of the key.
+back to its type name. Review then found two more bindings that hide an
+object behind a callable and lose it just as completely. A BOUND METHOD:
+`vars()` on one proxies to the underlying function's `__dict__`, which is
+empty, not to the instance, so a node registering `self.forward` instead of
+`self` is the same bug one attribute away. And a `functools.partial`: no
+name, no cells, no attributes of its own, everything it carries sitting in
+`func`, `args` and `keywords` -- the SLA bug one binding away. Both
+collapsed to the same four characters as a bare instance did.
+`_callable_scalars` now unwraps all four shapes.
+
+The tradeoff is worth writing down plainly, because the first draft of this
+entry got it wrong and review caught that too. A public scalar the node
+mutates during a run IS hashed. Only mutable *containers* are skipped, and a
+step counter is normally a plain int on the instance rather than a dict, so
+it is hashed like any other setting. A node that counts on itself between
+queues therefore moves the fingerprint between runs and the cache stops
+hitting for as long as it is installed. That is wasteful rather than wrong,
+and it is the direction this pack should err in -- but it is a real cost,
+and it used to be an invisible one. The run now prints the fingerprint
+beside the hop-cache line, because a cache that has quietly stopped hitting
+is otherwise indistinguishable from one that is merely cold.
 
 The third is not a hole but a cost. `pin_to_qwen` sat in `chain_salt`, which
 mixes into every hop -- while `_attach_pin_to_qwen` is called only under `if

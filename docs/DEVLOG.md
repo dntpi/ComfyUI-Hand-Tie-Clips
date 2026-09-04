@@ -2459,6 +2459,43 @@ every run while seam 2 sits at or below baseline. That is the same
 first-join asymmetry the brightness measurement found, from an unrelated
 instrument.
 
+### Read section 51 before acting on any of this
+
+Everything above measures TEXTURE, and texture turned out not to be where
+the degradation lives. A later pass on the same rig found the one quantity
+that decays monotonically across a chain, and it is not a band energy: it is
+how much the LIGHTING responds to the subject. Section 51 has it. Three
+consequences for the numbers above.
+
+**The face and background band figures are partly pose, not texture.** They
+are sampled from each hop's last frames, and the lighting in this model
+tracks head height -- correlation +0.70 in hop 1. The within-hop brightness
+swing (0.36) is LARGER than the across-chain drift (0.29), so which pose the
+final frames happen to catch moves the reading more than the chain does. The
+matched-pose method fixes the anatomy problem, not this one.
+
+**A background result reported here was withdrawn.** An earlier draft had
+the background gaining 59% mid-band energy while the face lost it, and read
+that as detail migrating off the subject. Normalising each box by its own
+brightness removes the effect entirely: the background is not gaining
+texture, it is getting 57% BRIGHTER. That was caught only because the user
+said the lighting kept changing.
+
+**`pin_to_qwen=off` was already the shipped state for the reporting user.**
+An independent audit of her runs found that with nine identity photographs
+scheduled on every hop she hits `MAX_REF_IMAGES`, so the pack skips the
+last-frame Qwen pin anyway -- 36 log lines saying so. The lever measured
+WORSE here is the one her chains had on the whole time, which makes the
+result more useful, not less.
+
+One thing above got stronger rather than weaker. `pin_mech=addguide` winning
+was doubted because her isolated long-chain test of the same idea
+(`force_pixel_pin`) still degraded. The audit found that test had no matched
+control -- it was read against runs differing in hop count, audio file,
+reference schedule, encoder-side pin and code version. The A/B here changed
+one widget against a shared cached hop 1, so it is the better-controlled of
+the two.
+
 ### What this is not
 
 One chain, one subject, three hops, 640p, one checkpoint. Every number above

@@ -986,7 +986,7 @@ def _pin_continue(cond, latent, vae, audio_vae, overlap_n,
     if pin_image is None and pin_audio is None:
         return cond, "none"
     return _result(MiniMaxH3AddGuide.execute(
-        cond, latent, 0,
+        positive=cond, latent=latent, frame_idx=0,
         vae=vae if pin_image is not None else None,
         audio_vae=audio_vae if pin_audio is not None else None,
         image=pin_image,
@@ -2414,8 +2414,17 @@ class HandTieClips:
                       f"{'' if cached_latent is not None else ', no latent'})",
                       flush=True)
             else:
+                # Every argument by NAME, none by position. Passing the first
+                # seven positionally worked here and broke for a user on a
+                # different ComfyUI build: their core orders the parameters
+                # differently, so the seventh positional landed on
+                # `ref_image_size` and the keyword collided with it --
+                # "got multiple values for argument 'ref_image_size'", raised
+                # on hop 1 before anything sampled. Core's signature is not
+                # ours to depend on; its parameter names are the contract.
                 packed = MiniMaxH3ReferenceToVideo.execute(
-                    clip, vae, audio_vae, block, int(width), int(height), hop_length,
+                    clip=clip, vae=vae, audio_vae=audio_vae, prompt=block,
+                    width=int(width), height=int(height), length=hop_length,
                     ref_image_size=ref_image_size,
                     ref_images=hop_images,
                     ref_videos=hop_videos,
@@ -2425,7 +2434,8 @@ class HandTieClips:
 
                 if i == 0 and start_image is not None:
                     cond = _result(MiniMaxH3AddGuide.execute(
-                        cond, latent, 0, vae=vae, audio_vae=None,
+                        positive=cond, latent=latent, frame_idx=0,
+                        vae=vae, audio_vae=None,
                         image=start_image[:1], audio=None,
                     ))[0]
                 elif i > 0:

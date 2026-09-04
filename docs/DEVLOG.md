@@ -2298,3 +2298,75 @@ conclusion was reached by reasoning about what the code must be doing rather
 than reading where the cost actually lands, and both times the reasoning was
 written down confidently enough that it stopped anyone looking again. A user
 asking "possible?" was what reopened it.
+
+## 49. Thirty-one gigabytes doing nothing (2026-09-04)
+
+The observation came from outside, from silveroxides, without seeing the
+code: anything held in memory but completely inactive can be written away
+while inference runs. The master frame buffer is exactly that shape, and the
+comment above it has named the number since it was written -- at 8 x 15 s
+and 1280x736 it is 2742 full float frames, about 31 GB. It is allocated once
+at full chain length, slice-written as each hop lands, and then not touched
+again until the final preview frame and the return. Through every sampling
+pass of every hop it is resident, untouched, and competing with the DiT, the
+VAE decode buffers, `imgs` and `prev_imgs`.
+
+Above 2 GiB it is now a `np.memmap` in ComfyUI's temp directory, wrapped by
+`torch.from_numpy`. Every slice-write is unchanged, the trim still works,
+and SaveVideo walking frames in order is ideal page locality on the way back
+out -- the encode may read better off the mapping than out of a cold RAM
+buffer.
+
+**This does not save 31 GB, and the claim should not be made.** ComfyUI's
+IMAGE type is a dense tensor, so the whole master still has to exist to be
+returned. What moves is the peak: from `master + inference` to `max(master,
+inference)`. On the chains where this bites that is the difference between
+finishing and an OOM. It is not a saving.
+
+The honest weakness is that the OS decides when pages leave RAM. Under no
+memory pressure they simply stay and nothing has been bought; under heavy
+pressure a large dirty flush can stall at an awkward moment. That is not
+knowable from here and it is why the run prints which path it took -- a
+silent memory path is the one thing nobody could diagnose from a bug report.
+
+Why a memmap rather than the incremental safetensors writer from section
+48's neighbourhood: that machinery exists to stream thousands of tensors
+whose shapes you do not know in advance, which is why it reserves a header.
+The master is one tensor, of perfectly known shape, written in contiguous
+ranges, in order. The right primitive for that is a mapping, and it is
+nearly a drop-in. The writer earns its place on the latent sidecar, which is
+the opposite shape -- and that is where it went.
+
+Cleanup is the part that needed thought. The returned IMAGE is backed by its
+mapping, so the file cannot be removed while `run()` still has to hand it
+back, which means cleanup happens on the NEXT run rather than this one.
+Since ComfyUI also wipes its temp directory at startup, an orphan survives
+at most until the next chain or the next restart, and there is never more
+than one. On Windows a live mapping cannot be unlinked at all, so a file
+still in use raises and is skipped -- the guard is the operating system, not
+a lock file.
+
+Two things the analysis this came from had wrong, both caught by writing it.
+`numpy` was not already imported in `h3_ref_chain.py`; it is now. And the
+master is not "never read again until the return" -- `master_imgs[-1]` feeds
+the final preview frame. That does not disturb the fp16 argument, because
+`prev_imgs` is cloned from `imgs` and nothing in the conditioning path reads
+the master back, but the statement was wrong and an fp16 change would have
+been justified with it.
+
+fp16 is deliberately not in this change. The reasoning holds -- the master
+is delivery-only, `tone_compensate` runs before the write so correction
+arithmetic stays in fp32, and fp16's ten mantissa bits space the top octave
+about eight times finer than the 8-bit encode downstream. It is a separate
+decision from where the buffer lives and it should be made on its own. It is
+emphatically not true of the hop cache, where a resumed chain must not
+diverge from an uninterrupted one.
+
+What is verified here is narrow and deliberate: that the spilled buffer
+behaves exactly like the RAM one. `tools/check_master_spill.py` drives the
+real access pattern -- the hop-0 write, the later windowed writes, the
+short-chain trim, the `[-1]` preview read -- and requires the delivered
+frames to be bit-identical, because the alternative is a chain whose pixels
+depend on how much RAM the machine had. The win itself is not testable
+offline and stays unproven until a long chain runs with peak RSS
+instrumented.

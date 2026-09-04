@@ -25,7 +25,9 @@ import json
 import math
 import os
 import re
+import uuid
 
+import numpy as np
 import torch
 
 try:
@@ -900,6 +902,111 @@ def _condition_pin_latent(lat, anchor, mode="off", noise=0.0, seed=0):
     new = dict(lat)
     new["samples"] = _rebuild_latent_samples(x, out_parts)
     return new, anchor
+
+
+# Above this, the master frame buffer is spilled to disk instead of RAM. The
+# number is a judgement, not a measurement: below it the mapping buys nothing
+# worth the I/O, and above it the buffer is competing with the DiT and the VAE
+# for the length of a run during which nothing reads it.
+MASTER_SPILL_BYTES = 2 << 30            # 2 GiB
+
+
+def _sweep_master_spills(keep):
+    """Delete master spill files left by earlier runs.
+
+    The returned IMAGE is backed by its mapping, so the file cannot be removed
+    while `run()` still has to hand it back -- which means cleanup has to happen
+    on the NEXT run rather than this one. ComfyUI wipes its temp directory at
+    startup as well, so an orphan survives at most until the next chain or the
+    next restart, and there is never more than one.
+
+    On Windows a live mapping cannot be unlinked, so a file still in use raises
+    and is skipped. That is the guard, not an accident.
+    """
+    import folder_paths
+    root = folder_paths.get_temp_directory()
+    freed = 0
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith("htc_master_") and name.endswith(".raw")):
+            continue
+        path = os.path.join(root, name)
+        if path == keep:
+            continue
+        try:
+            n = os.path.getsize(path)
+            os.remove(path)
+            freed += n
+        except OSError:
+            pass                        # in use, or gone already
+    if freed:
+        print(f"[{TAG}] reclaimed {freed / 2**30:.1f} GB from an earlier "
+              f"master spill", flush=True)
+
+
+def _alloc_master(total_frames, height, width):
+    """The master frame buffer, in RAM or memory-mapped to disk.
+
+    It is allocated once at full chain length, slice-written as each hop lands,
+    and then not read again until the final preview frame and the return. At
+    8 x 15 s and 1280x736 that is ~31 GB resident and inactive through every
+    sampling pass, competing with the DiT, the VAE decode buffers, `imgs` and
+    `prev_imgs`.
+
+    **This does not save 31 GB.** ComfyUI's IMAGE type is a dense tensor, so the
+    whole master still has to exist to be returned. What moves is the peak:
+    from `master + inference` to `max(master, inference)`. On the chains where
+    this bites that is the difference between finishing and an OOM, and it is
+    not a saving -- do not write it up as one.
+
+    A `np.memmap` is the right primitive rather than an incremental writer: one
+    tensor, shape known up front, written in contiguous ranges in order. Every
+    slice-write below is unchanged, and SaveVideo walking frames in order is
+    ideal page locality on the way back out.
+
+    The honest weakness: the OS decides when pages leave RAM. Under no memory
+    pressure they simply stay and nothing has been bought; under heavy pressure
+    a large dirty flush can stall at an awkward moment. Which path ran is
+    printed either way -- a silent memory path is the one thing nobody could
+    diagnose from a bug report.
+    """
+    shape = (int(total_frames), int(height), int(width), 3)
+    nbytes = 4
+    for d in shape:
+        nbytes *= d
+    gb = nbytes / 2**30
+
+    if nbytes < MASTER_SPILL_BYTES:
+        print(f"[{TAG}] master buffer: {gb:.1f} GB in RAM", flush=True)
+        return torch.empty(shape, dtype=torch.float32)
+
+    try:
+        import folder_paths
+        root = folder_paths.get_temp_directory()
+        os.makedirs(root, exist_ok=True)
+        path = os.path.join(root, f"htc_master_{uuid.uuid4().hex}.raw")
+        _sweep_master_spills(path)
+        arr = np.memmap(path, dtype=np.float32, mode="w+", shape=shape)
+        out = torch.from_numpy(arr)
+        # Name the owner. The mapping is already kept alive by the tensor's
+        # storage, so this changes no lifetime -- it gives anything that needs
+        # to release the file deterministically (the offline checker today, an
+        # explicit writer if the memmap ever proves too passive) a handle
+        # instead of digging through gc. It does not survive the trim, which
+        # makes a view.
+        out._htc_mmap = arr
+        print(f"[{TAG}] master buffer: {gb:.1f} GB spilled to disk "
+              f"({os.path.basename(path)})", flush=True)
+        return out
+    except Exception as e:  # noqa: BLE001
+        # Falling back is correct -- a chain that renders slowly beats one that
+        # refuses to start because a temp directory is read-only.
+        print(f"[{TAG}] master spill unavailable ({e!r}); {gb:.1f} GB in RAM",
+              flush=True)
+        return torch.empty(shape, dtype=torch.float32)
 
 
 def _pin_mech_for(hop_index, overlap_n, prev_sampled):
@@ -1995,8 +2102,7 @@ class HandTieClips:
         # A dry run must not allocate the master. At 8 x 15 s and 1280x736 that
         # is 2742 full float frames -- ~31 GB -- for a feature whose entire
         # point is that it costs seconds.
-        master_imgs = None if dry else torch.empty(
-            (total_frames, int(height), int(width), 3), dtype=torch.float32)
+        master_imgs = None if dry else _alloc_master(total_frames, height, width)
         write_pos = 0
         master_wav = None
         sr = None

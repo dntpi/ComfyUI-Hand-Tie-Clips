@@ -907,6 +907,38 @@ def _core_add_guide(cond, latent, **kw):
     return MiniMaxH3AddGuide.execute(cond, latent, 0, **kw)
 
 
+def _validate_anchors(shots, start_image_file):
+    """Refuse an unusable anchor=restart before anything samples.
+
+    A pure function so it can be exercised: the three rules below shipped
+    twice broken -- once naming a `join` value that does not exist, once
+    reading `start_image` before it was assigned -- because nothing called
+    them except a real render.
+    """
+    for i, sh in enumerate(shots or []):
+        if str((sh or {}).get("anchor") or "") != "restart":
+            continue
+        if i == 0:
+            raise ValueError(
+                f"{TAG}: shot 1 cannot be anchor=restart -- hop 1 is already "
+                "a chain start. Remove it, or move it to a later shot.")
+        # The FILENAME, not the loaded image: this runs before any media is
+        # loaded, which is the point of it. Whether the file resolves is a
+        # separate check further down.
+        if not str(start_image_file or "").strip():
+            raise ValueError(
+                f"{TAG}: shot {i + 1} is anchor=restart but no start image is "
+                "set. A restart re-anchors the chain on that photograph; "
+                "without one there is nothing to restart from. Set "
+                "start_image_file in MEDIA, or remove the anchor.")
+        if ((sh.get("directives") or {}).get("join")) == "continuous":
+            raise ValueError(
+                f"{TAG}: shot {i + 1} is anchor=restart with join=continuous. "
+                "A restart is a cut -- it opens on the start image's pose, not "
+                "the previous hop's last frame. Use join=hard_cut or match_cut "
+                "on that shot.")
+
+
 def _pin_mech_for(hop_index, overlap_n, prev_sampled):
     """Which mechanism `_pin_continue` will pick, without doing the work.
 
@@ -1873,33 +1905,7 @@ class HandTieClips:
                         "join at 5 s.",
                         flush=True,
                     )
-        # anchor=restart, checked up front: it needs a photograph to restart ON,
-        # and it is a cut by construction -- the hop opens on the reference
-        # pose, not where the previous hop ended. Asking for a continuous join
-        # across a restart is asking for two incompatible things.
-        for _i, _sh in enumerate(shots):
-            if str((_sh or {}).get("anchor") or "") != "restart":
-                continue
-            if _i == 0:
-                raise ValueError(
-                    f"{TAG}: shot 1 cannot be anchor=restart -- hop 1 is already "
-                    "a chain start. Remove it, or move it to a later shot.")
-            # `start_image_file`, not `start_image`: this validation runs
-            # before any media is loaded, which is the whole point of it -- a
-            # bad plan should fail on the queue, not three hops in. Whether the
-            # named file actually loads is a separate check further down.
-            if not str(start_image_file or "").strip():
-                raise ValueError(
-                    f"{TAG}: shot {_i + 1} is anchor=restart but no start image "
-                    "is set. A restart re-anchors the chain on that photograph; "
-                    "without one there is nothing to restart from. Set "
-                    "start_image_file in MEDIA, or remove the anchor.")
-            if ((_sh.get("directives") or {}).get("join")) == "continuous":
-                raise ValueError(
-                    f"{TAG}: shot {_i + 1} is anchor=restart with "
-                    "join=continuous. A restart is a cut -- it opens on the "
-                    "start image's pose, not the previous hop's last frame. "
-                    "Use join=hard_cut or match_cut on that shot.")
+        _validate_anchors(shots, start_image_file)
         for i, ln in enumerate(lengths):
             if overlap_n >= ln:
                 raise ValueError(

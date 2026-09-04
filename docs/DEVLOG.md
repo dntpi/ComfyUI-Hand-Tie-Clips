@@ -2298,3 +2298,117 @@ conclusion was reached by reasoning about what the code must be doing rather
 than reading where the cost actually lands, and both times the reasoning was
 written down confidently enough that it stopped anyone looking again. A user
 asking "possible?" was what reopened it.
+
+
+## 51. The chain forgets how to light her (2026-09-05)
+
+Four levers were measured against the texture ratchet and three did nothing.
+That is section 50. This is why: the thing that degrades is not texture, and
+none of those levers could have touched it.
+
+The user watched the four renders and said the lighting kept changing --
+darker when she raised her head, brighter when she looked down. That is a
+real behaviour and it is measurable: in hop 1, the correlation between
+background brightness and head height is **+0.70**. The model is doing a
+light-source thing, and it is doing it well.
+
+By hop 6 that correlation is **-0.49**. It does not fade, it INVERTS.
+
+### The measurement, with the script removed
+
+The obvious objection is that she simply moves less in later hops, and a
+weaker signal gives a weaker correlation. So the chain was re-run with the
+SAME BEAT on all six hops -- "She talks to the camera, glancing down at her
+notes and back up again", chosen because it contains the vertical head
+movement the lighting tracks. Any decay across hops 2-6 is then the chain's,
+not the writing's.
+
+```
+  hop   corr(bg luma, head height)   bg swing   how much she MOVED
+   1              +0.581               0.278           23.97
+   2              +0.631               0.229           22.75
+   3              +0.334               0.172           14.73
+   4              +0.338               0.133           13.47
+   5              -0.417               0.132           11.10
+   6              -0.494               0.099           14.52
+```
+
+Three things decay monotonically on identical beats. The lighting stops
+moving (swing -64%). The subject stops moving (-39%). And the coupling
+between them inverts.
+
+The inversion is the part no confound explains. Less movement drives a
+correlation toward ZERO; it cannot carry it through zero to -0.49. That is a
+different behaviour, not a weaker one. The movement decay does mean the
+swing and correlation MAGNITUDES are partly downstream of the subject moving
+less -- which is itself a finding, since the beat asked for the same
+movement every time.
+
+### It is not exposure drift
+
+The chain also brightens: background luma 0.63 -> 0.77.
+`tone_compensate=anchor` was run over byte-identical cached hops, so nothing
+but the correction differed. It pulled the level down (0.767 -> 0.705) and
+left the responsiveness untouched -- the per-hop swings match the
+uncorrected run to three decimal places, and the correlation still ends
+negative. Exposure drift is a symptom sitting on top of this, not the cause.
+
+### Why every presentation lever failed
+
+Each hop is conditioned on the previous hop's LAST frames, and the end of a
+clip is its most settled moment. So each hop starts from a slightly calmer,
+flatter state than the one before, and it compounds. `pin_to_qwen`,
+`pin_renorm` and `pin_mech` all change how that state is PRESENTED. None of
+them changes the fact that it is inherited. That is why three of four did
+nothing, and why the pin's own statistics show no ratchet at all: sigma
+wanders 1.000 / 1.010 / 1.015 / 1.021 / 1.010 across six hops with no
+per-join step, and the high-band fraction ends ABOVE its anchor.
+
+`pin_noise` is the exception, and the exception proves the reading: it works
+by mixing energy back INTO the pin, which is the only shipped lever that
+opposes the inheritance rather than re-presenting it. Measured against a
+matched control it held movement (18.10 vs 14.52 at hop 6), roughly doubled
+the surviving lighting swing (0.194 vs 0.099), and prevented the inversion
+-- +0.228 where the control reached -0.494. At the widget's 0.10 maximum it
+gets WORSE in the way that matters: more swing, less correlation, i.e.
+flicker that is not coupled to the subject. The tooltip's "gains reverse
+above 0.10" is now measured rather than asserted. 0.06 is the number.
+
+### anchor=restart, and what it did
+
+If the inheritance is the mechanism, severing it should reset the decay. It
+does. A 6-hop chain with `"anchor": "restart"` on hop 4, against the same
+chain without it:
+
+```
+                   control            restart at 4
+  hop 4     corr .338  swing .133   corr .431  swing .239  (+80% swing, +33% move)
+  hop 5     corr -.417              corr -.137
+  hop 6     corr -.494              corr -.258
+```
+
+The latent agreed independently: the pin's sigma against the hop-2 anchor
+went x1.0126 in the control and x0.9938 after the restart -- below the
+anchor, i.e. the accumulation reset rather than merely paused.
+
+**And one restart in six hops is not enough.** Hop 5, the first hop relaying
+from the restart, is already at -0.137 where hop 2 relaying from hop 1 was
++0.427. By hop 6 it is negative again. The restart buys one clean hop and
+about half the end-state damage. The useful interval looks like two or three
+hops, not five, and that is untested.
+
+### What this is worth
+
+One subject, one location, 640x1152, six hops, single runs. The hop-to-hop
+wobble is real -- hop 3's correlation reads .334 in one chain and .559 in
+another on identical beats -- so no single row above should be defended.
+What is solid is the direction: three quantities decaying monotonically on
+identical beats, an inversion no confound explains, a mechanism that
+predicts which levers can and cannot work, and a lever built on that
+prediction that moved all three in the right direction at the hop it was
+applied.
+
+The honest description of the failure is not "texture degrades". It is that
+the chain converges on a static, evenly-lit, motionless picture -- which is
+what "plastic" looks like, and which explains why chasing skin detail found
+nothing.

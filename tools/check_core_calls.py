@@ -61,20 +61,28 @@ def main():
         if not isinstance(node, ast.Call):
             continue
         f = node.func
-        if not (isinstance(f, ast.Attribute) and f.attr == "execute"):
+        # Direct: MiniMaxH3AddGuide.execute(...)
+        if isinstance(f, ast.Attribute) and f.attr == "execute":
+            owner = f.value.id if isinstance(f.value, ast.Name) else None
+            if owner in WATCHED:
+                calls.append((owner, node, node.args))
             continue
-        owner = f.value.id if isinstance(f.value, ast.Name) else None
-        if owner in WATCHED:
-            calls.append((owner, node))
+        # Wrapped: _core_call(MiniMaxH3AddGuide, "what", **kw). The first two
+        # positionals are the wrapper's own; everything for Core is keyword.
+        if isinstance(f, ast.Name) and f.id == "_core_call" and node.args:
+            first = node.args[0]
+            owner = first.id if isinstance(first, ast.Name) else None
+            if owner in WATCHED:
+                calls.append((owner, node, node.args[2:]))
 
     ck("every watched Core node is actually called", len(calls) >= 3,
        f"{len(calls)} call site(s)")
 
-    for owner, node in calls:
+    for owner, node, core_args in calls:
         line = node.lineno
         ck(f"{owner} @ :{line} passes nothing positionally",
-           not node.args,
-           f"{len(node.args)} positional arg(s)" if node.args
+           not core_args,
+           f"{len(core_args)} positional arg(s)" if core_args
            else "order-independent")
 
         params = core_params(owner)

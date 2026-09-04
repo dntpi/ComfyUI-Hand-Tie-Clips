@@ -52,6 +52,13 @@ export function parsePlan(text) {
         steps: s.steps == null ? null : Number(s.steps),
         duration: s.duration || null,
         locked: Boolean(s.locked),
+        // `tone` and `anchor` are round-tripped, not just parsed. Both are
+        // Python-side shot fields with no card control before now, and both
+        // were silently DESTROYED by editing any shot: parsePlan dropped them
+        // and planToJson rebuilt each shot from a fixed field list. `tone`
+        // shipped in 1.1 with that defect.
+        tone: s.tone || "",
+        anchor: s.anchor || "",
     }));
 }
 
@@ -67,6 +74,8 @@ export function planToJson(shots) {
         if (s.steps != null) o.steps = s.steps;
         if (s.duration) o.duration = s.duration;
         if (s.locked) o.locked = true;
+        if (s.tone) o.tone = s.tone;
+        if (s.anchor) o.anchor = s.anchor;
         return o;
     });
     return JSON.stringify({ shots: out }, null, 2);
@@ -578,6 +587,33 @@ export function createPlanEditor(node, { onChange }) {
         lockL.appendChild(cb);
         lockL.appendChild(el("span", null, "locked"));
         grid.appendChild(lockL);
+
+        // anchor=restart. Hidden on shot 1, where it is invalid: hop 1 is
+        // already a chain start.
+        if (index > 0) {
+            const anchorL = el("label", "h3e-field");
+            anchorL.appendChild(el("span", null, "anchor"));
+            const anchorS = el("select", "h3e-input");
+            for (const [v, label] of [["", "relay (default)"], ["restart", "restart"]]) {
+                const o = el("option", null, label);
+                o.value = v;
+                anchorS.appendChild(o);
+            }
+            anchorS.value = shot.anchor || "";
+            anchorS.title =
+                "restart: re-anchor the chain on the start image at this hop "
+                + "instead of relaying the previous one. Bounds the quality "
+                + "decay on a long chain -- every hop otherwise inherits its "
+                + "predecessor's most settled frames. It is a CUT: the hop "
+                + "opens on the start image's pose, so set join to hard_cut "
+                + "and write the beat as a fresh start. Needs a start image.";
+            anchorS.addEventListener("change", () => {
+                shot.anchor = anchorS.value;
+                commit();
+            });
+            anchorL.appendChild(anchorS);
+            grid.appendChild(anchorL);
+        }
 
         const idL = el("label", "h3e-field");
         idL.appendChild(el("span", null, "id"));

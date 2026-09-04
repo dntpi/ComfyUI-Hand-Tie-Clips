@@ -902,9 +902,38 @@ def _condition_pin_latent(lat, anchor, mode="off", noise=0.0, seed=0):
     return new, anchor
 
 
-def _core_add_guide(cond, latent, **kw):
-    """MiniMaxH3AddGuide at frame 0 -- the one shape this pack ever needs."""
-    return MiniMaxH3AddGuide.execute(cond, latent, 0, **kw)
+def _core_call(node_cls, what, **kw):
+    """Call a Core node by keyword, and fail readably when Core has moved.
+
+    This pack is installed beside whatever ComfyUI the user already has, so
+    Core's signature is an external interface it does not control. Passing
+    arguments positionally made that fragile in a way that surfaced as a
+    baffling error on someone else's machine -- "got multiple values for
+    argument 'ref_image_size'" on hop 1, with nothing in the message to
+    suggest a version mismatch.
+
+    Keywords fix the misbinding. This adds the other half: if the installed
+    Core does not accept an argument this pack passes, say which node, which
+    argument, and what that Core actually takes, so the report names the
+    problem instead of a traceback.
+    """
+    try:
+        return node_cls.execute(**kw)
+    except TypeError as e:
+        import inspect
+        try:
+            params = [p for p in inspect.signature(node_cls.execute).parameters
+                      if p not in ("cls", "self")]
+        except (TypeError, ValueError):
+            params = None
+        raise RuntimeError(
+            f"{TAG}: this ComfyUI's {node_cls.__name__} does not accept the "
+            f"arguments this pack passes for {what} ({e}). "
+            + (f"Its signature takes: {', '.join(params)}. " if params else "")
+            + f"This pack passes: {', '.join(sorted(kw))}. "
+            "That is a ComfyUI/pack version mismatch -- update ComfyUI, or "
+            "report these two lists."
+        ) from e
 
 
 def _pin_mech_for(hop_index, overlap_n, prev_sampled):
@@ -990,8 +1019,9 @@ def _pin_continue(cond, latent, vae, audio_vae, overlap_n,
     pin_audio = _tail_audio(prev_audio, overlap_n) if prev_audio is not None else None
     if pin_image is None and pin_audio is None:
         return cond, "none"
-    return _result(MiniMaxH3AddGuide.execute(
-        cond, latent, 0,
+    return _result(_core_call(
+        MiniMaxH3AddGuide, "the AddGuide pixel pin",
+        positive=cond, latent=latent, frame_idx=0,
         vae=vae if pin_image is not None else None,
         audio_vae=audio_vae if pin_audio is not None else None,
         image=pin_image,
@@ -2459,8 +2489,18 @@ class HandTieClips:
                       f"{'' if cached_latent is not None else ', no latent'})",
                       flush=True)
             else:
-                packed = MiniMaxH3ReferenceToVideo.execute(
-                    clip, vae, audio_vae, block, int(width), int(height), hop_length,
+                # Every argument by NAME, none by position. Passing the first
+                # seven positionally worked here and broke for a user on a
+                # different ComfyUI build: their core orders the parameters
+                # differently, so the seventh positional landed on
+                # `ref_image_size` and the keyword collided with it --
+                # "got multiple values for argument 'ref_image_size'", raised
+                # on hop 1 before anything sampled. Core's signature is not
+                # ours to depend on; its parameter names are the contract.
+                packed = _core_call(
+                    MiniMaxH3ReferenceToVideo, "the reference conditioning",
+                    clip=clip, vae=vae, audio_vae=audio_vae, prompt=block,
+                    width=int(width), height=int(height), length=hop_length,
                     ref_image_size=ref_image_size,
                     ref_images=hop_images,
                     ref_videos=hop_videos,
@@ -2478,9 +2518,13 @@ class HandTieClips:
                     # lighting response decay hop over hop. A restart bounds
                     # that accumulation to the distance between restarts
                     # instead of letting it run the length of the chain.
-                    cond = _result(_core_add_guide(
-                        cond, latent, vae=vae, audio_vae=None,
-                        image=start_image[:1], audio=None))[0]
+                    cond = _result(_core_call(
+                        MiniMaxH3AddGuide,
+                        "the restart anchor" if hop_restart else "the hop-1 start image",
+                        positive=cond, latent=latent, frame_idx=0,
+                        vae=vae, audio_vae=None,
+                        image=start_image[:1], audio=None,
+                    ))[0]
                 elif i > 0 and not hop_restart:
                     pin_latent = prev_sampled
                     if pin_latent is not None:

@@ -80,6 +80,16 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > quiet buys a quiet pin, not a quiet opening. Sections 31 and 32 of the devlog
 > have the measurements.
 
+> **1.1.1 — 2026-09-05.** Fixes a crash on hop 1 for anyone whose ComfyUI
+> orders `MiniMaxH3ReferenceToVideo`'s parameters differently from the build
+> this was written against — reported as `got multiple values for argument
+> 'ref_image_size'`, with nothing sampled and nothing written. The pack was
+> passing Core's first seven arguments positionally; it now passes every
+> argument by name at all three Core call sites, so a reordering upstream
+> cannot rebind anything. If a future Core changes the parameter *names*, the
+> pack now says which node, which arguments it passed and which the installed
+> Core takes, instead of raising a bare `TypeError`. No behaviour changes.
+>
 > **1.1.0 — 2026-09-03.** The panel is a 4:3 box with tabs instead of one long
 > scrolling column, and RUN stays pinned at the bottom. The **WRITE** draft is
 > readable — it used to clip every beat at 110 characters and throw away the

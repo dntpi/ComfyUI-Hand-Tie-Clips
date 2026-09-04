@@ -441,10 +441,11 @@ The key **chains** — each hop's key includes the previous hop's — because ho
 
 - edit shot 3 and re-queue → shots 1 and 2 load from cache, only 3 renders;
 - edit shot 1 → all three re-render, which is correct, not a bug;
-- change resolution, sampler, a LoRA, or an attention setting → the whole chain re-renders;
+- change resolution, sampler, the checkpoint, a LoRA, or an attention setting → the whole chain re-renders;
+- change `pin_to_qwen` or `overlap` → only hops 2+ re-render, because neither can reach hop 1;
 - change a reference picture → only the hops that picture rides re-render. Swapping the file behind `@outfit` when it rides hop 5 leaves hops 1-4 on cache. Before 1.1 this invalidated everything.
 
-That last one is worth knowing about. The node cannot read the settings on your LoRA and attention nodes, so instead it fingerprints what they *did* to the model — which weight keys were patched, at what strengths, and the attention overrides. Change a LoRA strength and the cache correctly invalidates. Two different LoRAs touching exactly the same keys at exactly the same strengths would look identical to it; that is the one gap.
+That last one is worth knowing about. The node cannot read the settings on your LoRA and attention nodes, so instead it fingerprints what they *did* to the model — which weight keys were patched, at what strengths, and the attention overrides — plus the base model itself: its class, its dtype and its parameter count. Change a LoRA strength, or load the int8 build where you had the bf16 one, and the cache correctly invalidates. Nodes that configure themselves by closure or by object are read the same way, so changing a setting on one moves the key rather than only installing it. Two remaining gaps: two different LoRAs touching exactly the same keys at exactly the same strengths, and two different builds of the same architecture at the same dtype and parameter count.
 
 Set `locked: true` on a shot to pin it to its last render regardless.
 

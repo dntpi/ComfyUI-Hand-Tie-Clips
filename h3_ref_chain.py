@@ -325,6 +325,33 @@ def _model_fingerprint(model):
     full state-dict walk per run.
     """
     h = hashlib.sha256()
+
+    # The base checkpoint itself. Everything below describes what was PATCHED
+    # onto the model and nothing identified the model underneath it, so an int8
+    # build and a bf16 build of the same architecture, under the same LoRA
+    # stack at the same strengths and the same attention settings, produced
+    # byte-identical hop keys -- and the cache served frames rendered under the
+    # other checkpoint. `model_dtype()` is ModelPatcher's own accessor
+    # (comfy/model_patcher.py); it returns None when the inner model has no
+    # `get_dtype`, which is hashed as a value rather than skipped so "no dtype"
+    # and "some dtype" cannot collide.
+    #
+    # Residual gap, narrower than the one it closes: two *different* int8
+    # builds of the same architecture still match. Separating those needs
+    # digests of a few fixed weight keys, which costs a state-dict walk per run.
+    base = getattr(model, "model", None)
+    try:
+        base_dtype = model.model_dtype() if hasattr(model, "model_dtype") else None
+    except Exception:  # noqa: BLE001 -- a patcher that cannot answer is still a key
+        base_dtype = "?"
+    h.update(f"base:{type(base).__name__}:{base_dtype}".encode())
+    _dm = getattr(base, "diffusion_model", None)
+    if _dm is not None:
+        try:
+            h.update(f":n{sum(p.numel() for p in _dm.parameters()):d}".encode())
+        except Exception:  # noqa: BLE001
+            h.update(b":n?")
+
     patches = getattr(model, "patches", None) or {}
     for key in sorted(patches):
         h.update(str(key).encode())
@@ -367,6 +394,36 @@ def _model_fingerprint(model):
                          else type(v).__name__)
         return "fn(" + ",".join(parts) + ")"
 
+    def _object_scalars(obj):
+        """Public scalar attributes of something that configures itself by
+        instance rather than by closure.
+
+        `_closure_scalars` digs settings out of a callable's cells, which is how
+        H3-SLA-Attention carries its config. A node that installs a configured
+        *object* instead -- `set_model_patch_replace(cache, "dit", "block_loop",
+        0)` with an instance on it -- has no closure at all, and an instance
+        inherits neither `__qualname__` nor `__name__` from its class, so it
+        rendered as the bare constant "fn()" and every setting on it vanished
+        from the key. Toggling such a node moved the fingerprint (a new key
+        appears in `patches_replace`); changing its settings did not. That is
+        the SLA bug one type away.
+
+        Scalars only, for the same reason the closure walk is scalars only.
+        Note the tradeoff this accepts: a scalar attribute the node mutates
+        during a run makes the fingerprint move between runs and the cache stop
+        hitting while that node is installed. That direction is deliberate --
+        this pack treats serving frames from the wrong settings as worse than
+        not serving them at all.
+        """
+        try:
+            items = vars(obj).items()
+        except TypeError:  # no __dict__ (slots, builtins) -- nothing to read
+            return ""
+        parts = [f"{k}={v!r}" for k, v in sorted(items, key=lambda kv: str(kv[0]))
+                 if not str(k).startswith("_")
+                 and (isinstance(v, (str, int, float, bool)) or v is None)]
+        return "{" + ",".join(parts) + "}" if parts else ""
+
     def _scalars(obj, depth=0):
         """Only names and scalars -- tensors and mutable state are not stable."""
         if depth > 3:
@@ -383,8 +440,8 @@ def _model_fingerprint(model):
         if isinstance(obj, (str, int, float, bool)) or obj is None:
             return repr(obj)
         if callable(obj):
-            return _closure_scalars(obj)
-        return type(obj).__name__
+            return _closure_scalars(obj) + _object_scalars(obj)
+        return type(obj).__name__ + _object_scalars(obj)
 
     h.update(_scalars(transformer).encode())
     return h.hexdigest()[:16]
@@ -2050,7 +2107,12 @@ class HandTieClips:
             # lever does not reach.
             "sampler": str(sampler_name), "scheduler": str(scheduler),
             "shift_v": float(shift_video), "shift_a": float(shift_audio),
-            "ref_size": str(ref_image_size), "pin": str(pin_to_qwen),
+            "ref_size": str(ref_image_size),
+            # No "pin" here either, for the same reason as "overlap" above:
+            # `_attach_pin_to_qwen` is called only under `if i > 0`, so
+            # pin_to_qwen cannot reach hop 1's pixels. Keyed chain-wide it threw
+            # away a byte-identical cached hop 1 on every pin_to_qwen A/B. It is
+            # in the per-hop key below, from hop 2.
             # No "pin_mech" here: the mechanism is decided per hop at runtime
             # in _pin_continue (Motion-Context when a sampler latent exists,
             # AddGuide pixels otherwise), so it belongs in the per-hop key
@@ -2363,6 +2425,10 @@ class HandTieClips:
                     # previous hop hands over changes this hop's conditioning
                     # and its trim, and nothing on hop 1.
                     "overlap": (overlap_n if i > 0 else None),
+                    # Same rule again. `_attach_pin_to_qwen` runs only under
+                    # `if i > 0`, so what the text encoder is shown of the
+                    # incoming state cannot move hop 1.
+                    "pin_qwen": (str(pin_to_qwen) if i > 0 else None),
                     # Whether this hop actually received the voice tensor.
                     # chain_salt already digests the file; without this a hop 2
                     # rendered with the clip on would be served to a later run

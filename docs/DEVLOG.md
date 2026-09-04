@@ -2425,6 +2425,40 @@ four different estimators is not noise -- it is something about the first
 join the estimate cannot see, and the obvious suspect is that hop 2 is the
 first hop that has a pin at all. Not chased further here.
 
+### The objection to AddGuide, tested
+
+The reason Motion-Context is the default is join quality, so `addguide`
+winning on texture is only interesting if the join survives. Measured on the
+delivered masters, with no new renders: mean absolute frame-to-frame
+difference AT the join, against the median of the twelve frame pairs either
+side of it. A ratio of 1.0 means the cut looks like ordinary motion.
+
+```
+                        seam 1   seam 2
+  A  motion_context      1.25x    0.95x
+  E  addguide            1.16x    0.90x
+  B  pin_to_qwen=off     1.26x    1.03x
+  C  pin_renorm=band     1.21x    0.94x
+```
+
+No run shows a discontinuity, and **AddGuide is the lowest of the four at
+both seams**. Frames either side of both joins were also inspected directly
+and neither mode shows a visible break. The expected cost did not appear.
+
+**The limitation is the scene, and it is a real one.** This is a talking
+head under `camera: hold` with very little motion. Motion-Context exists for
+motion continuity, so a chain with actual camera movement or fast action is
+precisely where AddGuide would be expected to fail -- and there is barely
+any motion here for a join to break. The honest reading is not "AddGuide
+costs nothing" but "on low-motion content the cost does not show, and the
+texture gain does." Anyone reaching for it on a moving shot should measure
+again.
+
+Worth noting the asymmetry that appears here too: seam 1 bumps ~1.2x in
+every run while seam 2 sits at or below baseline. That is the same
+first-join asymmetry the brightness measurement found, from an unrelated
+instrument.
+
 ### What this is not
 
 One chain, one subject, three hops, 640p, one checkpoint. Every number above

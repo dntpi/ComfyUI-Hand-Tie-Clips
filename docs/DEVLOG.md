@@ -2317,11 +2317,30 @@ and SaveVideo walking frames in order is ideal page locality on the way back
 out -- the encode may read better off the mapping than out of a cold RAM
 buffer.
 
-**This does not save 31 GB, and the claim should not be made.** ComfyUI's
-IMAGE type is a dense tensor, so the whole master still has to exist to be
-returned. What moves is the peak: from `master + inference` to `max(master,
-inference)`. On the chains where this bites that is the difference between
-finishing and an OOM. It is not a saving.
+**What moves is the peak, not the total.** ComfyUI's IMAGE type is a dense
+tensor, so the whole master still has to exist to be returned. The peak goes
+from `master + inference` to `max(master, inference)`.
+
+That sounded like a hedge until it was measured. A 3-hop 8 s chain at
+640x1152 was instrumented end to end: peak RSS 49.4 GB, of which the master
+is 4.4 GB. The useful number is the other one -- **non-master residency came
+out at 41.8 GB and does not grow with chain length.** Model weights, the
+pinned-memory pool and the decode buffers are a fixed cost. The master is
+the only term that scales, linearly, with frames x area:
+
+```
+  3 x  8 s @ 640x1152    532 frames   master  4.4 GB   peak ~46.2 GB
+  8 x 15 s @ 1280x736   2742 frames   master 28.9 GB   peak ~70.6 GB  <-- over 64 GB
+ 10 x 15 s @ 1280x736   3422 frames   master 36.0 GB   peak ~77.8 GB  <-- over 64 GB
+  spilled, any of the above                            peak ~41.8 GB
+```
+
+So the honest claim is scale-dependent, and stating it as a flat percentage
+was wrong. On a small chain the master is a tenth of the peak and spilling
+it is a nicety. At the settings the original report came from -- long chains
+at working resolution -- it is 40% of the peak and it is the term that takes
+a 64 GB machine past its limit. There the change is not an improvement, it
+is the difference between a run that completes and one that cannot.
 
 The honest weakness is that the OS decides when pages leave RAM. Under no
 memory pressure they simply stay and nothing has been bought; under heavy

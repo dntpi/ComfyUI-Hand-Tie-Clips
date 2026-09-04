@@ -2298,3 +2298,138 @@ conclusion was reached by reasoning about what the code must be doing rather
 than reading where the cost actually lands, and both times the reasoning was
 written down confidently enough that it stopped anyone looking again. A user
 asking "possible?" was what reopened it.
+
+
+## 50. The texture ladder, run (2026-09-04)
+
+Four levers, measured, on one chain. Three of the results contradict
+something that was written down as guidance, which is the point of running
+it rather than reasoning about it.
+
+The rig: 3 hops x 8 s at 640x1152, 8 steps `lcm`/`beta_57` under a
+checkpoint with the turbo baked in, seed 12345 fixed, one location, one
+subject, a 560x690 face plate on every hop. `cache_hops=on`, so hop 1 was
+rendered once and every later run reused it -- which is also the first live
+confirmation that moving `pin_to_qwen` out of `chain_salt` works: run A took
+772 s, runs B, C and E about 330 s each because only hops 2 and 3
+re-rendered.
+
+### The measurement was wrong twice before it was right
+
+First attempt used the probe's default head box. It reported the face's mid
+band climbing x1.455 across the chain -- a textbook ratchet. Then the box
+was drawn on an actual frame and it turned out to be sitting half on a
+yellow sign behind her. Tightened onto skin, the same data reported x0.792.
+**The same chain, measured two ways, gave opposite answers.**
+
+Both were wrong, for the reason section 05 already documented and then
+walked into anyway: the subject moves. `camera: hold` and `framing: keep` do
+not hold the frame, and a fixed pixel box covers mouth-and-nose in hop 1 and
+smooth forehead in hop 3. Any within-run drift number off this rig is
+measuring anatomy, not texture.
+
+The fix came from the user watching the videos rather than the numbers: the
+pose at the END of hop 3 returns close to the pose at the START of hop 1.
+That pair is matched. Measuring hop 1's first 24 frames against hop 3's last
+24 gives a common baseline -- and because hop 1 came off cache in every run,
+it is literally the same baseline for all four.
+
+### What the levers did
+
+Fraction of the reference's face mid-band energy still present at the end of
+hop 3, and the head/background ratio which cancels frame-wide effects:
+
+```
+  A  baseline                 0.838   ratio 0.609
+  B  pin_to_qwen=off          0.781   ratio 0.592      WORSE than doing nothing
+  C  pin_renorm=band          0.852   ratio 0.606      within noise of A
+  E  pin_mech=addguide        0.954   ratio 0.741      clearly best
+  D  ref_image_size=max       untestable
+```
+
+**`pin_to_qwen=off` made it worse.** That was the ladder's first rung, the
+cheapest lever, the one recommended on the reasoning that hops 2+ receive
+the model's own degraded output presented as a reference picture. Removing
+it cost texture rather than saving it.
+
+**`pin_renorm=band` did exactly what it claims and it did not matter.** The
+latent high-band fraction it targets drifted -1.90% in A and -0.85% in C, so
+the lever more than halved the drift in its own statistic -- and moved the
+pixels by 1.4%, which is noise. The prediction that "band restores the
+energy ratio without restoring the structure" is now measured rather than
+argued.
+
+**`pin_mech=addguide` won, and it was never in the ladder.** Section 06
+justified the switch as the thing that makes the experiment *possible* -- a
+way to ask whether the AddGuide VAE round trip scrubs the accumulating
+latent structure. It does: the pin's sigma climbs 1.0441 -> 1.0612 under
+Motion-Context and sits flat at 1.0429 -> 1.0409 under AddGuide, and the
+face keeps 95% of its texture instead of 84%. The lever that was scaffolding
+turned out to be the only one that worked. This is one chain and it costs
+whatever join quality Motion-Context was chosen for, which was not measured
+here.
+
+**`ref_image_size=max` could not be tested at all.** H3 only ever scales a
+reference DOWN. The face plate is 560x690, which is below both the `match`
+target (0.74 MP) and the `max` target (2048 short edge), so both modes hand
+the model the identical image and the lever is a no-op. Lever 3 needs a
+genuine high-resolution photograph; a crop from a video frame has nothing to
+give. Note what this means for the mp dial as well -- its whole range is
+inert on source material this size.
+
+### A second finding nobody was looking for
+
+The background box gains mid-band energy in every run (x1.29 to x1.41) while
+the face loses it. Detail moves from the subject to the surroundings. That
+is why a whole-frame metric reads flat on a chain whose face is visibly
+coming apart -- it averages a rising background against a falling face,
+which is the exact confound `texture_probe` was built to replace, caught in
+the act.
+
+### The seams, which the user spotted by eye
+
+Watching the four masters, the user asked whether there were flashes at the
+joins. There were, and they are the first seam steps this pack has measured
+across correction modes rather than just asserting.
+
+Mean absolute luma step at the two joins, on byte-identical hops -- every
+mode after the first is the SAME cached frames re-joined, so nothing but the
+correction differs:
+
+```
+  off           2.36/255      seams +1.48 and +3.25, both brightening
+  frame_shift   1.35/255      -1.80 and -0.90
+  gain_bias     0.76/255      -1.50 and +0.02
+  lut           0.77/255      -1.49 and +0.04
+  anchor        0.68/255      -1.13 and -0.24      best
+```
+
+Three things fall out of that table.
+
+`anchor` is the mode to use, and `frame_shift` -- the one the tooltip
+recommended for regenerated content -- is the weakest of the four
+corrections, roughly half as effective.
+
+**`lut` does not overfit.** It tracks `gain_bias` to within 0.02/255 at both
+seams. That warning has been in the module docstring and two tooltips since
+the modes were written, and it appears never to have been measured.
+Corrected in all three places, and stated as unproven rather than reversed:
+one chain is not enough to say lut is *good*, only that the specific claim
+has no evidence behind it.
+
+**Every mode overshoots, and none of them fixes the first join.** An
+uncorrected seam brightens; a corrected one darkens. All four land between
+-1.13 and -1.80 at seam 1 where doing nothing gives +1.48. Seam 2 is
+correctable to near zero by three of them. A systematic bias that survives
+four different estimators is not noise -- it is something about the first
+join the estimate cannot see, and the obvious suspect is that hop 2 is the
+first hop that has a pin at all. Not chased further here.
+
+### What this is not
+
+One chain, one subject, three hops, 640p, one checkpoint. Every number above
+is a single measurement. What it does establish is narrower and more useful
+than a ranking: the levers can now be measured at all, the method that makes
+them measurable is a matched-pose pair rather than a fixed box, and three
+pieces of standing guidance were wrong in ways that only showed when someone
+rendered.

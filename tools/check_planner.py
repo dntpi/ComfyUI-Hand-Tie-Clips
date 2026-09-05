@@ -952,6 +952,36 @@ def main():
        LM._content({"choices": [{"finish_reason": "stop",
                                  "message": {"content": " ok "}}]}) == "ok")
 
+    print("write_swap_plan -- one hop, no register")
+    async def swap_ok(messages, schema=None):
+        return json.dumps({"shot_plan": {"shots": [{
+            "beat": "She stands like @her_face and turns toward the light.",
+            "directives": {"tail": "settle"},
+            "refs": ["her_face"],
+        }]}})
+
+    s_out = asyncio.run(PL.write_swap_plan(
+        "", complete_fn=swap_ok, identity_tag="her_face",
+        rail_tags=["her_face"]))
+    ck("SWAP ok has no ref_plan key", "ref_plan" not in s_out)
+    ck("SWAP ok is one hop", s_out.get("ok") is True)
+    ck("SWAP injects shot.refs",
+       "her_face" in (s_out.get("shot_plan") or ""))
+
+    async def swap_with_rail(messages, schema=None):
+        return json.dumps({
+            "shot_plan": {"shots": [{
+                "beat": "She stands like @her_face.",
+                "directives": {"tail": "hold"},
+                "refs": ["her_face"],
+            }]},
+            "ref_plan": {"refs": [{"tag": "ghost"}]},
+        })
+
+    s2 = asyncio.run(PL.write_swap_plan(
+        "", complete_fn=swap_with_rail, identity_tag="her_face",
+        rail_tags=["her_face"]))
+    ck("a register in the SWAP reply is dropped", "ref_plan" not in s2)
 
     print()
     if FAIL:

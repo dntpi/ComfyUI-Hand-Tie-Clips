@@ -1462,12 +1462,6 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None):
             "the only shot should set tail to settle or hold -- it is the "
             "last hop."
         )
-
-    if duration:
-        # Same lint WRITE uses, via the real table, but SWAP does not import
-        # h3_ref_chain: the route passes the widget string and the prompt
-        # already named the band.
-        pass
     return errors, warnings
 
 

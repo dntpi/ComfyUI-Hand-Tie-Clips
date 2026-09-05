@@ -8,6 +8,7 @@ import { createPlanEditor } from "./editor/plan_editor.js";
 import { createRefRail, parseRefPlan, refPlanToJson } from "./editor/ref_rail.js";
 import { createRunPanel } from "./editor/run_panel.js";
 import { createWriterBar } from "./editor/writer_bar.js";
+import { createVideoSwap } from "./editor/video_swap.js";
 import { createMediaStrip, MEDIA_WIDGETS } from "./editor/media_strip.js";
 
 const VERSION = "v2.0.0";
@@ -205,6 +206,28 @@ function mountEditor(node) {
         },
     });
 
+    const videoSwap = createVideoSwap(node, {
+        onWritten: (shotJson, extra) => {
+            if (shotJson) {
+                planWidget.value = shotJson;
+                node.properties ??= {};
+                node.properties[EDITOR_MODE_PROP] = "shots";
+            }
+            if (extra?.reference_video_desc) {
+                const w = widgetByName(node, "reference_video_desc");
+                if (w) {
+                    w.value = extra.reference_video_desc;
+                    try { w.callback?.(w.value, node.graph?.canvas, node); }
+                    catch (err) {
+                        console.error("[HandTieClips] desc callback failed:", err);
+                    }
+                }
+            }
+            node._h3Editor?.refresh();
+            node.graph?.setDirtyCanvas?.(true, true);
+        },
+    });
+
     // One pane at a time, RUN pinned underneath.
     //
     // The four authoring sections used to be stacked in a single scroller, so
@@ -221,6 +244,7 @@ function mountEditor(node) {
         { id: "refs", label: "Refs", title: "Reference pictures and @tags", body: rail.root },
         { id: "media", label: "Media", title: "Start image, reference clip, voice, soundtrack", body: mediaStrip.root },
         { id: "write", label: "Write", title: "Draft a plan with a local model", body: writer.root },
+        { id: "swap", label: "Swap", title: "One-hop identity swap from clip 1", body: videoSwap.root },
     ], {
         active: node.properties?.[ACTIVE_TAB_PROP],
         onShow: (id) => {
@@ -230,6 +254,10 @@ function mountEditor(node) {
             // opening it here keeps that laziness (nothing is fetched until you
             // visit the tab) while making the pane usable once you have.
             if (id === "write") writer.root.open = true;
+            if (id === "swap") {
+                videoSwap.root.open = true;
+                videoSwap.render?.();
+            }
             // The panel does not follow the node's height on its own; see the
             // note on installHeightGuard. sync() grows the node if the pane now
             // showing needs more room than the last one did.
@@ -327,6 +355,9 @@ function mountEditor(node) {
         // just because the node left the canvas.
         try { mediaStrip.destroy?.(); } catch (err) {
             console.error("[HandTieClips] media strip teardown failed:", err);
+        }
+        try { videoSwap.destroy?.(); } catch (err) {
+            console.error("[HandTieClips] SWAP teardown failed:", err);
         }
         return prevRemoved?.apply(this, args);
     };

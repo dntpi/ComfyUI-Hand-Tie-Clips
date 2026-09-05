@@ -91,10 +91,18 @@ take it; a third-party node that assumes fp32 has not been tested against it.
 - Three reference clips or three voices at once, on a card.
 
 Saved 1.1 workflows load. New widgets were appended, not inserted, and no
-existing default changed. A hop cache carried across the upgrade keeps
-working: its pickle-era latent sidecars are never read (that format is
-retired), and they are now counted against the cache budget and removed with
-their entry rather than orphaned.
+existing default changed.
+
+**A hop cache from 1.1 is fully invalidated by this release, deliberately.**
+The model fingerprint now identifies the base checkpoint, which it did not
+before — an int8 build and a bf16 build of the same architecture under the
+same LoRA stack produced byte-identical keys, so the cache could serve frames
+rendered under the other checkpoint. Closing that moves every key. The old
+entries are never served, and the first sweep after the upgrade reclaims
+them; their pickle-era latent sidecars are never read (that format is
+retired) but are now counted against the budget and deleted with their entry
+rather than orphaned. The practical effect is that the first chain after
+upgrading re-renders in full.
 
 ## 1.1.1 — 2026-09-05
 

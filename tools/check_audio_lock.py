@@ -13,6 +13,7 @@ cache-key claims need the node, so those run after a pack load.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import sys
 
@@ -115,6 +116,32 @@ def main():
     opt = (it.get("optional") or {})
     default = (opt.get("master_audio_file") or [None, {}])[1].get("default", "MISSING")
     ck("default is the empty string", default == "")
+
+    print("xfade: locked hop 1 is [C,T], hop 2 trim is [B,C,T]")
+    # GPU test 1 died here: hop 1 locked [0.00s-8.00s], then hop 2
+    # `_xfade_audio(master_wav, trimmed["waveform"], sr)` with 2 vs 3 dims.
+    xfade = node._xfade_audio
+    left = torch.zeros(2, 32000)          # take slice, squeezed
+    right = torch.zeros(1, 2, 28000)      # hop-2 AUDIO dict
+    try:
+        out = xfade(left, right, 32000)
+        ok = True
+        err = ""
+    except Exception as e:
+        ok, out, err = False, None, repr(e)
+    ck("2D x 3D does not raise", ok, err)
+    if ok:
+        ck("output is batched [B,C,T]", out.dim() == 3 and out.shape[0] == 1
+           and out.shape[1] == 2, str(tuple(out.shape)))
+        ck("length is concat minus the 40 ms overlap",
+           out.shape[-1] == 32000 + 28000 - int(32000 * 0.04),
+           str(out.shape[-1]))
+    else:
+        ck("output is batched [B,C,T]", False, "xfade raised")
+        ck("length is concat minus the 40 ms overlap", False, "xfade raised")
+    src = inspect.getsource(node._xfade_audio)
+    ck("xfade coerces both sides through _batch_wav",
+       "_batch_wav(left)" in src and "_batch_wav(right)" in src)
 
     print()
     if FAIL:

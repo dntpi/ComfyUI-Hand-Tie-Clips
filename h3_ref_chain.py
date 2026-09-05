@@ -1442,7 +1442,24 @@ def _trim_audio_head(audio, frames):
     return {"waveform": wav[..., n:].contiguous(), "sample_rate": sr}, n
 
 
+def _batch_wav(wav):
+    """Comfy AUDIO is [B, C, T]. A squeezed take is [C, T]. Same rank, always.
+
+    The lock path used to leave hop 1's master as [C, T] and hop 2's trim as
+    [B, C, T]; `_xfade_audio` then died on `torch.cat` with 'got 2 and 3'.
+    GPU test 1 found it: hop 1 locked [0.00s-8.00s], hop 2 never wrote.
+    """
+    if wav.dim() == 2:
+        return wav.unsqueeze(0)
+    if wav.dim() == 3:
+        return wav
+    raise ValueError(
+        f"{TAG}: waveform must be [C, T] or [B, C, T], got {tuple(wav.shape)}")
+
+
 def _xfade_audio(left, right, sr, ms=40):
+    left = _batch_wav(left)
+    right = _batch_wav(right)
     n = max(1, int(sr * ms / 1000.0))
     k = min(n, int(left.shape[-1]), int(right.shape[-1]))
     if k < 8:
@@ -3472,11 +3489,8 @@ class HandTieClips:
                         i, hop_length, overlap_n, FPS,
                         lengths=lengths, start_at=hop_starts)
                     audio = _slice_take_audio(locked, _t0, _t1, sr)
-                    wav = audio["waveform"].contiguous().cpu()
-                    if wav.dim() == 3:
-                        wav = wav[0]
-                    audio = {"waveform": wav.unsqueeze(0) if wav.dim() == 2
-                             else wav, "sample_rate": sr}
+                    wav = _batch_wav(audio["waveform"].contiguous().cpu())
+                    audio = {"waveform": wav, "sample_rate": sr}
                 this_sampled = _latent_cpu(sampled)
 
                 del sampled, latent, cond, guider, noise

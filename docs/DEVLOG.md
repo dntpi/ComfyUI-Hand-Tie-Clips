@@ -3313,3 +3313,15 @@ hop-cache notes and the "no shot-level refs" line were stale; `join: cut`
 in a README example is not a join value. `docs/HANDOVER_*.md` left as
 history; `BETA_NOTES.md` marked superseded. No behaviour change.
 
+## 61. Locked hop-1 audio was 2-D, hop-2 trim was 3-D (2026-09-05)
+
+GPU test 1: hop 1 locked `[0.00s-8.00s]` of the 26 s take, then died on hop 2
+at `_xfade_audio` with `Tensors must have same number of dimensions: got 2
+and 3`. The lock path squeezed the take to `[C, T]` for `wav` and
+unsqueezed a copy into the AUDIO dict; hop 1 wrote `wav` onto the master
+and hop 2 xfade'd that against `audio["waveform"]` which is `[B, C, T]`.
+
+`_xfade_audio` now batches both sides. The lock path keeps `wav` as
+`[B, C, T]` so it matches a decode. `tools/check_audio_lock.py` cats a
+2-D take against a 3-D hop. Needs a ComfyUI restart (Python).
+

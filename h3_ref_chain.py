@@ -1036,6 +1036,38 @@ def _core_call(node_cls, what, **kw):
         ) from e
 
 
+def _validate_anchors(shots, start_image_file):
+    """Refuse an unusable anchor=restart before anything samples.
+
+    A pure function so it can be exercised: the three rules below shipped
+    twice broken -- once naming a `join` value that does not exist, once
+    reading `start_image` before it was assigned -- because nothing called
+    them except a real render.
+    """
+    for i, sh in enumerate(shots or []):
+        if str((sh or {}).get("anchor") or "") != "restart":
+            continue
+        if i == 0:
+            raise ValueError(
+                f"{TAG}: shot 1 cannot be anchor=restart -- hop 1 is already "
+                "a chain start. Remove it, or move it to a later shot.")
+        # The FILENAME, not the loaded image: this runs before any media is
+        # loaded, which is the point of it. Whether the file resolves is a
+        # separate check further down.
+        if not str(start_image_file or "").strip():
+            raise ValueError(
+                f"{TAG}: shot {i + 1} is anchor=restart but no start image is "
+                "set. A restart re-anchors the chain on that photograph; "
+                "without one there is nothing to restart from. Set "
+                "start_image_file in MEDIA, or remove the anchor.")
+        if ((sh.get("directives") or {}).get("join")) == "continuous":
+            raise ValueError(
+                f"{TAG}: shot {i + 1} is anchor=restart with join=continuous. "
+                "A restart is a cut -- it opens on the start image's pose, not "
+                "the previous hop's last frame. Use join=hard_cut or match_cut "
+                "on that shot.")
+
+
 # Above this, the master frame buffer is spilled to disk instead of RAM. The
 # number is a judgement, not a measurement: below it the mapping buys nothing
 # worth the I/O, and above it the buffer is competing with the DiT and the VAE
@@ -2238,33 +2270,7 @@ class HandTieClips:
                         "join at 5 s.",
                         flush=True,
                     )
-        # anchor=restart, checked up front: it needs a photograph to restart ON,
-        # and it is a cut by construction -- the hop opens on the reference
-        # pose, not where the previous hop ended. Asking for a continuous join
-        # across a restart is asking for two incompatible things.
-        for _i, _sh in enumerate(shots):
-            if str((_sh or {}).get("anchor") or "") != "restart":
-                continue
-            if _i == 0:
-                raise ValueError(
-                    f"{TAG}: shot 1 cannot be anchor=restart -- hop 1 is already "
-                    "a chain start. Remove it, or move it to a later shot.")
-            # `start_image_file`, not `start_image`: this validation runs
-            # before any media is loaded, which is the whole point of it -- a
-            # bad plan should fail on the queue, not three hops in. Whether the
-            # named file actually loads is a separate check further down.
-            if not str(start_image_file or "").strip():
-                raise ValueError(
-                    f"{TAG}: shot {_i + 1} is anchor=restart but no start image "
-                    "is set. A restart re-anchors the chain on that photograph; "
-                    "without one there is nothing to restart from. Set "
-                    "start_image_file in MEDIA, or remove the anchor.")
-            if ((_sh.get("directives") or {}).get("join")) == "continuous":
-                raise ValueError(
-                    f"{TAG}: shot {_i + 1} is anchor=restart with "
-                    "join=continuous. A restart is a cut -- it opens on the "
-                    "start image's pose, not the previous hop's last frame. "
-                    "Use join=hard_cut or match_cut on that shot.")
+        _validate_anchors(shots, start_image_file)
         # Same rule, same reason: checked on the queue, by filename, before any
         # media is loaded. A chain that cannot reach its anchor should say so in
         # a second rather than nine hops later.

@@ -43,6 +43,7 @@ CHECKS = [
     ("check_cache_keys.py", []),
     ("check_latent_sidecar.py", []),
     ("check_master_spill.py", []),
+    ("check_anchor.py", []),
     ("check_planner.py", []),
     ("gen_schema.py", ["--check"]),
 ]

@@ -533,19 +533,22 @@ def register():
 
         import asyncio
 
+        # Three, like the plan path. A caption written from one frame describes
+        # a pose, and this caption reaches the encoder as what <Video 1> IS.
         def encode():
-            return _media.video_first_frame_data_url(video, start=start)
+            return _media.video_frame_data_urls(
+                video, start=start, end=end, count=3)
 
         try:
-            frame = await asyncio.get_running_loop().run_in_executor(
+            frames = await asyncio.get_running_loop().run_in_executor(
                 None, encode)
         except Exception as exc:
             return web.json_response(
                 {"ok": False, "error": f"could not read the clip: {exc}"})
-        if not frame:
+        if not frames:
             return web.json_response(
-                {"ok": False, "error": "could not extract a frame at that "
-                                       "IN point. Trim the clip on MEDIA."})
+                {"ok": False, "error": "could not extract frames from that "
+                                       "window. Trim the clip on MEDIA."})
 
         async def complete_fn(messages, schema=None):
             return await _llm.complete(
@@ -554,7 +557,7 @@ def register():
 
         try:
             out = await _planner.describe_frame(
-                complete_fn=complete_fn, frame_data_url=frame)
+                complete_fn=complete_fn, frames=frames)
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:

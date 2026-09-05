@@ -1718,24 +1718,48 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
     return out
 
 
+# "who is in it" was in this prompt and it is the one thing the caption must
+# NOT say. The caption lands in reference_video_desc, which reaches the encoder
+# as "<Video 1> is a reference clip: ...". A clip whose caption says "a man
+# wearing an orange tank top" is asserting the subject's identity additively at
+# cfg 1.0 -- against a beat asking for somebody else. Observed: a head swap
+# rendered the clip's own person unchanged with that caption present, and
+# rendered correctly on the same clip and mode with no caption at all.
+#
+# The clip is a MOTION AND PLACE plate. Identity comes from the stills. So the
+# caption describes what is happening and where, and leaves who to the beat.
 _DESCRIBE_SYSTEM = (
-    "You caption one video frame for a MiniMax H3 reference clip. "
-    "One or two sentences: who is in it, the place, the action being "
-    "copied. No JSON. No @tags. No identity swap."
+    "You caption frames from a video that will be used as a MOTION AND PLACE "
+    "reference. One or two sentences: the action, the movement, the setting "
+    "and the light. "
+    "Do NOT describe who the person is -- not their sex, age, build, face, "
+    "hair or clothing. That person may be replaced, and a caption naming them "
+    "fights the replacement. Write 'the subject' or 'a figure'. "
+    "Frames are in time order; the change between them is the action. "
+    "No JSON. No @tags."
 )
 
 
-async def describe_frame(*, complete_fn, frame_data_url):
-    """One-call caption. No repair loop, no shot_plan, no ref_plan."""
-    if not frame_data_url:
+async def describe_frame(*, complete_fn, frame_data_url=None, frames=None):
+    """One-call caption. No repair loop, no shot_plan, no ref_plan.
+
+    Takes a SEQUENCE, for the same reason the plan writer does: one frame is a
+    pose, and a caption of a pose describes standing where the clip was
+    charging up. `frame_data_url` stays accepted so a caller with one frame is
+    not broken by this.
+    """
+    urls = [u for u in (frames or []) if u] or (
+        [frame_data_url] if frame_data_url else [])
+    if not urls:
         return {"ok": False, "error": "no frame could be extracted from the clip"}
+    shots = [{"caption": (f"Reference clip, frame {k} of {len(urls)}, in time "
+                          "order. Read them together: the change between them "
+                          "is the action. Not a @tag."),
+              "data_url": u} for k, u in enumerate(urls, 1)]
     messages = [
         {"role": "system", "content": _DESCRIBE_SYSTEM},
         {"role": "user", "content": attach_images(
-            "Describe this frame.",
-            [{"caption": "The reference clip's frame at the trim IN point. "
-                         "It is not a @tag.",
-              "data_url": frame_data_url}])},
+            "Describe what is happening and where.", shots)},
     ]
     reply = await complete_fn(messages, schema=None)
     text = " ".join(str(reply or "").strip().split())

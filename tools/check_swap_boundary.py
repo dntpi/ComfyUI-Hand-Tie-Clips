@@ -192,6 +192,21 @@ def main():
        [P.swap_mode_needs_identity(m) for m in P.SWAP_MODES]
        == [True, True, True, False], str(P.SWAP_MODES))
 
+    # The caption reaches the encoder as what <Video 1> IS. A caption naming
+    # the person asserts their identity additively at cfg 1.0, against a beat
+    # asking for somebody else -- observed: a head swap rendered the clip's own
+    # person with such a caption present, and rendered correctly on the same
+    # clip and mode with no caption at all. The clip is a motion and place
+    # plate; who is in it is the beat's business.
+    print("the clip caption describes the scene, not the subject")
+    d = P._DESCRIBE_SYSTEM.lower()
+    ck("it does not ask who is in the clip", "who is in it" not in d,
+       "that phrasing is what wrote 'a man wearing an orange tank top'")
+    ck("it forbids describing the person", "do not describe who" in d)
+    ck("it asks for the action and the setting",
+       "action" in d and "setting" in d)
+    ck("it says the frames are ordered", "time order" in d)
+
     print("background and wardrobe")
     bg = P.build_swap_user_turn("", "mia", "8 s", background="picture",
                                 background_tag="kitchen")

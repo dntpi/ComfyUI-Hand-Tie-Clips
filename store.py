@@ -148,6 +148,7 @@ def _latent_to_flat(latent):
         container = {"kind": "nested",
                      "cls": f"{cls.__module__}.{cls.__qualname__}"}
 
+    nested_extra = {}
     for k, v in latent.items():
         if k == "samples":
             continue
@@ -156,12 +157,31 @@ def _latent_to_flat(latent):
         elif isinstance(v, (str, int, float, bool)) or v is None:
             extra[k] = v
         else:
-            # Silently dropping a key would make a restored latent quietly
-            # different from the one that was stored, which is the whole class
-            # of bug the hop cache exists to avoid.
-            return None
+            # A member can be nested for exactly the reason `samples` is: this
+            # is a joint AV latent, so anything shaped like it -- `noise_mask`
+            # above all -- carries one tensor per stream. `master_audio_file`
+            # sets a NestedTensor mask (ones on video, zeros on audio), and
+            # refusing it here meant EVERY locked hop logged "not representable
+            # without pickling" and cached no latent. A later hit then left
+            # `prev_sampled` empty, the hop after it fell back to the AddGuide
+            # pixel pin, and cache_hops=on became worse than off -- precisely
+            # the failure this sidecar exists to prevent, reintroduced by a
+            # feature that shipped after it.
+            v_parts = _latents.parts(v)
+            if not v_parts or not all(isinstance(t, torch.Tensor)
+                                      for t in v_parts):
+                # Still refused. Silently dropping a key would make a restored
+                # latent quietly different from the one that was stored, which
+                # is the whole class of bug the hop cache exists to avoid.
+                return None
+            for i, t in enumerate(v_parts):
+                flat[f"nested.{k}.{i}"] = t.detach().cpu().contiguous().clone()
+            cls = type(v)
+            nested_extra[k] = {"n": len(v_parts),
+                               "cls": f"{cls.__module__}.{cls.__qualname__}"}
 
-    meta = {"v": 1, "n": len(parts), "container": container, "extra": extra}
+    meta = {"v": 1, "n": len(parts), "container": container, "extra": extra,
+            "nested": nested_extra}
     return flat, {"htc": json.dumps(meta, separators=(",", ":"))}
 
 
@@ -193,6 +213,19 @@ def _latent_from_flat(flat, meta_json):
     for k, v in flat.items():
         if k.startswith("extra."):
             out[k[len("extra."):]] = v
+
+    # Nested members, rebuilt the same way `samples` was and refused on the
+    # same terms -- a restored latent that quietly lost its noise_mask would
+    # denoise the audio it was supposed to freeze.
+    for k, spec in (meta.get("nested") or {}).items():
+        from comfy.nested_tensor import NestedTensor
+        if spec.get("cls") != f"{NestedTensor.__module__}.{NestedTensor.__qualname__}":
+            return None
+        try:
+            out[k] = NestedTensor([flat[f"nested.{k}.{i}"]
+                                   for i in range(int(spec["n"]))])
+        except KeyError:
+            return None
     return out
 
 

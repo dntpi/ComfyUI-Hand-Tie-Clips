@@ -3344,3 +3344,44 @@ arithmetic on a real master, `refs: []` on a pin-less hop. The latent
 sidecar still logs `not representable without pickling` on this NestedTensor
 shape -- hops render; a later cache hit will fall back to the pixel pin.
 
+
+## 63. The fixture did not match the code (2026-09-05)
+
+`master_audio_file` shipped with the hop cache silently disabled underneath it.
+
+Every locked hop of the first GPU test logged `latent not cached (ValueError('latent is
+not representable without pickling'))`. The hops rendered, so it read as noise. It is not
+noise. Without a stored sampler latent a later cache hit leaves `prev_sampled` empty, the
+hop after it predicts the AddGuide pixel fallback instead of Motion-Context, and that
+prediction is part of its key -- so the key stops matching what is on disk. `store.py`
+already carries a paragraph about this exact chain of consequences, written when the
+sidecar was built, ending "making `cache_hops=on` actively worse than off". A feature added
+after it walked straight back into it.
+
+The cause is one line of type-checking. `_latent_to_flat` handles `samples` through
+`latents.parts()` because it can be a `NestedTensor`, and then handles every OTHER member
+of the latent dict as either a plain tensor or a scalar. But this is a joint AV latent, so
+anything shaped like it carries one tensor per stream -- and the audio lock's whole
+mechanism is `out["noise_mask"] = NestedTensor((ones, zeros))`. A `NestedTensor` is not a
+`torch.Tensor`; the module docstring in `latents.py` says so in its second paragraph. It
+fell to the `else`, which refuses, which is correct-by-design behaviour applied to a case
+nobody meant to refuse.
+
+`tools/check_latent_sidecar.py` covered "other members of the latent dict" and passed,
+because its fixture builds the mask as `torch.rand(1, 1, 8, 8)` -- a plain tensor. The code
+under test never makes one of those. **A fixture that does not match what the code produces
+is not a test**, and this one was green through the whole of v2's development while the
+behaviour it guards was broken in every run that used the feature it was written beside.
+
+Fixed both ends. Nested members are now decomposed the way `samples` is, stored as
+`nested.<key>.<i>`, and rebuilt through the same static import and the same class-name
+check; a member whose container `parts()` does not recognise is still refused rather than
+dropped, because restoring a latent minus its noise_mask would denoise the audio it was
+supposed to freeze. The checker now builds the mask the shape the code actually sets, and
+fails without the fix.
+
+The lesson is not "write more checks". There were twenty-two, all green, and one of them
+was pointed directly at this. It is that a check is only as good as the resemblance between
+its fixture and production, and that resemblance decays silently every time a feature lands
+next to an older test. The tell was in the log the whole time, once per hop, in a line that
+said the word `ValueError` and was still easy to read as routine.

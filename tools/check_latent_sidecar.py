@@ -116,6 +116,29 @@ def main():
            and out3["flag"] is True and out3["nothing"] is None,
            "int/str/bool/None")
 
+        # The fixture above uses a PLAIN tensor mask. The code it guards makes a
+        # NESTED one: a joint AV latent's mask carries a tensor per stream, so
+        # master_audio_file sets NestedTensor((ones, zeros)). This checker passed
+        # while every locked hop on a GPU logged "not representable without
+        # pickling" and cached no latent at all. A fixture that does not match
+        # what the code produces is not a test.
+        print("a NESTED member -- the shape master_audio_file really sets")
+        vm = torch.ones((1, 1) + tuple(v.shape[2:]))
+        am = torch.zeros((1, 1) + tuple(a.shape[2:]))
+        real = {"samples": NestedTensor([v, a]),
+                "noise_mask": NestedTensor([vm, am])}
+        ck("a locked latent is representable", to_flat(real) is not None,
+           "master_audio_file + cache_hops=on")
+        out4, _ = roundtrip(real, td)
+        ck("the nested mask comes back nested",
+           type(out4["noise_mask"]).__name__ == "NestedTensor")
+        got = list(out4["noise_mask"].unbind())
+        ck("both streams survive bit-identically",
+           torch.equal(got[0], vm) and torch.equal(got[1], am),
+           "ones on video, zeros on audio")
+        ck("the samples beside it are still intact",
+           torch.equal(list(out4["samples"].unbind())[0], v))
+
         print("refusals -- None means cache the frames, skip the latent")
         ck("a dict with no samples is refused", to_flat({"x": 1}) is None)
         ck("a non-dict is refused", to_flat(torch.randn(2)) is None)

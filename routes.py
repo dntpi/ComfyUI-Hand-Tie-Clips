@@ -650,6 +650,11 @@ def register():
             # order out loud is what turns three pictures into a movement.
             frames = _media.video_frame_data_urls(
                 video, start=start, end=end, count=3)
+            # Not the loop variable: `video_frame_data_urls` documents [] as
+            # its failure mode, and returning `frame` from an empty loop raised
+            # UnboundLocalError into the handler below -- which then blamed the
+            # identity stills and threw away the ones it had already encoded.
+            first = frames[0] if frames else None
             for k, frame in enumerate(frames, 1):
                 images.append({
                     "caption": (
@@ -661,7 +666,7 @@ def register():
                     ),
                     "data_url": frame,
                 })
-            return images, frame
+            return images, first
 
         try:
             images, frame = await asyncio.get_running_loop().run_in_executor(

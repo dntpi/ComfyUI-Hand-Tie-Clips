@@ -255,9 +255,15 @@ generate/validate/repair loop, and must not Accept over a multi-shot plan
 without an explicit replace. A change that is about hops 2+, the pin, the
 tone anchor, the audio lock, or the hop cache is not a SWAP change.
 
-The generate/validate/repair *loop* (`planner._repair_loop`) is shared
-mechanism; SWAP's instruct (`prompt_pack/SWAP_PROMPT.md`) and validator
-(`validate_swap`) are separate policy. WRITE's `validate()` and
+The generate/validate/repair *loop* (`planner._repair_loop`) is
+mechanism, extracted so SWAP did not fork WRITE's policy loop to get one.
+**Only SWAP calls it.** `write_plan` still runs its own copy, because it
+rewrites the conversation between attempts -- remapping rail tags by
+filename, merging the register, restoring pinned `mp` and `file` -- before
+anything validates, which `consume` cannot express. Two loops, and a change
+to the repair protocol has to land in both. SWAP's instruct
+(`prompt_pack/SWAP_PROMPT.md`) and validator (`validate_swap`) are separate
+policy. WRITE's `validate()` and
 `system_prompt()` are not on this path. `tools/check_swap_boundary.py`
 enforces the clauses that can be checked without a browser. Gaps it cannot
 cover are named in that file's docstring.

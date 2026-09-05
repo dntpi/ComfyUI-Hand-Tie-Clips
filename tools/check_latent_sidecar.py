@@ -155,10 +155,13 @@ def main():
            "or the cache silently exceeds its own budget")
         ck("eviction removes it", "LEGACY_LATENT_EXT" in sweep,
            "or it outlives the entry it belongs to")
+        # `def _get_latent(` -- store.py's reader is private, and the
+        # public spelling never matched, so the ternary always took `else True`
+        # and this tripwire asserted nothing at all.
+        assert "def _get_latent(" in src, "store.py's latent reader was renamed"
         ck("nothing ever reads it",
-           "LEGACY_LATENT_EXT" not in src[src.index("def get_latent("):
-                                          src.index("def entries(")]
-           if "def get_latent(" in src else True,
+           "LEGACY_LATENT_EXT" not in src[src.index("def _get_latent("):
+                                          src.index("def entries(")],
            "reading it back would need weights_only=False")
 
         print("refusals -- None means cache the frames, skip the latent")

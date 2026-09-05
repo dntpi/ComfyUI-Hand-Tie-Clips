@@ -25,44 +25,54 @@ import { createTrimBar, forgetPeaks } from "./trim_bar.js";
  * a picture in the rail carries its own `desc`, and the clip had nowhere to say
  * what it was for -- so it went to the encoder as <Video 1> with nothing naming
  * it, which is the same uncited-reference problem the stills had. */
+// Display order, and it is NOT the Python widget order. `INPUT_TYPES` is
+// positional -- slots 2 and 3 were appended after slot 1 because a widget added
+// anywhere but the end reassigns every later value in every saved workflow --
+// but nothing here is positional, so the strip is free to group by KIND while
+// Python stays in the order it must. Rendering reads this array; the only other
+// uses are gathering names to hide and counting filled slots, neither of which
+// cares about order.
+//
+// Grouped clips-then-voices because the alternative shipped for one afternoon
+// and read wrong immediately: REFERENCE CLIP 1, VOICE 1, REFERENCE CLIP 2 put
+// the first voice between the first and second clip, which makes VOICE 1 look
+// like a property of the clip beside it rather than the first of three.
 const SLOTS = [
     ["start_image_file", "image", "first frame",
      "Pins hop 1's opening frame. Ignored on later hops -- they are pinned by the join.",
      null, null, null],
+    // Three reference videos and three standalone reference audios, which is
+    // Core's declared ceiling (io.Autogrow max=3 on both) rather than ours.
+    // Numbering is DENSE -- clearing slot 2 renumbers slot 3, so a beat citing
+    // an ordinal would then name a different clip. Slots 2 and 3 share slot 1's
+    // decode size, which is a memory budget rather than a creative choice.
     ["reference_video_file", "video", "reference clip 1",
-     "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that.",
+     "A motion or look plate the whole chain reads, cited as <Video 1>. NOT the previous hop; the join handles that.",
      "reference_video", "reference_video_desc", "reference_video_size"],
-    ["voice_file", "audio", "voice 1",
-     "Voice or timbre reference for hop 1 as <Audio 1>. Later hops use the pin.",
-     "voice", null, null],
-    // Slots 2 and 3. H3 takes three reference videos and three standalone
-    // reference audios; the pack passed one of each until now. Numbering is
-    // DENSE -- clearing slot 2 renumbers slot 3, so a beat that cites an
-    // ordinal would then name a different clip. Slots 2 and 3 share slot 1's
-    // reference video size, which is a decode budget rather than a creative
-    // choice.
     ["reference_video_2_file", "video", "reference clip 2",
      "Second motion/look plate, cited as <Video 2>. Shares slot 1's decode size.",
      "reference_video_2", null, null],
     ["reference_video_3_file", "video", "reference clip 3",
      "Third motion/look plate, cited as <Video 3>. Shares slot 1's decode size.",
      "reference_video_3", null, null],
+    ["voice_file", "audio", "voice 1",
+     "Voice or timbre reference for hop 1, cited as <Audio 1>. Later hops use the pin.",
+     "voice", null, null],
     ["voice_2_file", "audio", "voice 2",
      "Second voice reference, cited as <Audio 2>. Every reference audio is attended on every step of every hop -- trim it.",
      "voice_2", null, null],
     ["voice_3_file", "audio", "voice 3",
      "Third voice reference, cited as <Audio 3>. Trim it.",
      "voice_3", null, null],
-    // Not a reference at all: this one is never shown to the model. It is mixed
-    // under the finished chain after the last hop is joined, so it sits here
-    // because this is where you look for audio -- not because it behaves like
-    // its neighbours. The dials that shape it live in RUN > soundtrack.
+    // The last two are not references and the model is never shown either of
+    // them. They sit here because this is where you look for audio, not because
+    // they behave like the slots above.
+    //
+    // The soundtrack is mixed under the finished chain after the last hop is
+    // joined; the dials that shape it live in RUN > soundtrack.
     ["soundtrack_file", "audio", "soundtrack",
      "Music bed mixed under the whole chain once it is joined. Not a reference -- the model never hears it.",
      "music", null, null],
-    // Last: a file widget with no slot here falls through to a native dial.
-    // The take is not a reference -- the model does not generate it. Every hop
-    // lip-syncs to one window of this file. Empty = off.
     ["master_audio_file", "audio", "master audio",
      "The spoken take for the whole chain. Every hop is given its own window of this file and generates the picture to match, so the voice is yours rather than the model's. Not a reference and not the SOUNDTRACK beside it: this one is delivered verbatim, no VAE round trip. Empty = the model generates a voice, as before.",
      null, null, null],

@@ -13,13 +13,25 @@ Sampling runs at cfg 1.0 with no negative branch. Never write a negation.
 Never name the thing you want to end. Silence is a sound (room tone, a
 fridge, a distant car), not an absence.
 
-## The frame is not a tag
+## The clip frames are not a tag, and they are a sequence
 
-The user message attaches two images: the identity still (`@tag`) and a
-frame from the clip. The frame has **no @tag**. Do not write
-`@reference_video` or invent a tag for it. Cite only the identity tag you
-were given, in the action line: "stands at the counter in the room, looking
-like @identity_tag".
+The user message attaches the identity still (`@tag`) and then several
+frames from the clip, captioned with their position in time order. The
+frames have **no @tag**. Do not write `@reference_video` or invent a tag for
+them. Cite only the identity tag you were given, in the action line: "stands
+at the counter in the room, looking like @identity_tag".
+
+**Read the clip frames together, not one at a time.** The movement BETWEEN
+them is the action, and it is the thing you are being asked to describe. One
+frame shows a pose; the difference between frames shows what the clip is
+doing -- gathering, turning, reaching, bracing. Write the action, not the
+posture you can see in any single frame.
+
+If the frames genuinely do not differ, say what the person is doing rather
+than how they are standing, and lean on the user's brief for the action. A
+beat that describes a still pose will FIGHT the clip at render time: the
+clip goes to the model as `<Video 1>`, sampling is additive, and "stands
+with hands at their sides" gets added to a clip that was charging up.
 
 ## What comes from where
 

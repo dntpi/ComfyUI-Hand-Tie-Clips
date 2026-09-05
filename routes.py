@@ -518,6 +518,10 @@ def register():
         except (TypeError, ValueError):
             start = 0.0
         try:
+            end = float(body.get("video_end_s") or 0.0)
+        except (TypeError, ValueError):
+            end = 0.0
+        try:
             _llm, _planner, conn = _swap_conn()
         except Exception as exc:
             return web.json_response(
@@ -588,6 +592,10 @@ def register():
             start = float(body.get("video_start_s") or 0.0)
         except (TypeError, ValueError):
             start = 0.0
+        try:
+            end = float(body.get("video_end_s") or 0.0)
+        except (TypeError, ValueError):
+            end = 0.0
         rail_tags = body.get("rail_tags")
         if not isinstance(rail_tags, list):
             rail_tags = [ident_tag]
@@ -618,13 +626,25 @@ def register():
                 url = _media.vision_data_url(ident_file)
                 if url:
                     images.append({"tag": ident_tag, "data_url": url})
-            frame = _media.video_first_frame_data_url(video, start=start)
-            if frame:
+            # Three frames across the trimmed window, not one. A single frame
+            # is a POSE: the model described somebody standing with their hands
+            # on a bed and could not describe what the clip was DOING, because
+            # motion does not exist in one frame. The beat then fought the clip
+            # it was supposed to follow, since at cfg 1.0 a beat is additive.
+            #
+            # This is also what "video vision" is in practice: the VLMs that
+            # advertise it sample frames and present them in order. Saying the
+            # order out loud is what turns three pictures into a movement.
+            frames = _media.video_frame_data_urls(
+                video, start=start, end=end, count=3)
+            for k, frame in enumerate(frames, 1):
                 images.append({
                     "caption": (
-                        "This is a frame from the reference clip at the trim "
-                        "IN point. It is NOT a @tag. Do not write "
-                        "@reference_video."
+                        f"Reference clip, frame {k} of {len(frames)}, in time "
+                        f"order{' (the trim IN point)' if k == 1 else ''}. "
+                        "Read them together to see what the clip is DOING -- "
+                        "the movement between them is the action to describe. "
+                        "These are NOT a @tag. Do not write @reference_video."
                     ),
                     "data_url": frame,
                 })

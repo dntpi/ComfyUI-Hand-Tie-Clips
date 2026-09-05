@@ -123,6 +123,66 @@ def vision_data_url(name, max_side=VISION_SIDE):
         return None
 
 
+def video_frame_data_urls(name, start=0.0, end=0.0, count=3,
+                          max_side=VISION_SIDE):
+    """JPEG data-URLs sampled evenly across a clip window. -> list[str].
+
+    One frame is a POSE. A vision model handed a single still of somebody with
+    their hands on a bed describes exactly that, and cannot describe what the
+    clip is doing -- charging up, turning, reaching -- because motion does not
+    exist in one frame. SWAP then wrote a beat about standing, and at cfg 1.0
+    a beat is additive, so the description fought the very clip it was supposed
+    to follow.
+
+    Three frames across the window is the cheapest thing that shows CHANGE.
+    Evenly spaced rather than consecutive: neighbouring frames of a 24 fps clip
+    differ by almost nothing, so they would cost three times the tokens to say
+    the same thing once.
+
+    Frames are counted rather than sought, matching `load_video` and
+    `video_first_frame_data_url`: a keyframe seek can land a second off, and a
+    caption of the wrong moment is worse than a caption of one moment. Failure
+    is an empty list, never a raise.
+    """
+    path = resolve(name, kinds={"video"})
+    if path is None:
+        return []
+    count = max(1, int(count))
+    try:
+        import av  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        with av.open(path) as container:
+            vs = container.streams.video[0]
+            fps = float(vs.average_rate or 0) or 24.0
+            total = int(vs.frames or 0)
+            first = max(0, int(round(float(start or 0.0) * fps)))
+            last = int(round(float(end or 0.0) * fps)) if end else 0
+            if last <= first:
+                # No OUT point: use the clip's own end when it is known, and
+                # otherwise fall back to a fixed window rather than decoding a
+                # whole file to find out how long it is.
+                last = (total - 1) if total > first else first + int(fps * 4)
+            if count == 1 or last <= first:
+                wanted = [first]
+            else:
+                step = (last - first) / float(count - 1)
+                wanted = [int(round(first + step * k)) for k in range(count)]
+            need = set(wanted)
+            got = {}
+            for i, frame in enumerate(container.decode(video=0)):
+                if i in need:
+                    im = Image.fromarray(frame.to_ndarray(format="rgb24"))
+                    got[i] = _pil_jpeg_data_url(im, max_side=max_side)
+                if i >= max(wanted):
+                    break
+            return [got[i] for i in wanted if i in got]
+    except Exception as exc:
+        print(f"[{TAG}] could not attach frames of {name!r}: {exc!r}",
+              flush=True)
+        return []
+
+
 def video_first_frame_data_url(name, start=0.0, max_side=VISION_SIDE):
     """JPEG data-URL of one frame at `start` seconds. -> str or None.
 

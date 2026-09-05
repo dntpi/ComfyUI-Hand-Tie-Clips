@@ -45,6 +45,10 @@ export function createVideoSwap(node, { onWritten } = {}) {
 
     const wVideo = widgetByName(node, "reference_video_file");
     const wStart = widgetByName(node, "reference_video_start_s");
+    // The OUT point as well as the IN: the frames SWAP reads are sampled
+    // ACROSS the trimmed window, so an end of 0 would sample a default
+    // span rather than the span the user actually chose.
+    const wEnd = widgetByName(node, "reference_video_end_s");
     const wDesc = widgetByName(node, "reference_video_desc");
 
     const cell = el("label", "h3e-media-cell");
@@ -318,6 +322,7 @@ export function createVideoSwap(node, { onWritten } = {}) {
                 body: JSON.stringify({
                     video,
                     video_start_s: Number(wStart?.value) || 0,
+                    video_end_s: Number(wEnd?.value) || 0,
                 }),
             });
             const j = await r.json();
@@ -361,6 +366,7 @@ export function createVideoSwap(node, { onWritten } = {}) {
                     duration: String(widgetByName(node, "duration")?.value || ""),
                     video,
                     video_start_s: Number(wStart?.value) || 0,
+                    video_end_s: Number(wEnd?.value) || 0,
                     identity: identity ? {
                         tag: String(identity.tag).replace(/^@/, ""),
                         file: String(identity.file || "").trim(),

@@ -29,10 +29,10 @@ const SLOTS = [
     ["start_image_file", "image", "first frame",
      "Pins hop 1's opening frame. Ignored on later hops -- they are pinned by the join.",
      null, null, null],
-    ["reference_video_file", "video", "reference clip",
+    ["reference_video_file", "video", "reference clip 1",
      "A motion or look plate the whole chain reads. NOT the previous hop; the join handles that.",
      "reference_video", "reference_video_desc", "reference_video_size"],
-    ["voice_file", "audio", "voice",
+    ["voice_file", "audio", "voice 1",
      "Voice or timbre reference for hop 1 as <Audio 1>. Later hops use the pin.",
      "voice", null, null],
     // Slots 2 and 3. H3 takes three reference videos and three standalone

@@ -112,3 +112,40 @@ wardrobe-drift diagnosis they report -- video pixels outlasting the text instruc
 assertion: three prose comments, no chain ids, no measurements, in a pack that cites
 `chain_000NN` in exactly that kind of comment everywhere else. If they have the evidence it is
 worth a great deal; if it is a hunch it should read as one.
+
+## More reference slots than Core declares
+
+Raised while looking at the media strip: H3 is said to accept more references than the nine
+it advertises, and if so the pack should let you add them.
+
+**What Core declares** (`comfy_extras/nodes_minimax_h3.py`, the `io.Autogrow` templates):
+
+    ref_images        max=9
+    ref_videos        max=3
+    ref_video_audios  max=3
+    ref_audios        max=3
+
+So the pack's three clips and three voices are not a design choice -- they are Core's
+ceiling, and a fourth voice slot would have nowhere to go. The reference RAIL is already the
+"+" for images and is capped at `MAX_SLOTS = 9` in `ref_rail.js`, matching.
+
+**Why it is nonetheless possible.** This pack does not go through the Autogrow schema. It
+calls `MiniMaxH3ReferenceToVideo.execute()` with a plain dict, and that method iterates
+`(ref_images or {}).values()` without counting. A dict of twelve would be encoded and
+attended like a dict of nine. The `max=9` is enforced by the frontend and validation, not by
+the code that does the work.
+
+**Which is exactly why it needs proving before it ships.** Passing more entries than a
+declared maximum is relying on an undeclared property of somebody else's node -- the
+"protocol boundaries are not pixel equality" rule in the other direction. Core may cap at 9
+because the model was trained that way, because of a positional token budget, or because
+nobody tried more; the schema does not say which, and neither do we.
+
+**What it would take.** One render at ten and one at twelve references, against a nine-ref
+control on the same seed, measured with `analyze_skin.py` and `texture_probe` in CACHE mode
+-- does identity hold, does anything degrade, and what does it cost per step given references
+ride every step of every hop. If it holds, the rail's `MAX_SLOTS` and the tooltips move
+together and the README says plainly that it exceeds Core's declared limit deliberately.
+
+Cheap to test, and it must not be assumed. A user reporting that it "works" is a report
+that it did not crash.

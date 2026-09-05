@@ -615,7 +615,8 @@
         0,
         "",
         "MAX",
-        "auto"
+        "auto",
+        "hop1"
       ],
       "title": "H3 Ref2VA Chain - starter"
     },

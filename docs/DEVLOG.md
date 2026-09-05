@@ -2359,6 +2359,37 @@ frames, so under the Motion-Context latent join it still never reaches the next
 hop's pin. And it still measures the whole frame at once, so a
 chain where the skin greys while the background gains edges -- which is what
 hers did -- gets one compromise correction for two opposite drifts.
+## 46. Anchoring on the first casualty (2026-09-05)
+
+`tone_compensate=anchor` holds the chain on hop 1's look, and the reasoning was that hop 1
+is "the only tone in the chain nobody drifted into". The ten-run study says that is wrong
+in a way that matters: hop 1 is already not the photograph. Before any relay has happened,
+measured on the same instrument, the reference still reads chroma 33.6 and hop 1 reads 30;
+b* 26.6 against 22; fine detail 0.72 to 0.99 of the still. The chain was being held on a
+target that had already fallen short, and holding it perfectly still meant converging on
+the first casualty rather than on the reference.
+
+`tone_anchor_ref` chooses: `hop1` is the original behaviour and stays the default, `still`
+takes the statistics from `start_image` instead. Two things follow from the second that the
+first cannot do. Hop 1 itself gets pulled, which is the only way that 33.6-against-30 gap
+is ever closed. And the target stops moving with the chain -- a photograph does not drift.
+
+Ramp handling had to change with it. The ramp exists to keep a JOIN exact: frame 0 of a hop
+must equal the previous hop's last frame, so the correction fades in over 48 frames. Hop 1
+has no previous frame, and neither does a restart hop, which opens on the photograph by
+construction. Both now take the correction whole from frame 0 (`ramp=0`), because ramping
+them spends two seconds fading into the look at the exact moment a viewer decides what the
+shot looks like.
+
+While wiring the key for it, a cache gap that predates this: the tone settings were in no
+key at all, on the documented grounds that the cache holds RAW hops and tone is applied
+after, so switching modes need not invalidate them. That is true of the hop being corrected
+and FALSE of the next one -- the corrected frames are what `prev_imgs` becomes, and
+`prev_imgs` is the pin. Hop 2 rendered under one tone mode was being served to a run using
+another, with a byte-identical key. Now keyed from hop 2 only, which keeps the half of the
+original claim that was always true: hop 1 has no pin, so it still survives every tone
+switch.
+
 ## 47. Choosing the pin, and refusing to pretend (2026-09-04)
 
 The node has always known which mechanism pinned each hop.
@@ -2421,3 +2452,54 @@ internally, which walked straight into the existing "Motion-Context not
 available; install it for a latent join" line -- false, and precisely the
 line a user would read while wondering why forcing the setting appeared to
 do nothing. Forced now says it was forced.
+
+## 48. The restart was still being told it was a continuation (2026-09-05)
+
+`anchor: "restart"` shipped in 1.2.0-beta1 with a clear contract, written into the branch
+that implements it: *"A restart hop is a chain start. It gets the photograph as its frame-0
+anchor exactly as hop 1 does, and NOTHING from the previous hop reaches it -- no sampler
+latent, no decoded tail."*
+
+The first half was true. The second was not, and the code said so two hundred lines apart
+without anyone noticing, because `hop_restart` was computed **beside the sampler**, and
+almost everything that makes a hop a start rather than a continuation is decided long
+before that:
+
+- `_attach_pin_to_qwen` ran on `i > 0`, so a restart hop was handed the previous hop's last
+  frame as Qwen `<Picture 1>` and its last 22 frames as a live video reference.
+- `_assemble_next` ran on `i > 0`, so the compiled prompt opened with *"The clip opens
+  already in progress from the pinned frames"* -- on a hop whose frame 0 is a studio
+  portrait and which has no pinned frames at all.
+- Under `hop_script=next` the identity stills were dropped as "unscheduled stills stay off
+  this continue", on the one hop that is not a continue and most needs them.
+- The voice reference was dropped for the same reason.
+- And `dry_run` never printed the ANCHOR RESTART line, because that print sat past the
+  point a dry run returns. The one tool for reading a plan before paying for it did not
+  mention the feature.
+
+An outside reviewer found the consequence in the tester's own package, and her instruments
+had already recorded it. Background edge density at the restart hop is **0.0032** and
+**0.0031** in the two restart runs, against 4.7 to 7.2 at every other hop of those same
+runs -- a featureless backdrop. Verified here from `background_metrics.json` rather than
+taken on report. For several seconds the model renders the reference photograph instead of
+the room: the hop is given a portrait, told it is continuing from frames it does not have,
+and denied the stills that would have told it who is in the room.
+
+The asymmetry is the part that convinced me. Both runs restart at hops 4 AND 7, and only
+hop 4 collapses; hop 7 reads 6.77 and 4.68, an ordinary room. So this is not "restart is
+broken", it is a hop-4-shaped failure that a prompt/reference mismatch can produce and a
+seed can escape. What differs between those two hops is now the reviewer's next task.
+
+The fix is small and entirely in the ordering: `hop_restart` is computed at the top of the
+hop loop, `hop_is_start = i == 0 or hop_restart` replaces the six `i == 0` / `i > 0` tests
+that were standing in for it, and the restart hop's cache key drops the pin levers and the
+tone settings because its pixels genuinely cannot depend on them.
+
+Two lessons, and the second is the one worth keeping. First: a contract written in a
+comment is not a contract. The words "NOTHING from the previous hop reaches it" sat six
+lines from code that passed the previous hop's tail, and reading either one alone made
+sense. Second: **the instruments caught it and the prose did not.** `edge_density = 0.00`
+is not a subtle reading. It was in the table, in the shipped package, and the write-up
+described that hop as "the restart resets every axis at the cut" -- because the number that
+mattered was the one nobody expected to look at. Someone reviewing measurements they did
+not take is worth more than one more run.

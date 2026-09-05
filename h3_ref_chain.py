@@ -1743,6 +1743,24 @@ class HandTieClips:
                         "re-renders hops 2+ and leaves hop 1 on disk."
                     ),
                 }),
+                # APPENDED, never inserted -- see the note above `pin_mech`.
+                "tone_anchor_ref": (["hop1", "still"], {
+                    "default": "hop1",
+                    "tooltip": (
+                        "What tone_compensate=anchor pulls TOWARD. Ignored by "
+                        "every other mode. hop1 is the original behaviour: the "
+                        "chain holds whatever tone hop 1 rendered. still uses "
+                        "start_image instead, and pulls hop 1 as well -- which "
+                        "matters because hop 1 already misses the photograph "
+                        "before any relay has happened. A measured 9-hop study "
+                        "read the still at chroma 33.6 and hop 1 at 30, so a "
+                        "chain anchored on hop 1 is holding a target that is "
+                        "already short. Needs start_image_file set. Under the "
+                        "Motion-Context join the correction still only reaches "
+                        "the delivered frames, not the pin -- set "
+                        "pin_mech=addguide for it to feed back."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1809,7 +1827,7 @@ class HandTieClips:
             music_start_s=0.0, music_end_s=0.0, render_from=0,
             reference_video_desc="",
             reference_video_size=None,
-            pin_mech="auto",
+            pin_mech="auto", tone_anchor_ref="hop1",
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -2000,6 +2018,17 @@ class HandTieClips:
                     "join=continuous. A restart is a cut -- it opens on the "
                     "start image's pose, not the previous hop's last frame. "
                     "Use join=hard_cut or match_cut on that shot.")
+        # Same rule, same reason: checked on the queue, by filename, before any
+        # media is loaded. A chain that cannot reach its anchor should say so in
+        # a second rather than nine hops later.
+        if (str(tone_compensate) == "anchor" and float(tone_anchor) > 0.0
+                and str(tone_anchor_ref) == "still"
+                and not str(start_image_file or "").strip()):
+            raise ValueError(
+                f"{TAG}: tone_anchor_ref=still but no start image is set. That "
+                "mode holds the chain on the photograph's colour and contrast; "
+                "without one there is nothing to hold. Set start_image_file in "
+                "MEDIA, or use tone_anchor_ref=hop1.")
         # pin_mech=motion_context: both chain-wide preconditions checked before
         # any sampling, so a forced setting fails on the queue rather than three
         # hops in. The per-hop one (no sampler latent) cannot be known here and
@@ -2228,13 +2257,27 @@ class HandTieClips:
         }
         prev_key = None
         hop_keys = []
-        # tone_compensate=anchor state. `anchor_ref` is hop 1's per-channel mean
-        # -- the one tone in the chain that nothing drifted into -- and every
-        # later hop is eased back toward it. A shot with tone="rebase" moves the
-        # reference onto itself, which is how a scene that is genuinely darker
-        # from here on stops being fought.
+        # tone_compensate=anchor state. `anchor_ref` is the Lab look every hop
+        # is eased back toward. A shot with tone="rebase" moves the reference
+        # onto itself, which is how a scene that is genuinely darker from here
+        # on stops being fought.
+        #
+        # Two places it can come from. `hop1` is the original: the first hop's
+        # own look, the one tone in the chain nothing has drifted into yet.
+        # `still` is start_image, and for a long chain it is the better target,
+        # because hop 1 is NOT the reference -- an outside 9-hop study measured
+        # the photograph at chroma 33.6 and hop 1 at 30, b* 26.6 against 22,
+        # before any relay had happened. Anchored on hop 1 the chain holds a
+        # target that already fell short; anchored on the still it holds the
+        # thing the user actually chose. The still also lets hop 1 itself be
+        # pulled, which the hop1 mode cannot do by construction.
         anchor_on = tone_mode == "anchor" and float(tone_anchor) > 0.0
+        anchor_from_still = anchor_on and str(tone_anchor_ref) == "still"
         anchor_ref = None
+        if anchor_from_still:
+            anchor_ref = _tone.anchor_stats(start_image)
+            print(f"[{TAG}] tone anchor set from the start image: "
+                  + _tone.anchor_note(anchor_ref), flush=True)
         sheet_rows = []
 
         assembled = []
@@ -2243,6 +2286,20 @@ class HandTieClips:
             shot = shots[i] or {}
             hop_length = lengths[i]
             print(f"[{TAG}] hop {i + 1}/{n}...", flush=True)
+            # Computed HERE, not beside the sampler where it used to be. A
+            # restart is a chain start, and almost everything that makes a hop
+            # a start rather than a continuation -- which references ride it,
+            # whether the previous frame is pinned as <Picture 1>, whether the
+            # prompt says "opens already in progress" -- is decided in the two
+            # hundred lines below this point. Deciding `hop_restart` after all
+            # of them meant a restart hop was assembled as a continuation and
+            # only then handed the photograph, which is how it ended up being
+            # told it continues from pinned frames it does not have.
+            hop_restart = i > 0 and str(shot.get("anchor") or "") == "restart"
+            hop_is_start = i == 0 or hop_restart
+            if hop_restart:
+                print(f"[{TAG}] hop {i + 1}: ANCHOR RESTART -- start image is "
+                      f"frame 0, the previous hop is not relayed", flush=True)
             _push_preview(unique_id, f"hop {i + 1}/{n} sampling…", hop=i + 1, total=n,
                            frac=(write_pos / float(total_frames)) if total_frames else None)
 
@@ -2257,7 +2314,7 @@ class HandTieClips:
                 # of a different room (chain_00034) beat the pin as Pictures 1–3
                 # and hop 2 opened a new Ref2VA generate — commercial kitchen,
                 # apron gone. List hop numbers on a ref to ride later hops.
-                if i > 0 and str(hop_script) == "next":
+                if not hop_is_start and str(hop_script) == "next":
                     dropped = [r["tag"] for r in hop_active if r.get("shots") is None]
                     hop_active = [r for r in hop_active if r.get("shots") is not None]
                     if dropped:
@@ -2273,7 +2330,7 @@ class HandTieClips:
                 } or None
             else:
                 base_images = ref_images
-                if i > 0 and str(hop_script) == "next":
+                if not hop_is_start and str(hop_script) == "next":
                     print(
                         f"[{TAG}] hop {i + 1}: identity stills stay off this "
                         "continue (no shots[] schedule); pin carries wardrobe "
@@ -2286,7 +2343,11 @@ class HandTieClips:
             hop_videos = base_videos
             live_p = live_v = None
             still_shift = 0
-            if i > 0:
+            # Not on a restart. Pinning the previous hop's last frame as
+            # <Picture 1> is the definition of a continuation, and a restart
+            # takes NOTHING from the previous hop -- the branch at the sampler
+            # says so in as many words. It was still handing over the tail here.
+            if not hop_is_start:
                 hop_images, live_p, hop_videos, live_v = _attach_pin_to_qwen(
                     str(pin_to_qwen), base_images, base_videos,
                     prev_imgs[-1:], prev_imgs[-overlap_n:],
@@ -2327,14 +2388,14 @@ class HandTieClips:
                     # Computing it on hop 2+ invites an off-by-one against the
                     # live frame.
                     hop_subject_prose = _refs.subject_prose(hop_active, ref_subjects)
-            if i == 0 and hop_subject_prose and not _d.is_full_h3_prompt(block):
+            if hop_is_start and hop_subject_prose and not _d.is_full_h3_prompt(block):
                 block = hop_subject_prose + "\n\n" + block
             # Hop 1 has no _assemble_next to fold this into. A full H3 block is
             # the author's own prompt end to end, so it is left alone there --
             # the same rule subject_prose follows two lines up.
-            if i == 0 and refvid_line and not _d.is_full_h3_prompt(block):
+            if hop_is_start and refvid_line and not _d.is_full_h3_prompt(block):
                 block = block.rstrip() + "\n\n" + refvid_line
-            if str(hop_script) == "next" and i > 0:
+            if str(hop_script) == "next" and not hop_is_start:
                 n_stills = len(base_images or {})
                 hop_state_header = _state_header(state, i)
                 # With a register wired, only the subject-bearing refs are
@@ -2406,7 +2467,7 @@ class HandTieClips:
                       f"{', wardrobe plate' if hop_wardrobe else ''})",
                       flush=True)
 
-            elif i > 0 and hop_active:
+            elif not hop_is_start and hop_active:
                 # Verbatim mode assembles nothing -- the author owns the text --
                 # so the retention block above is not injected here. But a still
                 # scheduled onto this hop and never named in it reaches the
@@ -2428,8 +2489,8 @@ class HandTieClips:
             # 1.35 s male take into the last second of chain_00038 while
             # the written line still followed the woman's face.
             hop_voice = voice is not None and (
-                i == 0 or str(hop_script) != "next")
-            if i > 0 and voice is not None and not hop_voice:
+                hop_is_start or str(hop_script) != "next")
+            if not hop_is_start and voice is not None and not hop_voice:
                 print(
                     f"[{TAG}] hop {i + 1}: voice ref stays off this continue "
                     "(pin carries the spoken audio)",
@@ -2477,10 +2538,6 @@ class HandTieClips:
             # must show staleness before queuing or it reads as a bug.
             hop_key = None
             cached = None
-            hop_restart = i > 0 and str(shot.get("anchor") or "") == "restart"
-            if hop_restart:
-                print(f"[{TAG}] hop {i + 1}: ANCHOR RESTART -- start image is "
-                      f"frame 0, the previous hop is not relayed", flush=True)
             # A restart outranks a forced `pin_mech`: it relays nothing, so
             # there is no mechanism left to pick. Asking for motion_context on
             # a restart hop is not a contradiction to raise on, it is a setting
@@ -2526,11 +2583,25 @@ class HandTieClips:
                     # of the cost of every lever A/B, on the one hop nobody
                     # needed to re-render.
                     "pin_cond": ((pin_renorm_mode, round(pin_noise_v, 4), audio_ctx)
-                                 if i > 0 else None),
+                                 if not hop_is_start else None),
                     # Same rule, moved out of chain_salt: how many frames the
                     # previous hop hands over changes this hop's conditioning
                     # and its trim, and nothing on hop 1.
                     "overlap": (overlap_n if i > 0 else None),
+                    # Tone, and the same "only from hop 2" rule again. The
+                    # comment above `hop_store.put` explains why the mode is
+                    # kept out of the key: the cache holds RAW hops, corrected
+                    # afterwards, so switching modes need not invalidate them.
+                    # That is true of the hop it corrects and false of the next
+                    # one, because the corrected frames are what `prev_imgs`
+                    # becomes and `prev_imgs` is the pin. Hop 2 rendered under
+                    # anchor=still is a different render from hop 2 under
+                    # anchor=off, and without this it was served either way --
+                    # its key was byte-identical. Hop 1 has no pin, so it still
+                    # survives every tone switch, which is the half of that
+                    # claim that was always true.
+                    "tone": ((tone_mode, round(float(tone_anchor), 4),
+                              str(tone_anchor_ref)) if not hop_is_start else None),
                     # Whether this hop actually received the voice tensor.
                     # chain_salt already digests the file; without this a hop 2
                     # rendered with the clip on would be served to a later run
@@ -2706,7 +2777,7 @@ class HandTieClips:
             # the next hop rather than merely repainting the master.
             if anchor_on:
                 shot_tone = str(shot.get("tone") or "")
-                if i == 0:
+                if i == 0 and not anchor_from_still:
                     anchor_ref = _tone.anchor_stats(imgs)
                     if anchor_ref is not None:
                         print(f"[{TAG}] tone anchor set from hop 1: "
@@ -2719,8 +2790,16 @@ class HandTieClips:
                     print(f"[{TAG}] hop {i + 1}: tone=free, anchor pull skipped",
                           flush=True)
                 else:
+                    # The ramp exists to keep a JOIN exact -- frame 0 of a hop
+                    # has to equal the previous hop's last frame. Hop 1 and a
+                    # restart hop have no such frame: one opens the chain, the
+                    # other opens on the photograph by construction. Ramping
+                    # them would spend two seconds fading INTO the correction
+                    # at the exact moment the viewer is deciding what the shot
+                    # looks like.
                     imgs, anchor_note = _tone.anchor_pull(
-                        imgs, anchor_ref, strength=float(tone_anchor))
+                        imgs, anchor_ref, strength=float(tone_anchor),
+                        ramp=(0 if (i == 0 or hop_restart) else _tone.ANCHOR_RAMP))
                     if anchor_note:
                         tone_note = (tone_note + " + " + anchor_note
                                      if tone_note else anchor_note)

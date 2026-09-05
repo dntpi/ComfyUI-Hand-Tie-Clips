@@ -134,41 +134,79 @@ def main():
        1.0 < grew <= 1.0 + T.ANCHOR_MAX_GAIN + 0.02,
        "spread x%.3f, cap x%.2f" % (grew, 1.0 + T.ANCHOR_MAX_GAIN))
 
+    # ramp=0: a chain's first hop and a restart hop open on nothing, so they
+    # take the correction from frame 0 rather than fading into it.
+    o6, _ = T.anchor_pull(hop, lab_of(torch.full((1, HW, HW, 3), 0.5)), ramp=0)
+    ck("ramp=0 corrects frame 0 too",
+       float((o6[0] - hop[0]).abs().max()) > 1e-4)
+    ck("ramp=0 is flat, not a fade",
+       abs(float(lab_of(o6[:1])[0] - lab_of(o6[-1:])[0])
+           - float(lab_of(hop[:1])[0] - lab_of(hop[-1:])[0])) < 0.5)
+
     a, _ = T.compensate(same, flat, "anchor", OV)
     b, _ = T.compensate(same, flat, "frame_shift", OV)
     ck("compensate(anchor) == compensate(frame_shift)", torch.allclose(a, b),
        "the chain-wide half lives in anchor_pull")
 
+    # The reference still: warmer and more colourful than anything the chain
+    # renders, which is the situation the `still` mode exists for. A measured
+    # 9-hop study read the photograph at chroma 33.6 and HOP 1 at 30, before
+    # any relay had happened, so a chain anchored on hop 1 holds a target that
+    # already fell short.
+    still = (torch.rand(1, HW, HW, 3) * 0.05
+             + torch.tensor([0.60, 0.44, 0.33])).clamp(0, 1)
+    still_ref = T.anchor_stats(still)
+
     def chain(mode):
-        # Same seed for every mode, so the two runs differ ONLY by the mode.
+        # Same seed for every mode, so the runs differ ONLY by the mode.
         # Without this the comparison is against different noise and the seam
         # numbers wander by more than the effect being measured.
         torch.manual_seed(7)
-        prev = ref = None
-        means, seams = [], []
+        prev = None
+        ref = still_ref if mode == "still" else None
+        means, seams, out = [], [], None
         for i in range(8):
             start = float(prev[-1].mean()) if prev is not None else 0.55
             imgs = (torch.rand(N, HW, HW, 3) * 0.05 + start
                     + torch.linspace(0.0, -0.045, N).view(-1, 1, 1, 1)).clamp(0, 1)
+            # Each hop drifts a little toward grey, the way a relay chain does.
+            imgs = imgs * 0.94 + imgs.mean(dim=-1, keepdim=True) * 0.06
             if mode != "off" and prev is not None:
                 imgs, _ = T.compensate(prev, imgs, "frame_shift", OV)
-            if mode == "anchor" and ref is not None:
-                imgs, _ = T.anchor_pull(imgs, ref)
-            if i == 0:
+            if mode in ("anchor", "still") and ref is not None:
+                imgs, _ = T.anchor_pull(imgs, ref,
+                                        ramp=(0 if i == 0 else T.ANCHOR_RAMP))
+            if i == 0 and mode == "anchor":
                 ref = T.anchor_stats(imgs)
             if prev is not None:
                 seams.append(abs(float(imgs[0].mean() - prev[-1].mean())))
             means.append(float(imgs.mean()))
             prev = imgs[-OV:].clone()
-        return (means[0] - means[-1]) * 255.0, max(seams) * 255.0
+            out = imgs
+        return ((means[0] - means[-1]) * 255.0, max(seams) * 255.0,
+                T.anchor_stats(out))
 
-    slide_fs, seam_fs = chain("frame_shift")
-    slide_an, seam_an = chain("anchor")
+    slide_fs, seam_fs, end_fs = chain("frame_shift")
+    slide_an, seam_an, end_an = chain("anchor")
+    slide_st, seam_st, end_st = chain("still")
     ck("anchor cuts the 8-hop slide by more than half",
        slide_an < slide_fs * 0.5,
        "frame_shift %+.1f/255 -> anchor %+.1f/255" % (slide_fs, slide_an))
     ck("anchor does not regress the seam", seam_an <= seam_fs + 0.02,
        "anchor %.3f vs frame_shift %.3f /255" % (seam_an, seam_fs))
+
+    # The point of tone_anchor_ref=still: the chain ends nearer the photograph
+    # than an identically-run chain anchored on its own first hop.
+    def chroma_gap(s):
+        return float(((s[1:3] - still_ref[1:3]) ** 2).sum().sqrt())
+
+    ck("anchoring on the still ends nearer the still",
+       chroma_gap(end_st) < chroma_gap(end_an),
+       "chroma gap: still %.1f, hop1 %.1f, uncorrected %.1f"
+       % (chroma_gap(end_st), chroma_gap(end_an), chroma_gap(end_fs)))
+    ck("the still anchor does not regress the seam either",
+       seam_st <= seam_fs + 0.02,
+       "still %.3f vs frame_shift %.3f /255" % (seam_st, seam_fs))
 
     # ------------------------------------------------------- over-delivery
     print("\nplan.check_over_delivery")
@@ -338,6 +376,42 @@ def main():
        "come from the cache" not in log and o[2].count("===== hop") == 8)
     o, _ = run(render_from=0)
     ck("render_from=0 leaves the chain alone", o[2].count("===== hop") == 8)
+
+    # ------------------------------------------------------- anchor=restart
+    # A restart is a CHAIN START. It was being assembled as a continuation and
+    # only then handed the photograph, so hop 4 of a restart chain was told it
+    # "opens already in progress from the pinned frames" while its frame 0 was
+    # a studio portrait and nothing was pinned. An outside 9-hop study caught
+    # the result: background edge density 0.003 at the restart hop against
+    # 4.7-7.2 at every other hop of the same run -- a featureless backdrop,
+    # i.e. the model rendered the reference photograph instead of the room.
+    print("\nanchor=restart is a chain start")
+    restart_plan = {"shots": [
+        dict({"beat": "Shot %d happens." % (i + 1)},
+             **({"directives": {"join": "continuous"}} if i else {}))
+        for i in range(5)]}
+    restart_plan["shots"][2] = {"beat": "Shot 3 happens.", "anchor": "restart",
+                                "directives": {"join": "hard_cut"}}
+
+    def hops_of(info):
+        parts = info.split("===== hop ")
+        return {int(p.split()[0]): p for p in parts[1:] if p.split()}
+
+    o, log = run(chains="5", shot_plan=json.dumps(restart_plan),
+                 start_image_file="anything.png", hop_script="next")
+    hops = hops_of(o[2])
+    ck("the restart hop is announced", "ANCHOR RESTART" in log)
+    OPENS = "opens already in progress"
+    ck("an ordinary continuation still says it continues", OPENS in hops[2],
+       "hop 2")
+    ck("the restart hop is NOT told it continues", OPENS not in hops[3],
+       "hop 3 -- it has no pinned frames to continue from")
+    ck("the hop after the restart continues again", OPENS in hops[4], "hop 4")
+    ck("no live frame is pinned as a picture on the restart",
+       "<Picture 1>" not in hops[3] or "pinned" not in hops[3].lower())
+    ck("the restart is not counted as a continue for the stills",
+       "stills stay off this continue" not in
+       log.split("hop 3/5")[-1].split("hop 4/5")[0])
 
     _, log = run(quality="draft", render_through=2)
     ck("draft drops the canvas", "800x448" in log and "448p" in log)

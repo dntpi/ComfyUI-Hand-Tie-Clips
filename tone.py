@@ -391,9 +391,13 @@ def anchor_pull(target, ref_stats, strength=ANCHOR_STRENGTH,
     if float(want.abs().max()) < 0.1 and abs(gain - 1.0) < 1e-3:
         return target, ""
 
+    # `ramp=0` means there is no join to protect -- a chain's first hop, or a
+    # restart hop, which opens on the photograph rather than on a previous
+    # frame. Those take the correction whole from frame 0; ramping them would
+    # spend the opening seconds fading into the look.
     w = torch.ones(n, dtype=torch.float32)
-    r = max(2, min(int(ramp), n))
-    if n > 1:
+    r = 0 if int(ramp) <= 0 else max(2, min(int(ramp), n))
+    if n > 1 and r:
         w[:r] = torch.linspace(0.0, 1.0, r, dtype=torch.float32)
 
     h, wd = int(target.shape[1]), int(target.shape[2])

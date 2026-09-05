@@ -3528,3 +3528,45 @@ noise. And the ergonomic complaint was the symptom that surfaced it: a number a 
 keep in sync by hand is a number that will eventually disagree with the render, and the
 question "why do I have to type this twice" is a reasonable way to find out that the second
 copy was never reliable in the first place.
+
+## 67. Guiding the hop that needs it, and only that one (2026-09-05)
+
+`last_frame_guide=still` was shipped in section 57 as an opt-in with a GPU-untested note.
+It has now been run twice, and both results are real.
+
+**It works.** With `anchor: restart`, the cut used to be an obvious jump -- hop 3 ending
+tight and smiling, hop 4 opening wide and neutral, a framing change and a pose change and a
+colour shift arriving together. Guided, hop 3 ARRIVES at the still's framing, so the restart
+opens on a composition the previous hop already reached. A match cut instead of a jump.
+
+**And it overreaches.** The guide plants the photograph at `frame_idx=-1` on every hop,
+unconditionally, so it also overrides an authored framing directive at every hop's ending.
+A shot set `framing: close` renders as a close-up for six seconds and then snaps to the
+still's wider framing in about 0.6 s; the next hop pushes back in and snaps again. The user
+watching that clip, with no idea what had changed, described it as "the camera kept cutting
+in and out". Frames into hop 3, `framing: close`:
+
+    1.58s close   3.67s close   4.92s close   5.96s close-ish   6.58s WIDE   7.04s WIDE
+
+The directive wins the middle of the hop and the guide wins the end, which is the worst way
+to divide them.
+
+`before_restart` guides only a hop whose NEXT shot is `anchor="restart"` -- the one place
+the behaviour has been shown to earn anything. Everywhere else the hop ends where the beat
+and the directives take it.
+
+Two implementation notes worth keeping. The gate is a helper, `_guides_last_frame(mode,
+hop_index, shots)`, used by BOTH the apply site and the cache-key field, because those two
+are the pair that has to agree: `_pin_mech_for` and `_pin_continue` disagreeing is what made
+`cache_hops=on` worse than off before the sidecar landed, and a key that says a hop was
+guided when it was not is the same defect wearing a different hat. And the key field is
+keyed on what the hop GETS rather than on the widget, so an unguided hop in a
+`before_restart` chain keeps the byte-identical key it had when the feature did not exist.
+
+An option added to an existing combo, not a new widget: `widgets_values` is positional, and
+adding options is the safe half of that rule while adding widgets is not.
+
+Also caught by the checker rather than by me: rewriting the tooltip silently dropped
+`"default": "off"` from the widget spec. Behaviour would have been unchanged -- ComfyUI
+falls back to the first combo entry, which is still `off` -- which is exactly the kind of
+thing that survives review and then means something later.

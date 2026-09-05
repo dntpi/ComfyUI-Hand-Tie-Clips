@@ -34,7 +34,7 @@ podcast desk, 576p 9:16, 8 steps `lcm`/`sgm_uniform`, 2 hops × 8 s, overlap
 
 Take on disk (26.36 s, stereo, 44100 Hz):
 
-`ElevenLabs_2026-09-05T10_38_22_Sakura - Sweet, Gentle_pvc_sp100_s50_sb75_se49_b_m2.mp3`
+a single ElevenLabs TTS take (26.36 s, stereo, 44100 Hz) under `input/h3_refs/`
 
 under `ComfyUI/input/h3_refs/`.
 

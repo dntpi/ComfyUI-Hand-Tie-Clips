@@ -64,7 +64,7 @@ guide, or the guide overrides it.
 
 Identical to test 5 -- native, same seeds, `last_frame_guide = still` -- except
 shots 2 and 3 are authored to fight the still, which is a WIDE
-(`004128_00001__3.jpg`: full body, desk, chair, plant).
+(the start image is a WIDE: full body, desk, chair, plant).
 
 - shot 2: `join continuous, camera push_in, framing close, pace slow`
 - shot 3: `join continuous, camera hold, framing close`
@@ -116,7 +116,7 @@ it already left the desk.
 - Log, hop 4: `ANCHOR RESTART -- start image is frame 0`.
 - Log, hop 4: `restart, wrote all 192 frames (no overlap trim)`.
 - First 1.5 s of hop 4: she is at the desk, not a face on seamless /
-  the identity still (`cafe_floral_face.jpg`).
+  the identity still.
 - Seconds 2–6 of hop 4: does she stay in the room, or cut away to that
   still?
 
@@ -213,7 +213,7 @@ the desk, the attractor was the identity stills.
 
 Hop 1 `audio locked [0.00s-8.00s]`. Hop 2 `audio locked [7.08s-15.08s]`.
 `final audio: passthrough of master_audio_file [0.00s-15.08s]`. Drift +0 ms.
-Take: the Sakura ElevenLabs file under `h3_refs` (26.36 s). First attempt
+Take: the ElevenLabs TTS file under `h3_refs` (26.36 s). First attempt
 died at `_xfade_audio` (`got 2 and 3`); `d140c0d` + restart fixed it.
 
 Fail C (mouth vs take words) was **not** scored — beats were not matched

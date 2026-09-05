@@ -552,7 +552,7 @@ def main():
 
     # A wardrobe plate on a continuation hop brings its own room. chain_00034
     # was this on hop 2; the 3x10 s portrait chain on 2026-09-02 was this on
-    # hop 3 -- podcast_host.jpg is her sitting in a studio, it rode all three
+    # hop 3 -- an identity still of the subject in a DIFFERENT room rode all three
     # hops, and "she turns the camera toward her face" cut to that room and
     # back. SYSTEM_PROMPT.md:317 states the rule; nothing checked it.
     def _wardrobe(shots3):

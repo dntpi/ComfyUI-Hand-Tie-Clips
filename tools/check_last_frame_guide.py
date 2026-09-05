@@ -90,7 +90,8 @@ def main():
            False, "widget missing")
     opt = (H3.HandTieClips.INPUT_TYPES().get("optional") or {})
     spec = opt.get("last_frame_guide") or [None, {}]
-    ck("combo is off / still", spec[0] == ["off", "still"], str(spec[0]))
+    ck("combo is off / before_restart / still",
+       spec[0] == ["off", "before_restart", "still"], str(spec[0]))
     ck("default is off", (spec[1] if len(spec) > 1 else {}).get("default") == "off")
 
     print("queue-fail: still without a start image")
@@ -117,18 +118,23 @@ def main():
         ck("off does not move the hop key", False, "helper missing")
         ck("still moves the hop key", False, "helper missing")
     else:
-        ck("off -> None (field omitted)", key_field("off") is None)
-        ck("empty -> None", key_field("") is None)
-        ck("still -> still", key_field("still") == "still")
+        # Signature gained (hop_index, shots) when before_restart landed:
+        # the field now describes what the HOP gets, not what the widget
+        # says, because most hops in a before_restart chain are unguided
+        # and must keep the key they had before the feature existed.
+        _plan = [{}, {}]
+        ck("off -> None (field omitted)", key_field("off", 0, _plan) is None)
+        ck("empty -> None", key_field("", 0, _plan) is None)
+        ck("still -> still", key_field("still", 0, _plan) == "still")
         base = {"chain": 1, "voice_on": True}
         k_off = S.hop_key(None, dict(base))
         payload = dict(base)
-        field = key_field("off")
+        field = key_field("off", 0, _plan)
         if field is not None:
             payload["last_frame_guide"] = field
         ck("off does not move the hop key", S.hop_key(None, payload) == k_off)
         payload_on = dict(base)
-        field_on = key_field("still")
+        field_on = key_field("still", 0, _plan)
         if field_on is not None:
             payload_on["last_frame_guide"] = field_on
         ck("still moves the hop key", S.hop_key(None, payload_on) != k_off)
@@ -154,9 +160,49 @@ def main():
        "_last_pixel_guide_idx(" in run_src)
     ck("run() does not index video.shape[2] as a pixel frame",
        "shape[2] - 1" not in run_src and "shape[2]-1" not in run_src)
-    ck("last-frame AddGuide is behind last_frame_guide==still",
-       'last_frame_guide) == "still"' in run_src
-       or "last_frame_guide) == 'still'" in run_src)
+    ck("the last-frame AddGuide is behind the gating helper",
+       "_guides_last_frame(last_frame_guide" in run_src,
+       "not a raw string compare, so before_restart cannot be forgotten here")
+
+    # The measured reason `before_restart` exists. `still` guides every hop,
+    # which turns a restart into a match cut AND overrides an authored framing
+    # directive at every other hop ending: a shot set framing=close plays close
+    # for six seconds, snaps to the still's wider framing in ~0.6 s, and the
+    # next hop pushes back in. Watched, that reads as the camera cutting in and
+    # out. `before_restart` keeps the match cut and drops the pumping.
+    print("which hops actually get the guide")
+    plan = [{}, {}, {"anchor": "restart"}, {}]
+    g = H3._guides_last_frame
+    ck("off guides nothing",
+       [g("off", i, plan) for i in range(4)] == [False] * 4)
+    ck("still guides every hop",
+       [g("still", i, plan) for i in range(4)] == [True] * 4)
+    ck("before_restart guides ONLY the hop before the restart",
+       [g("before_restart", i, plan) for i in range(4)]
+       == [False, True, False, False],
+       "restart is shot 3, so hop 2 is the one that has to arrive on the still")
+    ck("the last hop is never guided by before_restart",
+       g("before_restart", 3, plan) is False,
+       "nothing follows it, so there is no cut to match")
+    ck("a plan with no restart guides nothing under before_restart",
+       not any(g("before_restart", i, [{}, {}, {}]) for i in range(3)))
+    ck("an unknown mode guides nothing rather than raising",
+       g("banana", 1, plan) is False)
+
+    # The cache key must follow what the hop GETS, not what the widget says, or
+    # every unguided hop in a before_restart chain moves its key for nothing.
+    k = H3._last_frame_guide_key_field
+    ck("unguided hops keep their old cache key",
+       [k("before_restart", i, plan) for i in range(4)]
+       == [None, "before_restart", None, None],
+       "None on a hop the guide does not reach")
+    ck("off is absent from every key",
+       [k("off", i, plan) for i in range(4)] == [None] * 4,
+       "the default-off byte-identical claim")
+
+    ck("before_restart is offered in the combo",
+       "before_restart" in H3.HandTieClips.INPUT_TYPES()
+       ["optional"]["last_frame_guide"][0])
 
     print("frontend and shipped workflows")
     js = io.open(os.path.join(HERE, "js", "editor", "run_panel.js"),

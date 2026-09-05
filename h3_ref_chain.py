@@ -1085,15 +1085,52 @@ def _validate_last_frame_guide(last_frame_guide, start_image_file):
             "MEDIA, or leave last_frame_guide=off.")
 
 
-def _last_frame_guide_key_field(last_frame_guide):
+def _guides_last_frame(mode, hop_index, shots):
+    """Does THIS hop get the still pinned at its last frame? -> bool.
+
+    `still` guides every hop. `before_restart` guides only a hop whose
+    successor is `anchor="restart"`, which is the only place the guide has
+    been shown to earn its keep.
+
+    Measured, and the reason the third option exists. Guiding every hop turns
+    a restart from an obvious jump into a match cut: the four hop endings of a
+    4-hop chain converge to 3.8/255 of each other against 39.1/255 unguided,
+    while mid-hop frames stay as varied as ever (65.8 against 61.1). Two people
+    watched that clip in motion and could not see the convergence, because a
+    hop's last frame passes in a twenty-fourth of a second.
+
+    But it plants the photograph unconditionally, and a shot authored
+    `framing: close` therefore plays as a close-up and then snaps to the
+    still's wide framing in about 0.6 s at its own ending -- then the next hop
+    pushes back in and snaps again. Watched without prompting, that reads as
+    "the camera kept cutting in and out". The directive wins the middle of the
+    hop and the guide wins the end, which is the worst division of the two.
+
+    `before_restart` keeps the match cut and drops the pumping everywhere else.
+    """
+    mode = str(mode or "off")
+    if mode == "off":
+        return False
+    if mode == "still":
+        return True
+    if mode != "before_restart":
+        return False
+    nxt = shots[hop_index + 1] if hop_index + 1 < len(shots) else None
+    return bool(nxt) and str((nxt or {}).get("anchor") or "") == "restart"
+
+
+def _last_frame_guide_key_field(mode, hop_index, shots):
     """Per-hop cache field, or None so the key stays byte-identical when off.
 
-    The setting reaches hop 1 (every hop is guided), so it is not gated on
-    hop_is_start. Omitting the field when off is the empty-string rule from
-    master_audio_file: a None/"off" field would move every existing cache key.
+    Keyed on what this hop actually GETS, not on the widget: under
+    `before_restart` most hops are unguided and must keep the key they had
+    when the feature did not exist. Omitting the field when a hop is unguided
+    is the empty-string rule from master_audio_file -- a None or "off" field
+    would move every existing cache key.
     """
-    v = str(last_frame_guide or "off")
-    return None if v == "off" else v
+    if not _guides_last_frame(mode, hop_index, shots):
+        return None
+    return str(mode)
 
 
 def _last_pixel_guide_idx():
@@ -2348,18 +2385,27 @@ class HandTieClips:
                         "the hop cache."
                     ),
                 }),
-                "last_frame_guide": (["off", "still"], {
+                "last_frame_guide": (["off", "before_restart", "still"], {
                     "default": "off",
                     "tooltip": (
-                        "Opt-in last-frame AddGuide. off = shipped behaviour "
-                        "(frame 0 only, hop 1 or a restart). still = also pin "
-                        "start_image at this hop's last PIXEL frame "
-                        "(AddGuide frame_idx=-1), every hop. A pin-less hop "
-                        "then has nowhere to wander. Needs start_image_file. "
-                        "Cost: the end of every hop is pulled toward the "
-                        "still -- a chroma gap can pulse. Does NOT become "
-                        "the next hop's frame 0. GPU-untested: whether the "
-                        "DiT treats that last pixel as a bound."
+                        "Pin start_image at a hop's last PIXEL frame "
+                        "(AddGuide frame_idx=-1), so the hop ENDS on the "
+                        "photograph. off = shipped behaviour, frame 0 only. "
+                        "before_restart = only on a hop whose NEXT shot is "
+                        "anchor=restart; that restart opens on the same "
+                        "photograph, so both sides of the cut meet on one "
+                        "image and it reads as a match cut rather than a "
+                        "jump. That is the recommended setting. "
+                        "still = every hop: the same benefit at the restart, "
+                        "but it overrides an authored framing directive at "
+                        "EVERY hop ending. A shot set framing=close plays "
+                        "close for six seconds, snaps to the still's wider "
+                        "framing in about 0.6 s, and the next hop pushes "
+                        "back in -- watched, that reads as the camera "
+                        "cutting in and out. Safe only when no shot authors "
+                        "a framing. Needs start_image_file. Does NOT become "
+                        "the next hop's frame 0; that is keyframe chaining, "
+                        "which this is not."
                     ),
                 }),
             },
@@ -3345,7 +3391,7 @@ class HandTieClips:
                 # is not gated on hop_is_start. Only present when on: adding
                 # "off" would move every existing cache key and break the
                 # default-off byte-identical claim.
-                _lfg = _last_frame_guide_key_field(last_frame_guide)
+                _lfg = _last_frame_guide_key_field(last_frame_guide, i, shots)
                 if _lfg is not None:
                     hop_payload["last_frame_guide"] = _lfg
                 hop_key = _store.hop_key(
@@ -3449,7 +3495,7 @@ class HandTieClips:
                         audio_ctx=audio_ctx, mode=str(pin_mech),
                     )
 
-                if (str(last_frame_guide) == "still"
+                if (_guides_last_frame(last_frame_guide, i, shots)
                         and start_image is not None):
                     # Conservative half: pin the still at the last PIXEL
                     # frame. Does NOT become the next hop's frame 0 -- that

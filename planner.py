@@ -579,11 +579,11 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
     # competes with the pin as a Picture, and the moment the beat asks for
     # something the pin cannot supply the model reaches for it instead.
     #
-    # chain_00034 was this on hop 2 (commercial kitchen, apron gone). The 3x10 s
-    # portrait chain on 2026-09-02 was this on hop 3: `podcast_host.jpg` is her
-    # sitting in a studio, it rode all three hops, and a beat reading "she turns
-    # the camera toward her face" cut to that room mid-hop and back. The tone
-    # anchor measured the excursion at +14.0/255 against hop 2's +5.6.
+    # chain_00034 was this on hop 2 (commercial kitchen, apron gone). A 3x10 s
+    # portrait chain on 2026-09-02 was this on hop 3: an identity still showing
+    # the subject in a DIFFERENT room rode all three hops, and a beat reading
+    # "she turns the camera toward her face" cut to that room mid-hop and back.
+    # The tone anchor measured the excursion at +14.0/255 against hop 2's +5.6.
     #
     # SYSTEM_PROMPT.md:317 already states the rule; nothing checked it.
     try:
@@ -999,9 +999,8 @@ def _remap_pinned_tags(shot_text, ref_text, pinned):
 
     The rail pins a tag to a picture. A model that has just looked at that
     picture names it for what it saw -- `@girl_face` for a row the user called
-    `@ref_1`, whose file is `cafe_floral_9x16.jpg`. That is the better name and
-    the wrong one: Accept writes back onto rail rows keyed by tag, so a renamed
-    row lands nowhere.
+    `@ref_1`. That is the better name and the wrong one: Accept writes back
+    onto rail rows keyed by tag, so a renamed row lands nowhere.
 
     The filename is the identity, so a ref whose `file` matches a rail row IS
     that row whatever it calls itself. Rewriting here, before the merge and the

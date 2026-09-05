@@ -3426,3 +3426,55 @@ known size written in order -- so `np.memmap` won and no code travelled. No lice
 obligation follows from that, which is precisely why the credit is worth writing down: this
 pack already names rkfg in `tone.py` and PromptMasterLD in `audio_lock.py` for techniques
 rather than code, and the same rule applies to a reading that turned out to be correct.
+
+## 65. What the GPU window settled (2026-09-05)
+
+Four things were verified on hardware, and one of them corrected a reading of my own.
+
+**anchor=restart stays in the shot.** The tester's 9-hop package had hop 4 of both restart
+runs leaving the couch for the reference portrait for about two and a half seconds. On the
+v2 build, 4 hops at 0.70 MP with a fresh seed on the restart hop, it does not happen: hop 4
+opens at the desk, holds the mic mid-hop, and ends at the desk. `tools/shot_probe.py` reads
+edges 3.2-4.4% and 1979-2483 colours across the whole hop with no collapse anywhere.
+
+That is one run, and hop index and seed were confounded in her package, so this is "did not
+reproduce with the contract violations fixed and a different seed" rather than "fixed". The
+five contract violations in section 48 remain unproven as the cause. Recorded as such.
+
+**Restart hops write their full length.** `4 hops x 192f overlap 22 -> 724 frames`, and the
+log prints `old formula would have been 702f` beside it. The arithmetic in `master_frame_count`
+holds on hardware.
+
+**fp16 survives delivery.** `master buffer: 3.0 GB spilled` at 0.70 MP and `4.2 GB` at
+native, both exactly half what fp32 would have asked for, and SaveVideo accepted the fp16
+IMAGE without complaint. That was the one claim in section 64 that offline work could not
+settle.
+
+**The last-frame guide fixes the restart cut, and I misread what it costs.**
+
+Guided, hop 3 arrives at the still's framing instead of snapping to it, so the restart reads
+as a match cut rather than the obvious jump the user watched on the unguided run. Two frames
+either side of the join make it plain: unguided, hop 3 ends tight and smiling and hop 4 opens
+wide and neutral -- a framing jump, a pose jump and a colour shift at once.
+
+Then the cost, measured: the four hop ENDINGS converge to 3.8/255 of each other, against
+39.1/255 unguided, while mid-hop frames stay as varied as ever (65.8 against 61.1). I put
+those four endings in a grid, saw one picture four times, and called for making the setting
+per-shot before release.
+
+**That was the wrong call and the user said so.** A hop's last frame is passed through in a
+twenty-fourth of a second and the next hop continues straight out of it. Four stills in a
+grid is precisely the presentation that makes convergence obvious and motion invisible. Two
+people watched the clip and saw nothing; I had looked at 4 frames of 724 and chosen the
+arrangement that flattered my worry. The number is right, the inference from it was not.
+
+What the number does support is narrower and is now a test rather than a claim. That run had
+CAMERA, FRAMING and PACE all unset, so nothing competed with the photograph. The guide plants
+it at `frame_idx=-1` on every hop, so a shot authored `framing: close` ought to be overridden
+at its own ending -- and if it is, that is a real constraint on a feature we are shipping.
+Running now with `close` on two hops against a start image that is a wide.
+
+The lesson is the one from section 48 wearing different clothes, six hours later. There the
+defect was real and the story I hung on it was not. Here the measurement is real and the
+conclusion I drew from it was not. Both times the error was reaching past what the evidence
+covered, and both times somebody looking at the actual output caught it.

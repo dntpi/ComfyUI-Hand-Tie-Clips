@@ -1,7 +1,7 @@
 # Hand Tie Clips v2 — GPU test plan
 
 For Claude and the human. Branch `v2` at
-`D:\ComfyUI\custom_nodes\ComfyUI-Hand-Tie-Clips`, head `d0ba7af`. Do not
+`D:\ComfyUI\custom_nodes\ComfyUI-Hand-Tie-Clips`, branch `v2` unpushed. Do not
 push. Do not restart ComfyUI unless Python changed: startup **and**
 shutdown `rmtree` temp/, which is the hop cache.
 

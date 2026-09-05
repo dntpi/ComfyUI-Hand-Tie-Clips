@@ -442,7 +442,7 @@ turned out to be broken in ways no offline test could have caught.
 
 ## Live queue (2026-09-05) — Grok hands back to Claude
 
-Branch **`v2`**, unpushed, head **`d0ba7af`**. Writing for 2.0.0 is done.
+Branch **`v2`**, unpushed, head **`2b22e73`**. Writing for 2.0.0 is done.
 GPU tests **1 and 2 passed** (audio lock on/off). **You run tests 3–5.**
 
 Pickup (read first): `docs/GROK_TO_CLAUDE.md` — also on the Desktop as

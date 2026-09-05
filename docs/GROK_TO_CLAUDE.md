@@ -14,7 +14,7 @@ tests 3–5). Engineering detail: `GROK_V2_HANDBACK.md`. Repo authority:
 
 - Repo: `D:\ComfyUI\custom_nodes\ComfyUI-Hand-Tie-Clips`
 - Branch: **`v2`**, unpushed
-- Head: **`d0ba7af`** (`DEVLOG: GPU tests 1 and 2 passed`)
+- Head: **`2b22e73`** (this handoff). Writing+GPU 1–2: `d0ba7af`.
 - Parent writing: `d140c0d` xfade rank fix, `c7ece81` 2.0.0 bump
 - Python: `D:\ComfyUI\venv\Scripts\python.exe`
 - Checkers: `D:\ComfyUI\venv\Scripts\python.exe tools\check_all.py` (22, all

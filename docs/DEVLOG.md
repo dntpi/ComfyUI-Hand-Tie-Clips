@@ -2531,3 +2531,56 @@ Third, and it is the one I paid for: **having the right defect does not license 
 story that explains it.** The five contract violations were real and I found them by
 reading; the causal claim I hung on them lasted until somebody opened the frames and
 checked when the hop actually breaks. The fix stands. The explanation did not.
+
+## 49. Four features that already shipped (2026-09-04)
+
+A review pass went looking for missing capability and kept finding the
+capability already there. Four things users have asked for are implemented,
+and they fail in four different ways -- which matters, because each one
+needs a different fix and only one of them is a documentation gap.
+
+`README:133` said "Voice stays as a reference every hop." The code says
+otherwise: `hop_voice` is true only at `i == 0` or under
+`hop_script=verbatim`, so on any chain with a shot plan -- which forces
+`next` -- the voice is a hop 1 reference and nothing else. That is
+deliberate, and the comment directly above the line records why: in
+chain_00038 a second `<Audio 1>` with no line to attach to put a 1.35 s male
+take into the final second while the written line still followed the woman's
+face. The console has been printing `voice ref stays off this continue` the
+whole time. So the node was right, the log was right, and the sentence was
+wrong -- which is the worst of the four, because a user who reads the doc
+and believes it files a bug against working code. One had already done so.
+
+`pin_renorm` was worse in a quieter way. The row documented the sigma story
+and recommended it for 3+ hops. But sigma was measured to be the wrong
+statistic -- total spread *falls* across a chain whose picture is baking, so
+matching it corrects the wrong way -- and `band`, which matches the
+statistic the ratchet actually moves, took a 12.74% drift to -0.04%. Section
+27 measured all of this on 2026-09-01 and the tooltip has carried it since.
+The README went on pointing at the inert mode and never named the working
+one. Documentation that disagrees with the tooltip beside it is not a gap,
+it is a contradiction, and the tooltip won.
+
+`mp` was simply absent. The Reference register section documented five
+sibling fields and omitted the sixth, whose only prior appearance was one
+clause in the 1.0.0 release note -- despite `refs.py` carrying it, `:1916`
+consuming it as `cap_mp=`, and the rail drawing it on every row. It is also
+the dial people ask for when they ask for a per-reference resolution slider.
+Now documented, with the trap that makes it look broken: on the default
+`ref_image_size=match` every reference is scaled to the output area first
+and `mp` only caps further, so at 768p the 1.5 and 2.0 settings do nothing
+at all. The real control is `max` plus `mp`, and that pairing was written
+down nowhere.
+
+Per-hop duration was the different one. It shipped, it is cache-correct, and
+it was documented -- in a fields table, as one clause, where nobody found
+it. It kept being requested as a new feature. The fix for that is not
+another sentence; it is an example, so there is one now, and the editorial
+rule that goes with it is in PROMPTING.md: overlap is chain-wide, so short
+hops cut and long hops flow.
+
+The pattern is worth keeping. Three of these four cost nothing to build
+because they were already built, and the support cost of the first two was
+being paid in bug reports against correct code. When a capability is
+requested, check whether it exists and is merely unfindable before designing
+it.

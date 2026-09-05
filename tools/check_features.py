@@ -288,6 +288,44 @@ def main():
     ck("calls the clean seam invisible", rows_[0]["verdict"] == "invisible")
     ck("chart renders", S.chart(rows_).shape[1] > 50)
 
+    # A restart hop writes its FULL length instead of being trimmed, so a chain
+    # containing one has no single hop length to solve for. `seam_positions()`
+    # solves for one anyway and lands in the middle of hops: on a 4x192 chain
+    # restarting at hop 4 it estimates 198/373/548 where the joins are at
+    # 192/362/532. It does not merely misplace them -- it reports the real
+    # steps as "invisible", because there is nothing at the frames it looked
+    # at. That is a clean bill of health for a chain with visible seams.
+    print(chr(10) + "seam report: a restart chain")
+    r = torch.full((724, 16, 16, 3), 0.50)
+    for at, step in ((192, 0.06), (362, -0.05), (532, 0.04)):
+        r[at:] += step
+    est, _ = S.seam_positions(724, 4, 22)
+    ck("the uniform solve cannot describe a restart chain",
+       est != [192, 362, 532], str(est))
+    blind, _, _ = S.measure(r, 4, 22, 6)
+    ck("and reports the real steps as invisible",
+       all(x["verdict"] == "invisible" for x in blind),
+       "measured at " + str([x["at"] for x in blind]))
+
+    info = ("4 hops x 192f overlap 22 -> 724 frames" + chr(10) +
+            "seams: 192, 362, 532")
+    ck("the chain's info parses", S.seams_from_info(info) == [192, 362, 532])
+    ck("a missing seams line falls back, it does not raise",
+       S.seams_from_info("4 hops x 192f overlap 22") is None)
+    ck("garbage falls back", S.seams_from_info("seams: 192, banana") is None)
+    ck("out-of-order falls back", S.seams_from_info("seams: 362, 192") is None)
+
+    seen, _, _ = S.measure(r, 4, 22, 6, S.seams_from_info(info))
+    ck("wired, it measures the joins that were written",
+       [x["at"] for x in seen] == [192, 362, 532], str([x["at"] for x in seen]))
+    ck("and finds every planted step",
+       all(x["verdict"] == "VISIBLE" for x in seen),
+       ", ".join("%+.1f" % x["luma"] for x in seen))
+    ck("the info socket is optional, not a widget",
+       "info" in S.HTCSeamReport.INPUT_TYPES().get("optional", {})
+       and S.HTCSeamReport.INPUT_TYPES()["optional"]["info"][1].get("forceInput")
+       is True, "forceInput adds no widgets_values entry")
+
     # ------------------------------------------------------------- dry run
     print("\ndry_run / render_through / quality")
 

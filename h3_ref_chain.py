@@ -2857,6 +2857,15 @@ class HandTieClips:
         # point is that it costs seconds.
         master_imgs = None if dry else _alloc_master(total_frames, height, width)
         write_pos = 0
+        # Where each join actually landed. Recorded rather than derived,
+        # because it can no longer BE derived: `seam.seam_positions()` solves
+        # for a uniform hop length from (total, hops, overlap), and a restart
+        # hop writes its full length instead of being trimmed. On a 4-hop chain
+        # with a restart on hop 4 that estimate lands on 198/373/548 where the
+        # joins are at 192/362/532 -- it measures the middle of hops and calls
+        # them seams. The node that writes the frames is the only thing that
+        # knows for certain, so it says so on `info`.
+        seam_marks = []
         master_wav = None
         sr = None
         prev_imgs = None
@@ -3602,6 +3611,8 @@ class HandTieClips:
                         f"{TAG}: hop {i + 1} overruns the preallocated master "
                         f"({write_pos + keep_n} > {total_frames}). A hop decoded a "
                         f"different length than planned.")
+                if i > 0:
+                    seam_marks.append(int(write_pos))
                 master_imgs[write_pos:write_pos + keep_n] = imgs
                 write_pos += keep_n
                 if i == 0:
@@ -3628,6 +3639,7 @@ class HandTieClips:
                         f"{TAG}: hop {i + 1} overruns the preallocated master "
                         f"({write_pos + keep_n} > {total_frames}). A hop decoded a "
                         f"different length than planned.")
+                seam_marks.append(int(write_pos))
                 master_imgs[write_pos:write_pos + keep_n] = imgs[overlap_n:]
                 write_pos += keep_n
                 trimmed, dropped = _trim_audio_head(audio, overlap_n)
@@ -3735,6 +3747,12 @@ class HandTieClips:
             f"{int(master_imgs.shape[0])} frames ({master_imgs.shape[0] / FPS:.1f}s) "
             f"{int(master_imgs.shape[2])}x{int(master_imgs.shape[1])}"
         )
+        # Machine-readable, on its own line, first thing after the header. The
+        # seam report reads this instead of asking the user to retype `hops`
+        # and `overlap` and then solving for them -- which is both a chore and,
+        # since restart hops stopped being trimmed, wrong.
+        if seam_marks:
+            info += chr(10) + "seams: " + ", ".join(str(f) for f in seam_marks)
         print(f"[{TAG}] {info}", flush=True)
         # The assembled prompts being inspectable is the whole point of the
         # directive layer -- wire `info` to a Preview Text node to read exactly

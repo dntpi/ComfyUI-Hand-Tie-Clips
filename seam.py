@@ -45,6 +45,36 @@ def frame_means(images):
     return images.detach().float().mean(dim=(1, 2)).cpu()
 
 
+def seams_from_info(info):
+    """The join frames the chain reported on `info`. -> list[int] or None.
+
+    The chain writes `seams: 192, 362, 532` because it is the only thing that
+    knows. `seam_positions()` below solves for a uniform hop length, which was
+    true until restart hops stopped being trimmed; on a 4-hop chain restarting
+    at hop 4 it estimates 198/373/548 against real joins at 192/362/532, so it
+    measures the middle of three hops and reports them as seams.
+
+    Returns None for anything unparseable, which the caller treats as "fall
+    back to the widgets" -- an unreadable string should not stop a report that
+    used to work without one.
+    """
+    if not info:
+        return None
+    for line in str(info).splitlines():
+        line = line.strip()
+        if not line.lower().startswith("seams:"):
+            continue
+        try:
+            got = [int(p) for p in line.split(":", 1)[1].split(",") if p.strip()]
+        except ValueError:
+            return None
+        # Ascending and positive, or it is not a set of join positions.
+        if got and all(b > a > 0 for a, b in zip(got, got[1:])) or len(got) == 1:
+            return got if got[0] > 0 else None
+        return None
+    return None
+
+
 def seam_positions(total, hops, overlap):
     """Index of the first frame belonging to each hop after the first."""
     if hops < 2:
@@ -54,11 +84,17 @@ def seam_positions(total, hops, overlap):
     return cuts, hop_len
 
 
-def measure(images, hops, overlap, window):
+def measure(images, hops, overlap, window, cuts_in=None):
     """-> (rows, hop_len, note). rows: dicts with seam, at, rgb, luma, verdict."""
     means = frame_means(images)
     total = int(means.shape[0])
-    cuts, hop_len = seam_positions(total, int(hops), int(overlap))
+    if cuts_in:
+        # Given by the chain. No hop-length solve, so no note about the hops
+        # not dividing evenly -- with a restart in the chain they genuinely do
+        # not, and that is correct rather than suspicious.
+        cuts, hop_len = [c for c in cuts_in if 0 < c < total], None
+    else:
+        cuts, hop_len = seam_positions(total, int(hops), int(overlap))
 
     # Geometry that cannot be a joined chain. Every hop is longer than the
     # overlap it is joined by -- that is what an overlap is -- so a derived hop
@@ -212,6 +248,23 @@ class HTCSeamReport:
                     "tooltip": "Frames averaged either side of the cut. Wider is steadier but folds in more real scene change.",
                 }),
             },
+            "optional": {
+                # forceInput, so it is a socket and not a widget: it adds no
+                # entry to `widgets_values` and every workflow saved before it
+                # existed keeps reading its three numbers out of the right slots.
+                "info": ("STRING", {
+                    "forceInput": True,
+                    "tooltip": (
+                        "The chain's `info` output. Wire it and this node "
+                        "reads the join frames the render actually wrote, so "
+                        "hops and overlap below are ignored and cannot go "
+                        "stale. Leave it unwired and they are used as before. "
+                        "Wiring it is not just convenience: a chain containing "
+                        "an anchor=restart hop has no single hop length to "
+                        "solve for, and the numbers below cannot describe it."
+                    ),
+                }),
+            },
         }
 
     RETURN_TYPES = ("STRING", "IMAGE")
@@ -225,9 +278,17 @@ class HTCSeamReport:
         "cut, so treat it as an upper bound; A/B two renders to isolate the seam."
     )
 
-    def run(self, images, hops, overlap, window):
+    def run(self, images, hops, overlap, window, info=None):
         total = int(images.shape[0])
-        rows, hop_len, note = measure(images, hops, overlap, window)
+        cuts_in = seams_from_info(info)
+        if cuts_in:
+            print("[%s] seams from the chain's info: %s" %
+                  (TAG, ", ".join(str(c) for c in cuts_in)), flush=True)
+            hops = len(cuts_in) + 1
+        elif info:
+            print("[%s] info wired but no `seams:` line in it; using the "
+                  "hops/overlap widgets" % TAG, flush=True)
+        rows, hop_len, note = measure(images, hops, overlap, window, cuts_in)
         report = format_report(rows, total, int(hops), int(overlap),
                                int(window), hop_len, note)
         print("[%s]%s%s" % (TAG, chr(10), report), flush=True)

@@ -3478,3 +3478,53 @@ The lesson is the one from section 48 wearing different clothes, six hours later
 defect was real and the story I hung on it was not. Here the measurement is real and the
 conclusion I drew from it was not. Both times the error was reaching past what the evidence
 covered, and both times somebody looking at the actual output caught it.
+
+## 66. The seam report was measuring the middle of hops (2026-09-05)
+
+The user's complaint was ergonomic: the seam report's `hops` and `overlap` are typed in by
+hand and have to be kept in step with the chain node, which is a chore and goes stale. The
+bug underneath it is not ergonomic.
+
+`seam_positions(total, hops, overlap)` does not know where the joins are. It solves for
+them, assuming every hop is the same length and every hop past the first is trimmed by the
+overlap. Section 58 broke the second assumption: a restart hop is a chain start, overlaps
+nothing, and writes its full length. So on the 4 x 192 chain rendered tonight with a
+restart on hop 4 -- 724 frames, overlap 22 -- it solves for a hop length of **197.5** and
+puts the seams at **198, 373, 548**. The joins are at **192, 362, 532**.
+
+It does not merely misplace them. Planting a real step at each true join and measuring the
+same clip both ways:
+
+    unwired   seam 1 @ f198  +0.00/255  invisible
+              seam 2 @ f373  +0.00/255  invisible
+              seam 3 @ f548  +0.00/255  invisible
+
+    wired     seam 1 @ f192 +15.30/255  VISIBLE
+              seam 2 @ f362 -12.75/255  VISIBLE
+              seam 3 @ f532 +10.20/255  VISIBLE
+
+Six, eleven and sixteen frames off is enough to land in the flat middle of a hop, where
+there is nothing to measure, so the report gives a **clean bill of health to a chain with
+three visible seams**. Anyone A/B-ing restart against relay -- which is the experiment this
+whole line of work exists to run -- would have read "0 of 3 visible" and believed it.
+
+The fix is to stop deriving something that is known. `run()` records the write position of
+every hop past the first as it lays it into the master, and publishes them on `info`:
+
+    4 hops x 192f overlap 22 -> 724 frames (30.2s) 768x1344
+    seams: 192, 362, 532
+
+`HTCSeamReport` takes `info` as an OPTIONAL socket -- `forceInput: True`, so it is not a
+widget and adds no entry to `widgets_values`, and every workflow saved before today keeps
+reading its three numbers out of the right slots. Wired, the widgets are ignored and the
+measured positions are exact. Unwired, nothing changes. An unparseable string falls back
+rather than raising, because a bad line on an input should not break a report that worked
+without one.
+
+Two things worth keeping. The uniform solve also printed `NOTE hop length works out to
+197.50 frames, which is not a whole number -- the hops are probably not all the same
+duration`, which was **correct and was the tell**, and which nobody read as anything but
+noise. And the ergonomic complaint was the symptom that surfaced it: a number a user has to
+keep in sync by hand is a number that will eventually disagree with the render, and the
+question "why do I have to type this twice" is a reasonable way to find out that the second
+copy was never reliable in the first place.

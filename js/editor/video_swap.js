@@ -349,11 +349,23 @@ export function createVideoSwap(node, { onWritten } = {}) {
             if (desc) {
                 draftList.appendChild(el("div", "h3e-writer-draft-line", desc));
             }
-            say(desc
-                ? "Clip description written to MEDIA > clip 1 > describe it. "
-                  + "REFERENCES and SCRIPT unchanged."
-                : "The model returned an empty description.",
-                desc ? "hint" : "error");
+            // The caption reaches the encoder as what <Video 1> IS, so one
+            // that describes the PERSON contradicts a swap additively -- and
+            // the only other signal is a render that came back wrong. The
+            // system prompt forbids it; this says when the model did it anyway.
+            const leaked = j.identity_words || [];
+            if (!desc) {
+                say("The model returned an empty description.", "error");
+            } else if (leaked.length) {
+                say("Caption written, but it describes the person ("
+                    + leaked.join(", ") + "). That fights an identity swap: "
+                    + "the clip's caption tells the encoder who is in it. "
+                    + "Edit it in MEDIA, or clear it before rendering a swap.",
+                    "error");
+            } else {
+                say("Clip description written to MEDIA > clip 1 > describe it. "
+                    + "REFERENCES and SCRIPT unchanged.", "hint");
+            }
         } catch (e) {
             say(String(e), "error");
         } finally {

@@ -1765,5 +1765,33 @@ async def describe_frame(*, complete_fn, frame_data_url=None, frames=None):
     text = " ".join(str(reply or "").strip().split())
     if not text:
         return {"ok": False, "error": "the model returned an empty caption"}
-    return {"ok": True, "description": text[:500]}
+    text = text[:500]
+    return {"ok": True, "description": text, "identity_words": _identity_words(text)}
+
+
+# The system prompt tells the model not to describe the person. That is an
+# instruction to an LLM, not a guarantee, and the failure is expensive and
+# silent: the caption reaches the encoder as what <Video 1> IS, so "a man
+# wearing an orange tank top" contradicts a swap additively and the only signal
+# is a render that came back wrong. Cheap to check, so check.
+#
+# A warning, never a rejection. "A man" can be a legitimate caption -- a crowd,
+# a second person in frame, a clip nobody is swapping. The caller says what was
+# found and lets the user decide.
+_IDENTITY_WORDS = (
+    "man", "woman", "men", "women", "male", "female", "boy", "girl", "lady",
+    "guy", "he", "she", "his", "her", "blonde", "brunette", "bearded",
+    "young", "elderly", "teenage",
+)
+
+
+def _identity_words(text):
+    """Words in a clip caption that describe WHO rather than what. -> list."""
+    import re as _re  # noqa: PLC0415
+    found = []
+    low = str(text or "").lower()
+    for w in _IDENTITY_WORDS:
+        if _re.search(r"\b" + _re.escape(w) + r"\b", low) and w not in found:
+            found.append(w)
+    return found
 

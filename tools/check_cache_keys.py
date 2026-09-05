@@ -142,6 +142,65 @@ def main():
     ck("installing the node at all moves the key",
        fp(_Patcher()) != fp(_Patcher(transformer=a)))
 
+    # The LoRA half, which nothing exercised until now. `_Patcher` has taken a
+    # `patches=` argument since it was written and no test ever passed one, so
+    # every assertion above ran against `patches={}` -- an empty dict makes the
+    # loop that hashes LoRA key names and strengths a no-op, and a regression
+    # that stopped hashing them entirely would have passed this file.
+    #
+    # That is the defect class this checker exists for: no crash, no failing
+    # test, just a cache serving frames rendered under a different LoRA stack.
+    # A fixture that never enters the branch is not covering it.
+    print("\nLoRA patches: keys and strengths")
+
+    def lora(*entries):
+        """{key: [(strength_patch, weights, strength_model, ...)]} as core stores it."""
+        return {k: [v] for k, v in entries}
+
+    one = lora(("diffusion_model.blocks.0.attn.qkv.weight",
+                (0.8, "W", 1.0, None, None)))
+    two = lora(("diffusion_model.blocks.0.attn.qkv.weight",
+                (0.8, "W", 1.0, None, None)),
+               ("diffusion_model.blocks.1.attn.qkv.weight",
+                (0.8, "W", 1.0, None, None)))
+    ck("no LoRA differs from a LoRA",
+       fp(_Patcher()) != fp(_Patcher(patches=one)))
+    ck("a second patched key moves it",
+       fp(_Patcher(patches=one)) != fp(_Patcher(patches=two)),
+       "key names are hashed, so the stack's shape is in the fingerprint")
+    ck("the same stack twice is stable",
+       fp(_Patcher(patches=one)) == fp(_Patcher(patches=one)))
+
+    # The two that matter most: a strength change is the commonest edit anyone
+    # makes to a LoRA stack, and it changes every pixel without changing a key.
+    strong = lora(("diffusion_model.blocks.0.attn.qkv.weight",
+                   (0.4, "W", 1.0, None, None)))
+    ck("strength_patch 0.8 -> 0.4 moves the fingerprint",
+       fp(_Patcher(patches=one)) != fp(_Patcher(patches=strong)),
+       "the commonest edit to a stack, and it renders differently")
+    model_str = lora(("diffusion_model.blocks.0.attn.qkv.weight",
+                      (0.8, "W", 0.5, None, None)))
+    ck("strength_model 1.0 -> 0.5 moves it too",
+       fp(_Patcher(patches=one)) != fp(_Patcher(patches=model_str)))
+
+    # Key ORDER must not matter -- core hands back a dict and dict order is an
+    # implementation detail, so two runs of the same stack must agree.
+    rev = {k: two[k] for k in reversed(list(two))}
+    ck("key order does not move it", fp(_Patcher(patches=two))
+       == fp(_Patcher(patches=rev)), "sorted() before hashing")
+
+    # A patch entry that is not the documented tuple must not take the whole
+    # render down; the fingerprint degrades to a marker instead.
+    for junk in ({"k": [("not-a-number", "W")]}, {"k": [()]}, {"k": [None]}):
+        try:
+            fp(_Patcher(patches=junk))
+            ok = True
+        except Exception as e:                       # noqa: BLE001
+            ok = False
+            detail = repr(e)[:60]
+        ck("a malformed patch entry does not raise", ok,
+           "" if ok else detail)
+
     print("settings carried in a closure")
     ck("changing a closed-over setting moves the key",
        fp(_Patcher(transformer=dit(_closure_configured(0.90))))

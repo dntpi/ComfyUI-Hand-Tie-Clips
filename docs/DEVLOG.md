@@ -3570,3 +3570,51 @@ Also caught by the checker rather than by me: rewriting the tooltip silently dro
 `"default": "off"` from the widget spec. Behaviour would have been unchanged -- ComfyUI
 falls back to the first combo entry, which is still `off` -- which is exactly the kind of
 thing that survives review and then means something later.
+
+## 68. Three fixtures that did not match the code (2026-09-05)
+
+Section 63 found a checker aimed squarely at a defect that passed anyway, because its
+fixture built a `noise_mask` as a plain tensor where the code makes a `NestedTensor`. That
+was one checker. An outside audit then asked the same question of the other twenty-one, and
+three of them had the same shape of hole. Closed here.
+
+**`check_audio_lock.py` never built the lock's real objects.** It tabled the window
+arithmetic against a hand-computed table -- which is genuinely the strongest thing in the
+file -- fed `assert_mask_polarity` two toy tensors, and checked the xfade. It never called
+`_splice_locked_audio`, so the two unrecoverable failures of this feature were both
+untested: a mask on the wrong stream generates a voice over a frozen picture, and a video
+component that does not come back bit-identical is a silently different render. The splice
+is now driven with the shapes read off a real cached hop -- video `[1, 24, 57, 72, 40]`,
+audio `[1, 32, 2, 320]` -- and asserts the video is bit-identical, the audio is the slice,
+the mask is NESTED with ones on video and zeros on audio and each spanning its own stream's
+dims, and that a video-only latent and a length mismatch are both refused by name. Breaking
+the mask to a plain tensor and separately scaling the video by 0.999 each fail it.
+
+**`check_cache_keys.py` never populated `model.patches`.** `_Patcher` has taken a `patches=`
+argument since it was written and not one assertion ever passed one, so every check in the
+file ran against an empty dict -- which makes the loop that hashes LoRA key names and
+strengths a no-op. A regression that stopped hashing strengths entirely would have passed,
+and the consequence is the one this checker exists for: no crash, no failing test, a cache
+serving frames rendered under a different LoRA stack. Now covers key names, key ORDER (core
+hands back a dict, so two runs of one stack must agree), `strength_patch`, `strength_model`,
+and a malformed entry degrading rather than raising. Deleting the two strength lines fails
+exactly the two assertions about strength and nothing else.
+
+**`check_master_spill.py` never wrote a restart hop.** `drive()` wrote hop 0 full and
+everything after it trimmed, which was production until section 58 made restart hops write
+their full length. A full-length write in the MIDDLE of a mapping was never exercised.
+
+That third one came with a lesson about the limits of the test rather than the code.
+Breaking `drive()` to trim the restart did NOT fail anything, and it cannot: `drive()` feeds
+the RAM buffer and the mapping identically, so this file proves the mapping behaves like RAM
+and can never prove `drive()` matches `run()`. The restart pattern buys a full-length
+mid-chain write against `np.memmap`; it does not buy a guarantee that this is still what
+`run()` does. That guarantee lives in `check_restart_trim.py`, which reads `run()`'s own
+arithmetic. Both facts are now in the file, because the next person to read it will
+otherwise assume the first implies the second -- which is the assumption that let section 63
+sit green for a week.
+
+The audit's own framing is worth keeping: **a fixture that does not resemble production is
+not a test**, and the resemblance decays silently every time a feature lands next to an
+older checker. Twenty-two green checks were true and four of them were not measuring what
+their names claimed.

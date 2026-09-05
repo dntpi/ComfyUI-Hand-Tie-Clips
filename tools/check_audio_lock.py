@@ -51,6 +51,83 @@ def load_pack():
     return m
 
 
+def splice_checks(ck, H3, torch):
+    """_splice_locked_audio against the object run() actually builds.
+
+    Everything else in this file tables the window arithmetic or feeds
+    `assert_mask_polarity` a pair of toy tensors. Neither touches the splice,
+    and the splice is where this feature's two unrecoverable failures live: a
+    mask on the wrong stream generates a voice over a frozen picture, and a
+    video component that does not come back bit-identical is a silently
+    different render.
+
+    The shapes here are read off a real cached hop rather than invented --
+    video [1, 24, T, H/16, W/16] and audio [1, 32, 2, T40] -- because a fixture
+    that does not match production is not a test. That is not a hypothetical:
+    check_latent_sidecar built its noise_mask as a plain tensor where the code
+    makes a NestedTensor, passed, and the hop cache was silently off for every
+    locked hop until somebody read a log line (DEVLOG 63).
+    """
+    from comfy.nested_tensor import NestedTensor
+
+    print("\nsplice: the joint AV latent run() really builds")
+    T_LAT, H_LAT, W_LAT, T40 = 57, 72, 40, 320
+    torch.manual_seed(0)
+    video = torch.randn(1, 24, T_LAT, H_LAT, W_LAT)
+    audio = torch.randn(1, 32, 2, T40)
+    latent = {"samples": NestedTensor((video, audio))}
+    z = torch.randn(1, 32, 2, T40)
+
+    out = H3._splice_locked_audio(latent, z)
+    got = list(out["samples"].unbind())
+
+    ck("the video component is bit-identical", torch.equal(got[0], video),
+       "the sampler still has to denoise this")
+    ck("the audio component is the locked slice", torch.equal(got[1], z))
+    ck("the container survives as a NestedTensor",
+       type(out["samples"]).__name__ == "NestedTensor")
+
+    mask = out.get("noise_mask")
+    ck("a noise_mask is set at all", mask is not None)
+    ck("the mask is NESTED, one per stream",
+       type(mask).__name__ == "NestedTensor",
+       "a plain tensor here is what broke the latent sidecar")
+    mv, ma = list(mask.unbind())
+    # song_lock polarity: 1 denoises, 0 freezes. Inverted, the picture is held
+    # and a NEW voice is generated over it -- which reads as "lip-sync died and
+    # she stopped moving", and is the failure nobody would attribute to a mask.
+    ck("ones on video: the picture is denoised",
+       float(mv.min()) == 1.0 and float(mv.max()) == 1.0, str(tuple(mv.shape)))
+    ck("zeros on audio: the take is frozen",
+       float(ma.min()) == 0.0 and float(ma.max()) == 0.0, str(tuple(ma.shape)))
+    ck("the video mask spans the video's own dims",
+       tuple(mv.shape[2:]) == tuple(video.shape[2:]), str(tuple(mv.shape)))
+    ck("the audio mask spans the audio's own dims",
+       tuple(ma.shape[2:]) == tuple(audio.shape[2:]), str(tuple(ma.shape)))
+
+    print("\nsplice: what it refuses")
+    try:
+        H3._splice_locked_audio({"samples": video}, z)
+        ck("a video-only latent is refused", False, "it accepted one")
+    except RuntimeError as e:
+        ck("a video-only latent is refused", "joint AV latent" in str(e))
+    try:
+        H3._splice_locked_audio(latent, torch.randn(1, 32, 2, T40 - 1))
+        ck("a length mismatch is refused", False, "it accepted one")
+    except RuntimeError as e:
+        ck("a length mismatch is refused, naming both numbers",
+           str(T40 - 1) in str(e) and str(T40) in str(e), str(e)[:70])
+
+    # The encoder can hand back an unbatched or differently-batched copy; the
+    # splice normalises rather than raising, and the result must still be the
+    # slice rather than a broadcast of the wrong thing.
+    out2 = H3._splice_locked_audio(latent, torch.zeros(32, 2, T40))
+    ck("an unbatched slice is accepted and batched",
+       tuple(list(out2["samples"].unbind())[1].shape) == (1, 32, 2, T40))
+    ck("and the video is still untouched",
+       torch.equal(list(out2["samples"].unbind())[0], video))
+
+
 def main():
     L = load_lock()
 
@@ -144,6 +221,8 @@ def main():
        "_batch_wav(left)" in src and "_batch_wav(right)" in src)
 
     print()
+    splice_checks(ck, sys.modules["htcpack.h3_ref_chain"], torch)
+
     if FAIL:
         print("%d FAILURE(S): %s" % (len(FAIL), ", ".join(FAIL)))
         return 1

@@ -67,19 +67,41 @@ def main():
     os.makedirs(_root, exist_ok=True)
     _pre = _spills(_root)
 
-    frames, h, w = 40, 16, 24
-    overlap, keep = 6, 10
+    # 4 hops with a RESTART on hop 3, because that is the write pattern the
+    # master now sees and the one this file did not exercise. A restart is a
+    # chain start: it overlaps nothing, so it writes its FULL length rather
+    # than being trimmed. The old drive() only ever wrote hop 0 full and
+    # everything after it trimmed, so a full-length write in the MIDDLE of a
+    # mapping was never touched here.
+    #
+    # A limit worth stating rather than leaving for someone to discover:
+    # `drive()` feeds the RAM buffer and the mapping IDENTICALLY, so this file
+    # can prove the mapping behaves like RAM and cannot prove drive() matches
+    # run(). Breaking drive() breaks both sides equally and they still agree --
+    # verified by doing exactly that, and the assertions stayed green.
+    #
+    # So the restart pattern buys one thing and not another. It buys: a
+    # full-length mid-chain write exercised against np.memmap rather than only
+    # the tail of a trimmed sequence. It does not buy: any guarantee this is
+    # still what run() does. That lives in check_restart_trim.py, which reads
+    # run()'s own arithmetic.
+    frames, h, w = 60, 16, 24
+    overlap, full = 6, 16
+    STARTS = [True, False, True, False]      # hop 3 restarts
 
     def drive(buf):
-        """Exactly what run() does to the master, in order."""
+        """What run() does to the master, in order, restarts included."""
         torch.manual_seed(0)
-        first = torch.rand(16, h, w, 3)
-        buf[0:first.shape[0]] = first
-        pos = first.shape[0]
-        for _ in range(2):
-            hop = torch.rand(overlap + keep, h, w, 3)
-            buf[pos:pos + keep] = hop[overlap:]
-            pos += keep
+        pos = 0
+        for is_start in STARTS:
+            hop = torch.rand(full, h, w, 3)
+            if is_start:
+                buf[pos:pos + full] = hop
+                pos += full
+            else:
+                keep = full - overlap
+                buf[pos:pos + keep] = hop[overlap:]
+                pos += keep
         return buf[:pos], pos
 
     print("RAM path and spilled path agree")

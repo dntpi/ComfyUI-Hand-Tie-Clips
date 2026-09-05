@@ -37,6 +37,38 @@ four new behaviours.
   for the register default (unscheduled stills on chain starts, off
   continuations). `[]` is none. A filled list is those tags only, in that
   order. Unknown tags fail on the queue.
+- **SWAP**, a fifth tab. A one-hop identity swap from a reference clip: the
+  clip supplies the motion and the scene, a still from the REFERENCES rail
+  supplies the person. **Write** drafts it, **Accept** writes exactly one
+  shot plus the clip's description and never touches `ref_plan` -- your
+  register is not rewritten. Contributed by @frankyi, then rebuilt from its
+  own prose rather than merged.
+
+  Four named modes, because at cfg 1.0 there is no negative branch and a
+  mode that merely *omits* the swap line does not keep the clip's person --
+  the identity photograph is in front of the encoder either way and governs
+  the subject anyway. Each mode says positively what stays:
+  `replace_person` (face, build, hairstyle and wardrobe),
+  `head_swap` (face, hair and skin tone; the body, posture, hands and every
+  garment stay with the clip), `face_only` (features only), and
+  `keep_person` (swaps nobody -- the clip is a scene and motion plate, and
+  the identity picker greys out). The taxonomy follows PromptMasterLD's edit
+  laws; the prose is written fresh for H3 beats.
+
+  Alongside them: **background** from the clip, from a `@tag` picture, or
+  free; and an optional **wardrobe plate**, a `@tag` whose garment is *worn*
+  -- draping on the body in frame and creasing where it bends -- rather than
+  pasted.
+
+  **Two things to get right, both of which cost renders to find out.** Do
+  not run MEDIA's describe on the clip before a swap: that caption reaches
+  the encoder as what `<Video 1>` *is*, and a caption naming a person asks
+  for the person you are replacing. Four consecutive "head swap doesn't
+  work" reports traced to that, a missing frame sequence and a weak
+  citation -- no broken code among them. SWAP now warns when a caption names
+  somebody. And drop the clip to about 0.3 MP: a reference clip's decode
+  area is its token count, and its token count is its influence, so a
+  full-size plate out-argues a single photograph.
 
 ### Already on the 1.2 tree, now in the release
 
@@ -80,6 +112,9 @@ take it; a third-party node that assumes fp32 has not been tested against it.
 - `last_frame_guide` turns the restart jump into a match cut, and `still`
   fights an authored framing as described above.
 - fp16 survives delivery.
+- SWAP `head_swap` on a 0.3 MP clip with no clip caption: the head is
+  replaced, the body and its motion stay with the clip, and no colour or
+  hair from the plate bleeds through.
 
 ### Still not verified
 
@@ -89,6 +124,10 @@ take it; a third-party node that assumes fp32 has not been tested against it.
 - Anything longer than 4 hops at 8 s. The texture ratchet is unchanged and
   3-5 hops is still the honest limit.
 - Three reference clips or three voices at once, on a card.
+- SWAP's wardrobe plate and picture background. Both were cited-but-not-
+  scheduled until the fix in this release and could never have rendered;
+  the fix is covered offline, not on a GPU. `face_only` and `keep_person`
+  have not been run either.
 
 Saved 1.1 workflows load. New widgets were appended, not inserted, and no
 existing default changed.

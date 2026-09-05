@@ -193,9 +193,17 @@ export function createVideoSwap(node, { onWritten } = {}) {
     brief.placeholder = "optional -- extra context beyond the clip";
     row.appendChild(brief);
 
+    // Secondary, and it should read that way. Analyze & write plan captions
+    // the clip too -- its reply may carry a VIDEO_DESC line, and Accept commits
+    // it. What this button is for is the two cases that one does not cover: a
+    // fast check that the frames and the LLM are actually working before
+    // paying for a plan write, and a caption for a script you wrote yourself.
     const describeBtn = button("Describe frame",
-        "Caption the frame at MEDIA's IN point. Writes the clip description "
-        + "immediately. Does not change the shot list or the rail.",
+        "Optional. Captions the clip without touching your script -- useful as "
+        + "a quick check that the frames and the model are working before you "
+        + "write a plan, or when you already have a beat and only want the "
+        + "encoder to know what the clip is for. Analyze & write plan usually "
+        + "captions it too.",
         () => describeFrame());
     row.appendChild(describeBtn);
 
@@ -330,9 +338,22 @@ export function createVideoSwap(node, { onWritten } = {}) {
                 say(j.error || "describe failed", "error");
                 return;
             }
-            commit(node, wDesc, j.description || "");
-            say("Clip description written. REFERENCES and SCRIPT unchanged.",
-                "hint");
+            const desc = j.description || "";
+            commit(node, wDesc, desc);
+            // Show it HERE. It is written to reference_video_desc, which the
+            // MEDIA tab renders as the "describe it" row under the clip's trim
+            // bar -- a different pane, below the fold, and nowhere near the
+            // button that produced it. "Written" with nothing to read is
+            // indistinguishable from "silently did nothing".
+            draftList.textContent = "";
+            if (desc) {
+                draftList.appendChild(el("div", "h3e-writer-draft-line", desc));
+            }
+            say(desc
+                ? "Clip description written to MEDIA > clip 1 > describe it. "
+                  + "REFERENCES and SCRIPT unchanged."
+                : "The model returned an empty description.",
+                desc ? "hint" : "error");
         } catch (e) {
             say(String(e), "error");
         } finally {

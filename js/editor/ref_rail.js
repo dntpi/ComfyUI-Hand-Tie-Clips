@@ -114,8 +114,23 @@ export function parseRefPlan(text) {
 
 /* Offered pixel budgets, in MP. The floor mirrors refs.REF_MP_MIN -- below it
  * you can no longer tell a room from another room. There is no ceiling entry:
- * "full" (no cap) is the blank option. */
-const REF_MP = [0.3, 0.5, 0.7, 1.0, 1.5, 2.0];
+ * "full" (no cap) is the blank option.
+ *
+ * The list used to stop at 2.0, which quietly put the high-resolution face
+ * plate out of reach: core scales a reference to 2048 on its SHORT edge under
+ * ref_image_size=max, so a 2:3 portrait arrives at 2048x3072 -- 6.3 MP -- and a
+ * 9:16 one at 7.5 MP. Capping the rail at 2.0 meant the only way to ask for
+ * that was to hand-edit the ref_plan JSON. It now runs to 8.0, which is the
+ * last value core can still reach; anything past it is a dial wired to nothing,
+ * because H3 only ever scales a reference DOWN.
+ *
+ * Worth knowing when picking one: on the DEFAULT ref_image_size=match every
+ * reference is first scaled to the output's pixel area, and mp only caps
+ * further -- so at 768p (~1.03 MP) every value above 1.0 here does nothing at
+ * all. The high values are the max half of a pair, not a slider on their own.
+ *
+ * Adding options to an existing combo is safe; adding widgets is not. */
+const REF_MP = [0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0];
 
 export function refPlanToJson(plan) {
     if (!plan.refs.length && !Object.keys(plan.subjects).length) return "";

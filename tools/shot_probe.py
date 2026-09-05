@@ -80,19 +80,35 @@ def main(argv=None):
     ap.add_argument("video")
     ap.add_argument("--stride", type=float, default=0.5,
                     help="seconds between samples (default 0.5)")
-    # Calibrated against a known positive rather than guessed. On the tester's
-    # 8-step restart run the portrait window reads edges at 0.21-0.40 of the
-    # clip median and colours at 0.53-0.74, while every room sample sits at
-    # 0.88-1.13 on both. The first threshold written here was a single 0.45 on
-    # BOTH measures, and it MISSED the event -- edges collapsed far enough,
-    # colours did not. The two measures do not collapse equally, so they do not
-    # share a threshold.
+    # Calibrated against a known positive rather than guessed, and at two
+    # resolutions rather than one.
+    #
+    #                       portrait window        room floor
+    #   edges   1.03 MP     x0.21-0.40             x0.78
+    #   edges   0.70 MP     x0.25-0.46             x0.81
+    #   colours 1.03 MP     x0.53-0.74             x0.85
+    #   colours 0.70 MP     x0.54-0.75             x0.86
+    #
+    # The first threshold written here was a single 0.45 on BOTH measures, and
+    # it MISSED the event: edges collapsed to 0.21, colours only to 0.53. They
+    # do not collapse equally, so they do not share a threshold.
+    #
+    # Everything is relative to the clip's OWN median, which is why dropping
+    # from 1.03 MP to 0.70 MP barely moves the ratios. What does move them is
+    # CONTENT: a sparse set -- a plain desk against a plain wall -- has a lower
+    # room median to begin with, so the gap to a blank portrait narrows. Read
+    # the table, not only the verdict. A dip that does not trip the thresholds
+    # is still a dip.
+    #
+    # Edges is the discriminator (0.46 against 0.81); colours is a veto with
+    # only ten points of separation, and is there so that one measure alone
+    # cannot fire. That AND is what keeps the tight colour margin harmless.
     ap.add_argument("--drop-edges", type=float, default=0.50,
                     help="flag below this fraction of the clip's median edge "
                          "density (default 0.50; room floor measured at 0.88)")
-    ap.add_argument("--drop-colours", type=float, default=0.85,
+    ap.add_argument("--drop-colours", type=float, default=0.80,
                     help="and below this fraction of median colours "
-                         "(default 0.85; room floor measured at 0.90)")
+                         "(default 0.80; portrait ceiling 0.75, room floor 0.86)")
     ap.add_argument("--csv", default=None, help="also write the series here")
     a = ap.parse_args(argv)
 

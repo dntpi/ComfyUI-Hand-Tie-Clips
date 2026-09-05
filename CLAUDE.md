@@ -436,6 +436,17 @@ wrong -- live in [`docs/DEVLOG.md`](docs/DEVLOG.md). They are history, not
 instructions. This file is the brief; the log is why the brief says what it
 says, and it is worth reading before changing any of it.
 
-Most recent: **section 21**, the first ComfyUI session, where two of the seven
-features shipped in 0.4.0 turned out to be broken in ways no offline test could
-have caught.
+Most recent: **sections 56–62** (v2 writing + GPU tests 1–2). Section 21 is
+the first ComfyUI session, where two of the seven features shipped in 0.4.0
+turned out to be broken in ways no offline test could have caught.
+
+## Live queue (2026-09-05) — Grok hands back to Claude
+
+Branch **`v2`**, unpushed, head **`d0ba7af`**. Writing for 2.0.0 is done.
+GPU tests **1 and 2 passed** (audio lock on/off). **You run tests 3–5.**
+
+Pickup (read first): `docs/GROK_TO_CLAUDE.md` — also on the Desktop as
+`GROK_TO_CLAUDE.md`. Remaining GPU tests: `docs/GROK_V2_GPU_TESTS.md`.
+Full writing log: `docs/GROK_V2_HANDBACK.md`.
+
+Do not push. Do not merge `texture-lab`. Next DEVLOG section is **63**.

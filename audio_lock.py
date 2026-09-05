@@ -38,7 +38,6 @@ tone, regenerable):
 """
 from __future__ import annotations
 
-import hashlib
 import math
 import os
 
@@ -158,36 +157,6 @@ def sample_range(t0, t1, sr):
 def grid_samples(audio_latent_length, sr=VAE_SR, audio_hz=AUDIO_HZ):
     """Raw samples the 40 Hz audio-latent grid needs for this hop."""
     return int(math.ceil(int(audio_latent_length) / float(audio_hz) * int(sr)))
-
-
-def recording_digest(path):
-    """Identity of the take for the hop-cache key.
-
-    Empty / missing -> None, so `master_audio_file=""` does not move a
-    key. Size + mtime + basename, not a full-file hash: the take is
-    minutes long and this runs on every queue.
-    """
-    path = str(path or "").strip()
-    if not path:
-        return None
-    try:
-        st = os.stat(path)
-    except OSError:
-        # The file will fail to load later with a readable error. A missing
-        # file must still change the key, or a render against a now-gone
-        # take could be served from cache.
-        h = hashlib.sha256()
-        h.update(b"missing:")
-        h.update(path.encode("utf-8", "replace"))
-        return h.hexdigest()[:16]
-    h = hashlib.sha256()
-    h.update(os.path.basename(path).encode("utf-8", "replace"))
-    h.update(b":")
-    h.update(str(int(st.st_size)).encode())
-    h.update(b":")
-    h.update(str(int(st.st_mtime_ns if hasattr(st, "st_mtime_ns")
-                     else st.st_mtime)).encode())
-    return h.hexdigest()[:16]
 
 
 def force_stereo(wav):

@@ -155,10 +155,15 @@ def main():
     ck("nine hops 0..8 cover the 64.67 s tester chain",
        abs(L.hop_audio_window_s(8, 192, 22, 24.0)[1] - 64.666666) < 1e-4)
 
-    print("digest: empty is None, so it cannot move a cache key")
-    ck("empty string digests to None", L.recording_digest("") is None)
-    ck("whitespace digests to None", L.recording_digest("  ") is None)
-
+    # No assertions for `recording_digest` here any more: the function is gone.
+    # It was defined, tested, and called by nothing -- h3_ref_chain digests the
+    # loaded waveform through _store.audio_digest instead. Its docstring argued
+    # for size+mtime "because the take is minutes long and this runs on every
+    # queue", a performance case for a function nobody ran, while the path that
+    # does run hashes the samples. A checker asserting the behaviour of dead
+    # code is the same fixture-versus-production problem as sections 63 and 68
+    # in a third costume: not a fixture that fails to match production, but an
+    # assertion about something that is not production at all.
     print("mask polarity: 1 on video, 0 on audio")
     v = torch.ones((1, 1, 4, 2, 2))
     a = torch.zeros((1, 1, 4, 2))
@@ -221,6 +226,23 @@ def main():
        "_batch_wav(left)" in src and "_batch_wav(right)" in src)
 
     print()
+    # The take-length pre-flight. A take shorter than the chain runs the last
+    # hops past its end, fit_samples zero-pads them, and those hops come back
+    # mute -- after the render is paid for. Asserted on the source, because
+    # driving run() to the point where `locked` and `total_frames` both exist
+    # needs a model.
+    print(chr(10) + "take length is checked on the queue")
+    with open(os.path.join(HERE, "h3_ref_chain.py"), encoding="utf-8") as _fh:
+        src = _fh.read()
+    ck("run() compares the take against the chain",
+       "master_audio_file is" in src and "is not used" in src,
+       "both the refusal and the unused-tail note")
+    ck("the refusal names both durations",
+       "but this chain" in src and "{total_frames}f" in src)
+    ck("it raises rather than warning",
+       "raise ValueError(" in src.split("master_audio_file is")[0][-400:],
+       "a mute final hop nobody asked for is not a warning")
+
     splice_checks(ck, sys.modules["htcpack.h3_ref_chain"], torch)
 
     if FAIL:

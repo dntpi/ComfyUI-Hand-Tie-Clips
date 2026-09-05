@@ -2909,6 +2909,39 @@ class HandTieClips:
                   f"old formula would have been "
                   f"{sum(lengths) - overlap_n * (n - 1)}f)",
                   flush=True)
+        # Is the take long enough for the chain it is locked to?
+        #
+        # Every other duration in this pack is validated on the queue, and this
+        # one was not. `_prepare_master_audio` loads the file, prints how long
+        # it is, and nothing ever compares that to the chain. A take shorter
+        # than the render runs the last hops past its end, `fit_samples`
+        # zero-pads them, and those hops come back MUTE -- discovered after
+        # paying for the render.
+        #
+        # It is the defect the review of the contributed patch listed third
+        # ("`master_audio_secs` is computed, printed, and never used again"),
+        # and rebuilding that feature from its prose reproduced it faithfully.
+        # It was also hit during this project's own GPU testing and worked
+        # around by hand, which is the clearest possible argument for a check.
+        #
+        # Raises rather than warns. Trailing silence is expressible -- pad the
+        # take file -- but a mute final hop that nobody asked for is not worth
+        # the minutes it costs to find out about.
+        if locked is not None:
+            take_s = float(locked["wav"].shape[-1]) / float(locked["sr"])
+            need_s = float(total_frames) / FPS
+            if take_s + 1.0 / FPS < need_s:
+                raise ValueError(
+                    f"{TAG}: master_audio_file is {take_s:.2f}s but this chain "
+                    f"is {need_s:.2f}s ({total_frames}f at {FPS:g} fps). The "
+                    f"last {need_s - take_s:.2f}s would be locked to silence "
+                    f"the take does not contain. Shorten the chain, or pad the "
+                    f"recording to at least {need_s:.2f}s.")
+            if take_s > need_s + 1.0:
+                print(f"[{TAG}] master_audio_file is {take_s:.2f}s for a "
+                      f"{need_s:.2f}s chain; the last {take_s - need_s:.2f}s "
+                      f"is not used", flush=True)
+
         # A dry run must not allocate the master. At 8 x 15 s and 1280x736 that
         # is 2742 full float frames -- ~31 GB -- for a feature whose entire
         # point is that it costs seconds.

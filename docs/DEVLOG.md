@@ -2482,20 +2482,43 @@ had already recorded it. Background edge density at the restart hop is **0.0032*
 **0.0031** in the two restart runs, against 4.7 to 7.2 at every other hop of those same
 runs -- a featureless backdrop. Verified here from `background_metrics.json` rather than
 taken on report. For several seconds the model renders the reference photograph instead of
-the room: the hop is given a portrait, told it is continuing from frames it does not have,
-and denied the stills that would have told it who is in the room.
+the room.
 
 The asymmetry is the part that convinced me. Both runs restart at hops 4 AND 7, and only
 hop 4 collapses; hop 7 reads 6.77 and 4.68, an ordinary room. So this is not "restart is
-broken", it is a hop-4-shaped failure that a prompt/reference mismatch can produce and a
-seed can escape. What differs between those two hops is now the reviewer's next task.
+broken".
+
+**Correction, from the reviewer's second pass, before anyone builds on the paragraph above.**
+My first reading was that the hop was handed a portrait at frame 0 and rendered it. That is
+wrong, and the frames say so. Hop 4 OPENS on the couch -- 21.0 to 22.5 s is the room, at
+162 to 167 KB a frame -- ghosts at 23.0, sits on the identity still from 23.5 to 26.0 at 61
+to 72 KB, and is **back on the couch at 26.5 s, inside the same hop**. The next hop does not
+rescue it; it leaves and returns on its own. So the restart's frame-0 anchor worked. What
+failed is the middle of a pin-less hop, where the eight identity photographs are an
+attractor with no video pin holding the room.
+
+Two consequences. First, `background_metrics.json` samples MID-hop frames, so
+`edge_density = 0.003` is a reading of the wander, not of the whole hop -- still a true
+reading, and still one nobody interpreted. Second, hop index and seed are confounded in
+this package: hop 4 is seed ...458 and hop 7 is ...461 in both runs, so anything that
+happens only on hop 4 here also happens only on that seed. The asymmetry cannot be
+attributed yet.
+
+It is also not restart's invention. Run 02 -- a plain relay, continuous join, Motion-Context
+pin -- does the same thing at t = 9 to 10 s and comes back by t = 11. Same attractor,
+shorter, because it had a pin.
+
+What the fix below is, then: the code contradicted its own contract in five places, all of
+them real, none of them proven to be THIS. The continuation wrapper is the one candidate
+the reviewer could not rule out, because a contact sheet shows the authored beat and not
+the block the encoder receives. Whether it was the cause is a render away.
 
 The fix is small and entirely in the ordering: `hop_restart` is computed at the top of the
 hop loop, `hop_is_start = i == 0 or hop_restart` replaces the six `i == 0` / `i > 0` tests
 that were standing in for it, and the restart hop's cache key drops the pin levers and the
 tone settings because its pixels genuinely cannot depend on them.
 
-Two lessons, and the second is the one worth keeping. First: a contract written in a
+Three lessons. First: a contract written in a
 comment is not a contract. The words "NOTHING from the previous hop reaches it" sat six
 lines from code that passed the previous hop's tail, and reading either one alone made
 sense. Second: **the instruments caught it and the prose did not.** `edge_density = 0.00`
@@ -2503,3 +2526,8 @@ is not a subtle reading. It was in the table, in the shipped package, and the wr
 described that hop as "the restart resets every axis at the cut" -- because the number that
 mattered was the one nobody expected to look at. Someone reviewing measurements they did
 not take is worth more than one more run.
+
+Third, and it is the one I paid for: **having the right defect does not license the first
+story that explains it.** The five contract violations were real and I found them by
+reading; the causal claim I hung on them lasted until somebody opened the frames and
+checked when the hop actually breaks. The fix stands. The explanation did not.

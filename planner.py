@@ -1334,6 +1334,62 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
 SWAP_PROMPT = "prompt_pack/SWAP_PROMPT.md"
 
 
+# What the identity photograph contributes, and what stays with the clip.
+#
+# Not a `headswap` boolean. The contributed fork had one, and switching it off
+# only omitted a line from the instruct -- which does not work here: sampling
+# runs at cfg 1.0 with no negative branch, the identity still is in front of
+# the encoder either way, and silence about identity lets the photograph govern
+# the whole subject. What is NOT taken has to be said positively.
+#
+# The taxonomy is PromptMasterLD's, whose edit laws separate a full subject
+# replace from a head swap ("THE BODY STAYS WITH THE PLATE") and from a
+# features-only face swap. Technique, not code -- the prose here is written for
+# H3 beats rather than that pack's plate-editing laws, but the distinction and
+# the discipline of stating the exclusion affirmatively are borrowed.
+SWAP_MODES = ("replace_person", "head_swap", "face_only", "keep_person")
+DEFAULT_SWAP_MODE = "replace_person"
+
+# `keep_person` is the one mode with no identity: it uses the clip as a scene
+# and motion plate. Callers must not require an identity tag for it, and the
+# hop should carry `refs: []` so the register does not put a face back in.
+NO_IDENTITY_MODES = ("keep_person",)
+
+BG_MODES = ("clip", "picture", "free")
+DEFAULT_BG_MODE = "clip"
+
+_MODE_RULE = {
+    "replace_person":
+        "The person in the clip is replaced by @{ident}: face, build and "
+        "hairstyle follow that photograph exactly, and the wardrobe is the "
+        "photograph's.",
+    "head_swap":
+        "The head is the only thing that changes. Face, hair and skin tone "
+        "come from @{ident}. The body stays with the clip: build, posture, "
+        "hands, and every garment and worn accessory are the clip's. If the "
+        "photograph shows clothing it contributes a head and nothing below "
+        "the collar. The neck and jaw meet the clip's body.",
+    "face_only":
+        "Only the facial features come from @{ident}. Hair, ears, expression "
+        "range, build and every garment stay with the clip.",
+    "keep_person":
+        "Nobody is swapped. The person shown in the clip is kept as they are, "
+        "and the clip is a scene and motion plate. Do not cite an identity "
+        "tag for a face.",
+}
+
+
+def normalise_swap_mode(mode):
+    """-> a member of SWAP_MODES. Anything unrecognised is the default."""
+    m = str(mode or "").strip().lower()
+    return m if m in SWAP_MODES else DEFAULT_SWAP_MODE
+
+
+def swap_mode_needs_identity(mode):
+    """False for the modes that swap nobody."""
+    return normalise_swap_mode(mode) not in NO_IDENTITY_MODES
+
+
 def swap_prompt():
     """SWAP's instruct. Own file; never SYSTEM_PROMPT.md."""
     try:
@@ -1412,7 +1468,8 @@ def parse_swap_reply(raw):
     return shot_text, video_desc
 
 
-def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None):
+def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
+                  mode=DEFAULT_SWAP_MODE):
     """SWAP policy: one shot, tags already on the rail, no register document.
 
     Errors go back to the model. This is not `validate()`: that function
@@ -1431,7 +1488,12 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None):
             "Return a shots array of length 1."
         ], warnings
 
-    ident = str(identity_tag or "").lstrip("@").strip()
+    # keep_person swaps nobody, so there is no identity to demand, to cite, or
+    # to require in refs. Blanking it here rather than branching three times
+    # below keeps the rules that DO apply -- one shot, tags on the rail -- in
+    # one place.
+    ident = ("" if not swap_mode_needs_identity(mode)
+             else str(identity_tag or "").lstrip("@").strip())
     known = [str(t).lstrip("@").strip() for t in (rail_tags or []) if str(t).strip()]
     if ident and ident not in known:
         known = [ident] + known
@@ -1490,13 +1552,49 @@ def _ensure_identity_refs(shot_text, identity_tag):
     return json.dumps(obj, indent=2)
 
 
-def build_swap_user_turn(brief, identity_tag, duration=None):
+def build_swap_user_turn(brief, identity_tag, duration=None, *,
+                         mode=DEFAULT_SWAP_MODE, background=DEFAULT_BG_MODE,
+                         background_tag="", wardrobe_tag=""):
     ident = str(identity_tag or "").lstrip("@").strip()
-    lines = [
-        f"Identity tag: @{ident}",
-        "Write one hop that replaces the person in the clip frame with that "
-        "photograph. Cite the tag in the beat. Do not emit ref_plan.",
-    ]
+    mode = normalise_swap_mode(mode)
+    bg = str(background or "").strip().lower()
+    bg = bg if bg in BG_MODES else DEFAULT_BG_MODE
+    bg_tag = str(background_tag or "").lstrip("@").strip()
+    ward = str(wardrobe_tag or "").lstrip("@").strip()
+
+    lines = [f"Mode: {mode}"]
+    if swap_mode_needs_identity(mode):
+        lines.append(f"Identity tag: @{ident}")
+    lines.append(_MODE_RULE[mode].format(ident=ident))
+
+    # A picture background with no tag is a free background, not a broken one:
+    # the mode names a source and there is nothing to name.
+    if bg == "picture" and bg_tag:
+        lines.append(
+            f"Background: the setting comes from @{bg_tag} instead of the "
+            f"clip. Cite that tag. The action and motion still follow the clip.")
+    elif bg == "free":
+        lines.append(
+            "Background: choose the setting from the brief below and say "
+            "where it is plainly. Do not describe the clip's room.")
+    else:
+        lines.append(
+            "Background: the clip's own setting -- same place, same props, "
+            "same light, described as depicted.")
+
+    if ward:
+        lines.append(
+            f"Wardrobe: the garment comes from @{ward}, whatever the mode "
+            f"says. It is WORN, not pasted -- it drapes on the body in frame, "
+            f"creases where that body bends and moves with the action. Skin "
+            f"revealed by the change belongs to the person wearing it.")
+
+    cite = [t for t in (ident if swap_mode_needs_identity(mode) else "",
+                        bg_tag if bg == "picture" else "", ward) if t]
+    lines.append(
+        ("Cite " + ", ".join("@" + t for t in cite) + " in the beat. "
+         if cite else "")
+        + "Write one hop. Do not emit ref_plan.")
     if duration:
         lines.append(f"Hop length: {duration}. Fill that duration.")
     brief = str(brief or "").strip()
@@ -1533,14 +1631,23 @@ async def _repair_loop(messages, complete_fn, attempts, on_step, consume,
 
 async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
                           images=None, duration=None, attempts=MAX_ATTEMPTS,
-                          on_step=None):
+                          on_step=None, mode=DEFAULT_SWAP_MODE,
+                          background=DEFAULT_BG_MODE, background_tag="",
+                          wardrobe_tag=""):
     """One hop, no register. Returns no `ref_plan` key."""
+    mode = normalise_swap_mode(mode)
     ident = str(identity_tag or "").lstrip("@").strip()
-    if not ident:
+    # Only the modes that actually swap somebody need one. keep_person uses the
+    # clip as a scene plate, and demanding a face there would ask the user to
+    # pick something the instruct then tells the model to leave alone.
+    if not ident and swap_mode_needs_identity(mode):
         return {"ok": False, "shot_plan": "",
                 "attempts": 0, "errors": ["SWAP needs an identity tag."],
                 "warnings": []}
-    text = build_swap_user_turn(brief, ident, duration=duration)
+    text = build_swap_user_turn(brief, ident, duration=duration, mode=mode,
+                                background=background,
+                                background_tag=background_tag,
+                                wardrobe_tag=wardrobe_tag)
     messages = [{"role": "system", "content": swap_prompt()},
                 {"role": "user", "content": attach_images(text, images)}]
     sch = swap_schema()
@@ -1561,7 +1668,7 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
             ]
         else:
             last_errors, warnings = validate_swap(
-                shot_text, rail_tags=rail_tags, identity_tag=ident,
+                shot_text, rail_tags=rail_tags, identity_tag=ident, mode=mode,
                 duration=duration)
         if not last_errors:
             out = {

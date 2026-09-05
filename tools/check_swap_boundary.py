@@ -147,6 +147,52 @@ def main():
     # The SWAP onWritten is the createVideoSwap callback. It must not assign
     # refWidget -- that assignment is WRITE's.
     swap_cb = ui.split("const videoSwap = createVideoSwap")[-1].split("const tabs")[0] if "const videoSwap = createVideoSwap" in ui else ""
+    # Stage 4: the mode pickers. The thing being guarded is not that the modes
+    # exist -- it is that keep_person does not quietly become "replace, with no
+    # identity". Sampling runs at cfg 1.0 with no negative branch, so a mode
+    # that merely OMITS the swap line leaves the identity still in front of the
+    # encoder and it governs the subject anyway. Each mode must SAY what stays.
+    print("swap modes")
+    for m in P.SWAP_MODES:
+        turn = P.build_swap_user_turn("", "mia", "8 s", mode=m)
+        ck("%s states its rule" % m, len(turn.splitlines()) >= 3, m)
+        # No blanket "never negates" check here, deliberately. It was written
+        # and it fired on every mode -- on "Do not emit ref_plan" and "Do not
+        # cite an identity tag", which are instructions to the MODEL about its
+        # own output, not the beat prose that reaches the encoder. The cfg 1.0
+        # rule governs the beat; a string search cannot tell the two apart, so
+        # the check was measuring the wrong text. What it was really guarding
+        # is asserted directly below: that keep_person states the exclusion
+        # POSITIVELY rather than by omission.
+    keep = P.build_swap_user_turn("", "mia", "8 s", mode="keep_person")
+    ck("keep_person names no identity tag", "@mia" not in keep,
+       "citing a face the mode tells the model to leave alone")
+    ck("keep_person says the person is KEPT, positively",
+       "kept as they are" in keep)
+    for m in ("replace_person", "head_swap", "face_only"):
+        ck("%s cites the identity" % m,
+           "@mia" in P.build_swap_user_turn("", "mia", "8 s", mode=m))
+    ck("head_swap keeps the body with the clip",
+       "body stays with the clip"
+       in P.build_swap_user_turn("", "mia", "8 s", mode="head_swap"))
+    ck("an unknown mode falls back rather than raising",
+       P.normalise_swap_mode("banana") == P.DEFAULT_SWAP_MODE)
+    ck("only keep_person waives the identity",
+       [P.swap_mode_needs_identity(m) for m in P.SWAP_MODES]
+       == [True, True, True, False], str(P.SWAP_MODES))
+
+    print("background and wardrobe")
+    bg = P.build_swap_user_turn("", "mia", "8 s", background="picture",
+                                background_tag="kitchen")
+    ck("a picture background cites its tag", "@kitchen" in bg)
+    ck("a picture background with no tag falls back to the clip",
+       "clip's own setting" in P.build_swap_user_turn(
+           "", "mia", "8 s", background="picture", background_tag=""),
+       "a named source with nothing to name is not an error")
+    ward = P.build_swap_user_turn("", "mia", "8 s", wardrobe_tag="jacket")
+    ck("a wardrobe plate is cited and must be WORN",
+       "@jacket" in ward and "WORN" in ward)
+
     ck("SWAP onWritten does not assign refWidget",
        "refWidget" not in swap_cb,
        "WRITE owns ref_plan. SWAP's Accept callback writes shot_plan only.")

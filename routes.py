@@ -580,9 +580,10 @@ def register():
         if not video:
             return web.json_response(
                 {"ok": False, "error": "pick a reference clip first"})
-        if not ident_tag:
-            return web.json_response(
-                {"ok": False, "error": "pick an identity picture from the rail"})
+        mode_raw = str(body.get("mode") or "").strip().lower()
+        background = str(body.get("background") or "").strip().lower()
+        background_tag = str(body.get("background_tag") or "").lstrip("@").strip()
+        wardrobe_tag = str(body.get("wardrobe_tag") or "").lstrip("@").strip()
         try:
             start = float(body.get("video_start_s") or 0.0)
         except (TypeError, ValueError):
@@ -599,6 +600,15 @@ def register():
             return web.json_response(
                 {"ok": False, "error": "no model is selected -- open WRITE, "
                                        "Settings, and pick one."})
+        mode = _planner.normalise_swap_mode(mode_raw)
+        # Checked here rather than with the other body fields because it needs
+        # the planner, and the planner arrives with the connection.
+        # keep_person uses the clip as a scene plate and swaps nobody, so
+        # requiring an identity there would make the user pick a face the
+        # instruct then tells the model to leave alone.
+        if not ident_tag and _planner.swap_mode_needs_identity(mode):
+            return web.json_response(
+                {"ok": False, "error": "pick an identity picture from the rail"})
 
         import asyncio
 
@@ -654,7 +664,9 @@ def register():
         try:
             out = await _planner.write_swap_plan(
                 brief, complete_fn=complete_fn, identity_tag=ident_tag,
-                rail_tags=rail_tags, images=images, duration=duration)
+                rail_tags=rail_tags, images=images, duration=duration,
+                mode=mode, background=background,
+                background_tag=background_tag, wardrobe_tag=wardrobe_tag)
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:

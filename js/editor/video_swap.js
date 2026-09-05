@@ -89,7 +89,99 @@ export function createVideoSwap(node, { onWritten } = {}) {
         }
         identSel.value = rows.some((r) => String(r.tag).replace(/^@/, "") === prev)
             ? prev : "";
+        fillTagPicker(bgTagSel, "— background picture —");
+        fillTagPicker(wardSel, "— no wardrobe plate —");
+        syncControls();
     }
+
+    // What the identity photograph contributes, and what stays with the clip.
+    // Named intents rather than a `headswap` checkbox: sampling runs at cfg 1.0
+    // with no negative branch, so a mode that merely OMITS the swap line does
+    // not keep the clip's person -- the identity still is in front of the
+    // encoder either way and governs the subject anyway. Each mode states
+    // positively what stays. Taxonomy after PromptMasterLD's edit laws.
+    const MODES = [
+        ["replace_person", "Replace person",
+         "Face, build, hairstyle AND wardrobe come from the identity photograph."],
+        ["head_swap", "Head swap (head + hair)",
+         "Face, hair and skin tone from the photograph. The body stays with the "
+         + "clip: build, posture, hands and every garment."],
+        ["face_only", "Face only (features)",
+         "Only the facial features come from the photograph. Hair, ears, "
+         + "expression, build and clothes stay with the clip."],
+        ["keep_person", "Keep the clip's person",
+         "Swaps nobody. The clip is a scene and motion plate, and no identity "
+         + "is needed."],
+    ];
+    const BACKGROUNDS = [
+        ["clip", "Background: from the clip", "Same place, props and light as the clip."],
+        ["picture", "Background: from a picture", "Pick a rail @tag below. The action still follows the clip."],
+        ["free", "Background: free", "The beat chooses the setting from your brief."],
+    ];
+
+    function picker(options, title) {
+        const sel = el("select", "h3e-select");
+        sel.title = title;
+        for (const [value, label, hint] of options) {
+            const o = el("option", null, label);
+            o.value = value;
+            o.title = hint;
+            sel.appendChild(o);
+        }
+        return sel;
+    }
+
+    const modeRow = el("div", "h3e-writer-row");
+    const modeSel = picker(MODES, "What the identity photograph contributes.");
+    const bgSel = picker(BACKGROUNDS, "Where the setting comes from.");
+    modeRow.appendChild(modeSel);
+    modeRow.appendChild(bgSel);
+    body.appendChild(modeRow);
+
+    const plateRow = el("div", "h3e-writer-row");
+    const bgTagSel = el("select", "h3e-select");
+    bgTagSel.title = "The @tag the background comes from. Only used by "
+        + "Background: from a picture.";
+    const wardSel = el("select", "h3e-select");
+    wardSel.title = "Optional wardrobe plate. When set, the garment comes from "
+        + "this @tag whatever the mode says -- worn, not pasted.";
+    plateRow.appendChild(bgTagSel);
+    plateRow.appendChild(wardSel);
+    body.appendChild(plateRow);
+
+    function fillTagPicker(sel, blankLabel) {
+        const rows = railRows();
+        const prev = sel.value;
+        sel.textContent = "";
+        const blank = el("option", null, blankLabel);
+        blank.value = "";
+        sel.appendChild(blank);
+        for (const r of rows) {
+            const tag = String(r.tag || "").replace(/^@/, "");
+            const o = el("option", null, "@" + tag);
+            o.value = tag;
+            sel.appendChild(o);
+        }
+        sel.value = rows.some((r) => String(r.tag).replace(/^@/, "") === prev)
+            ? prev : "";
+    }
+
+    // A control that cannot apply is disabled rather than ignored: an identity
+    // picker that still demands a value under keep_person would be asking for a
+    // face the instruct then tells the model to leave alone.
+    function syncControls() {
+        const needsIdentity = modeSel.value !== "keep_person";
+        identSel.disabled = !needsIdentity;
+        identRow.style.opacity = needsIdentity ? "" : "0.45";
+        identSel.title = needsIdentity
+            ? "Identity still already on the REFERENCES rail."
+            : "Not used: this mode keeps the person who is already in the clip.";
+        const usesBgTag = bgSel.value === "picture";
+        bgTagSel.disabled = !usesBgTag;
+        bgTagSel.style.opacity = usesBgTag ? "" : "0.45";
+    }
+    modeSel.addEventListener("change", syncControls);
+    bgSel.addEventListener("change", syncControls);
 
     const row = el("div", "h3e-writer-row");
     const brief = el("input", "h3e-writer-brief");
@@ -250,7 +342,13 @@ export function createVideoSwap(node, { onWritten } = {}) {
         const tag = identSel.value;
         const identity = railRows().find(
             (r) => String(r.tag || "").replace(/^@/, "") === tag);
-        if (!identity) { say("Pick an identity picture first.", "error"); return; }
+        // keep_person swaps nobody, so it needs no identity. The server applies
+        // the same rule; this one exists so the user is told before a round trip.
+        const needsIdentity = modeSel.value !== "keep_person";
+        if (needsIdentity && !identity) {
+            say("Pick an identity picture first.", "error");
+            return;
+        }
 
         setBusy(true);
         say("Writing one hop…", "hint");
@@ -263,12 +361,19 @@ export function createVideoSwap(node, { onWritten } = {}) {
                     duration: String(widgetByName(node, "duration")?.value || ""),
                     video,
                     video_start_s: Number(wStart?.value) || 0,
-                    identity: {
+                    identity: identity ? {
                         tag: String(identity.tag).replace(/^@/, ""),
                         file: String(identity.file || "").trim(),
-                    },
+                    } : {},
                     rail_tags: railRows().map(
                         (r) => String(r.tag || "").replace(/^@/, "")),
+                    mode: modeSel.value,
+                    background: bgSel.value,
+                    // Only meaningful under Background: from a picture. Sent
+                    // regardless so the server decides, rather than the two
+                    // sides disagreeing about when a field applies.
+                    background_tag: bgTagSel.value || "",
+                    wardrobe_tag: wardSel.value || "",
                 }),
             });
             const j = await r.json();

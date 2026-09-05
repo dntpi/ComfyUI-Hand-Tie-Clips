@@ -3325,3 +3325,22 @@ and hop 2 xfade'd that against `audio["waveform"]` which is `[B, C, T]`.
 `[B, C, T]` so it matches a decode. `tools/check_audio_lock.py` cats a
 2-D take against a 3-D hop. Needs a ComfyUI restart (Python).
 
+## 62. GPU tests 1 and 2 (2026-09-05)
+
+2 hops × 8 s × 8 steps, 26 s ElevenLabs take, after the xfade fix and a
+ComfyUI restart.
+
+**Test 1 (lock on).** Hop 1 `audio locked [0.00s-8.00s]`, hop 2
+`[7.08s-15.08s]`, join wrote, `final audio: passthrough of
+master_audio_file [0.00s-15.08s]`, drift +0 ms. Window and polarity are
+not Fail A/B.
+
+**Test 2 (lock off).** Empty MEDIA slot: no `master_audio_file: loaded`,
+no `audio locked`, no passthrough line. Delivered audio is generated
+voice (heard). Drift -40 ms (the generated-voice xfade). Empty is off.
+
+Still untested on GPU: last-frame guide, restart hop 4, restart length
+arithmetic on a real master, `refs: []` on a pin-less hop. The latent
+sidecar still logs `not representable without pickling` on this NestedTensor
+shape -- hops render; a later cache hit will fall back to the pixel pin.
+

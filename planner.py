@@ -1538,10 +1538,32 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
     return errors, warnings
 
 
-def _ensure_identity_refs(shot_text, identity_tag):
-    """Stage 3: the one shot lists the identity tag in shot.refs."""
-    ident = str(identity_tag or "").lstrip("@").strip()
-    if not ident or not shot_text:
+def _ensure_swap_refs(shot_text, tags):
+    """Stage 3: every tag the instruct asked for rides the one shot.
+
+    `shot.refs` is a WHITELIST, not an addition -- a list here replaces the
+    register's own scheduling for that hop. This used to write the identity
+    alone, which silently de-activated the wardrobe plate and the background
+    picture that `build_swap_user_turn` had just told the model to cite by
+    name. `resolve_tags` then failed the queue on "@jacket is in the reference
+    register but has no picture on this hop", so every SWAP with a wardrobe
+    plate or a picture background aborted before sampling.
+
+    Order is the instruct's -- identity, background, wardrobe -- and the
+    model's own list stays in front of anything appended, because it may have
+    scheduled a tag deliberately.
+
+    Comparison is on the stripped form. A reply of `["@her_face"]` used to get
+    `["@her_face", "her_face"]` written back at it: harmless at render, since
+    `plan._refs_field` strips and dedupes, but it is the JSON the user reads
+    on Accept.
+    """
+    want = []
+    for t in tags or ():
+        t = str(t or "").lstrip("@").strip()
+        if t and t not in want:
+            want.append(t)
+    if not want or not shot_text:
         return shot_text
     try:
         obj = json.loads(shot_text)
@@ -1552,12 +1574,18 @@ def _ensure_identity_refs(shot_text, identity_tag):
     shots = obj.get("shots")
     if not isinstance(shots, list) or not shots:
         return shot_text
-    shot = dict(shots[0] or {})
+    # A server that does not enforce `items: {"type": "object"}` can put a bare
+    # string here. `plan.normalise` promotes that to a beat, so validate_swap
+    # passes and this is the first thing to touch it -- and `dict("a beat")`
+    # raised out as "dictionary update sequence element #0 has length 1",
+    # which names nothing anyone can act on. Leave it for normalise instead.
+    if not isinstance(shots[0], dict):
+        return shot_text
+    shot = dict(shots[0])
     refs = shot.get("refs")
-    if refs is None:
-        shot["refs"] = [ident]
-    elif ident not in refs:
-        shot["refs"] = list(refs) + [ident]
+    have = ([str(r or "").lstrip("@").strip() for r in refs if str(r).strip()]
+            if isinstance(refs, list) else [])
+    shot["refs"] = have + [t for t in want if t not in have]
     obj = dict(obj)
     obj["shots"] = [shot]
     return json.dumps(obj, indent=2)
@@ -1619,9 +1647,16 @@ async def _repair_loop(messages, complete_fn, attempts, on_step, consume,
     """Generate / validate / repair. Mechanism, not policy.
 
     `consume(reply, attempt, schema) -> (done, result, repair, next_schema)`.
-    WRITE and SWAP each pass their own consume. A second copy of this loop
-    is how SWAP forgot `words` in the contribution: the parameter existed
-    on one path and was never threaded through the other.
+
+    SWAP passes its consume here. **WRITE does not**: `write_plan` still runs
+    its own loop, because it rewrites the conversation between attempts --
+    remapping rail tags by filename, merging the register, restoring pinned
+    `mp` and `file` -- and that pre-processing has to happen before validation,
+    which is not a shape `consume` can express. So there are still two loops,
+    and a change to the repair protocol has to be made in both. That is not
+    tidy, and it is the standing reminder: a second copy of this loop is how
+    SWAP forgot `words` in the contribution -- the parameter existed on one
+    path and was never threaded through the other.
     """
     turn_sch = schema
     last = None
@@ -1655,6 +1690,26 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
         return {"ok": False, "shot_plan": "",
                 "attempts": 0, "errors": ["SWAP needs an identity tag."],
                 "warnings": []}
+    if not swap_mode_needs_identity(mode):
+        # And under keep_person it is dropped, here, where the mode is
+        # authoritative. The panel GREYS the identity picker rather than
+        # clearing it, so a tag chosen under another mode still arrives on the
+        # request -- and an identity still in `refs` conditions the subject
+        # additively at cfg 1.0 whatever the instruct says about keeping the
+        # clip's person. The one mode whose contract is "swaps nobody" is the
+        # last place to trust the panel.
+        ident = ""
+
+    # The tags the instruct will tell the model to cite, in its own order.
+    # `build_swap_user_turn` normalises these again for the prose; they are
+    # re-derived here because `refs` has to agree with what was asked for, and
+    # a disagreement is the failure this pair of lines exists to prevent.
+    _bg = str(background or "").strip().lower()
+    _bg = _bg if _bg in BG_MODES else DEFAULT_BG_MODE
+    cited = [ident,
+             str(background_tag or "").lstrip("@").strip()
+             if _bg == "picture" else "",
+             str(wardrobe_tag or "").lstrip("@").strip()]
     text = build_swap_user_turn(brief, ident, duration=duration, mode=mode,
                                 background=background,
                                 background_tag=background_tag,
@@ -1684,7 +1739,7 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
         if not last_errors:
             out = {
                 "ok": True,
-                "shot_plan": _ensure_identity_refs(shot_text, ident),
+                "shot_plan": _ensure_swap_refs(shot_text, cited),
                 "attempts": attempt,
                 "errors": [],
                 "warnings": warnings,

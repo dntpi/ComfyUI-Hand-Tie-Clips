@@ -219,6 +219,67 @@ def main():
     ck("a wardrobe plate is cited and must be WORN",
        "@jacket" in ward and "WORN" in ward)
 
+    # Every tag the instruct told the model to CITE has to ride the hop.
+    #
+    # `shot.refs` is a whitelist -- a list there replaces the register's own
+    # scheduling -- so writing the identity alone de-activated the wardrobe
+    # plate and the background picture that the same instruct had just named,
+    # and `resolve_tags` aborted the queue on "@jacket is in the reference
+    # register but has no picture on this hop". Every SWAP using either
+    # control failed before sampling, and no check saw it, because the checks
+    # read the instruct text and never read `refs`.
+    print("the cited tags ride the hop")
+
+    def reply_citing(refs):
+        async def fake(messages, schema=None):
+            return json.dumps({"shot_plan": {"shots": [{
+                "beat": ("Someone looking like @her_face stands in @kitchen "
+                         "wearing @jacket, looking like @her_face, and turns."),
+                "directives": {"camera": "hold", "framing": "medium",
+                               "tail": "settle"},
+                "refs": refs,
+            }]}})
+        return fake
+
+    out = asyncio.run(P.write_swap_plan(
+        "", complete_fn=reply_citing(["her_face"]), identity_tag="her_face",
+        rail_tags=["her_face", "kitchen", "jacket"],
+        background="picture", background_tag="kitchen",
+        wardrobe_tag="jacket"))
+    got = json.loads(out.get("shot_plan") or "{}")
+    refs = (got.get("shots") or [{}])[0].get("refs") or []
+    for tag in ("her_face", "kitchen", "jacket"):
+        ck("@%s rides the hop it is cited in" % tag, tag in refs,
+           "refs=%r -- resolve_tags refuses a cited tag with no picture on "
+           "the hop, so the render aborts on the queue" % (refs,))
+
+    # keep_person swaps nobody, and an identity still in `refs` conditions the
+    # subject additively at cfg 1.0 whatever the instruct says. The panel greys
+    # the picker rather than clearing it, so a stale tag does arrive here.
+    out = asyncio.run(P.write_swap_plan(
+        "", complete_fn=reply_citing([]), identity_tag="her_face",
+        rail_tags=["her_face", "kitchen", "jacket"], mode="keep_person"))
+    got = json.loads(out.get("shot_plan") or "{}")
+    refs = (got.get("shots") or [{}])[0].get("refs") or []
+    ck("keep_person puts no identity on the hop", "her_face" not in refs,
+       "refs=%r -- the one mode whose contract is 'swaps nobody'" % (refs,))
+
+    # A server that does not enforce items:{type:object} returns a bare string.
+    # plan.normalise promotes it to a beat; this used to raise ValueError out
+    # of dict() and surface as "dictionary update sequence element #0".
+    ck("a string shot does not raise",
+       P._ensure_swap_refs(json.dumps({"shots": ["a beat"]}), ["her_face"])
+       is not None)
+
+    # Stripped comparison: a reply of ["@her_face"] used to be written back as
+    # ["@her_face", "her_face"], which is what the user reads on Accept.
+    one = json.loads(P._ensure_swap_refs(
+        json.dumps({"shots": [{"beat": "x", "refs": ["@her_face"]}]}),
+        ["her_face"]))
+    got_refs = one["shots"][0]["refs"]
+    ck("an @-spelled tag is not duplicated",
+       len(got_refs) == 1, "refs=%r" % (got_refs,))
+
     ck("SWAP onWritten does not assign refWidget",
        "refWidget" not in swap_cb,
        "WRITE owns ref_plan. SWAP's Accept callback writes shot_plan only.")

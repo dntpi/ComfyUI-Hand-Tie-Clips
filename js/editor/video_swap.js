@@ -377,12 +377,18 @@ export function createVideoSwap(node, { onWritten } = {}) {
         if (busy) return;
         const video = String(wVideo?.value || "");
         if (!video) { say("Pick a reference clip first.", "error"); return; }
-        const tag = identSel.value;
-        const identity = railRows().find(
-            (r) => String(r.tag || "").replace(/^@/, "") === tag);
-        // keep_person swaps nobody, so it needs no identity. The server applies
-        // the same rule; this one exists so the user is told before a round trip.
+        // keep_person swaps nobody, so it needs no identity. The server
+        // applies the same rule; this one exists so the user is told before a
+        // round trip -- and the tag is dropped rather than merely ignored,
+        // because the picker is GREYED, not cleared, so a tag chosen under
+        // another mode is still sitting in it. Sending it made the route's own
+        // `identity=@...` log line describe a swap that was not happening.
         const needsIdentity = modeSel.value !== "keep_person";
+        const tag = needsIdentity ? identSel.value : "";
+        const identity = tag
+            ? railRows().find(
+                (r) => String(r.tag || "").replace(/^@/, "") === tag)
+            : null;
         if (needsIdentity && !identity) {
             say("Pick an identity picture first.", "error");
             return;

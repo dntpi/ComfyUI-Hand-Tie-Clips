@@ -128,6 +128,7 @@ function mountEditor(node) {
         // user interaction, long after the mount has finished.
         onChange: () => {
             syncBadges();
+            node._h3Editor?.swap?.render?.();
             node.graph?.setDirtyCanvas?.(true, true);
         },
         hopCount,
@@ -317,6 +318,7 @@ function mountEditor(node) {
             // back -- the mount ran before there was anything to restore.
             writer.restore();
             writer.syncHops();
+            videoSwap.render?.();
             applyVisibility();   // syncs the run panel on the way through
             syncBadges();
         },
@@ -324,6 +326,7 @@ function mountEditor(node) {
         editor,
         runPanel,
         writer,
+        swap: videoSwap,
         tabs,
     };
 

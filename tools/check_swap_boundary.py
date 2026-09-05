@@ -27,14 +27,12 @@ SWAP-owned file, watch it fail, revert.
 """
 from __future__ import annotations
 
-import ast
 import asyncio
 import importlib.util
 import inspect
 import io
 import json
 import os
-import re
 import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,8 +48,13 @@ SWAP_OWNED = [
 
 # Render-path modules. If a SWAP change needs one of these, it is not a SWAP
 # change.
+# Filenames / imports, not English words: SWAP_PROMPT says "room tone".
 FORBIDDEN = (
-    "h3_ref_chain", "tone", "audio_lock", "store", "latents", "seam", "sheet",
+    "h3_ref_chain.py", "audio_lock.py", "tone.py", "store.py", "latents.py",
+    "seam.py", "sheet.py",
+    "from . import tone", "from . import audio_lock", "from . import store",
+    "from . import latents", "from . import seam", "from . import sheet",
+    "from . import h3_ref_chain",
 )
 
 
@@ -73,15 +76,13 @@ def load_pack():
 
 def main():
     print("SWAP-owned files stay off the render path")
-    ident = re.compile(
-        r"\b(" + "|".join(re.escape(n) for n in FORBIDDEN) + r")\b")
     for rel in SWAP_OWNED:
         path = os.path.join(HERE, rel)
         ck(rel + " exists", os.path.isfile(path), path)
         if not os.path.isfile(path):
             continue
         text = io.open(path, encoding="utf-8").read()
-        hits = sorted(set(ident.findall(text)))
+        hits = [n for n in FORBIDDEN if n in text]
         ck(rel + " names no render-path module",
            not hits,
            ("SWAP may not import %s; if this change is about that "
@@ -89,7 +90,7 @@ def main():
 
     print("writer never emits ref_plan")
     load_pack()
-    P = sys.modules["htcpack.planner"]
+    import htcpack.planner as P  # noqa: E402
 
     async def fake_with_register(messages, schema=None):
         return json.dumps({
@@ -114,10 +115,10 @@ def main():
     ck("the one hop survived",
        out.get("ok") is True and "her_face" in (out.get("shot_plan") or ""))
 
-    two = json.dumps({"shot_plan": {"shots": [
+    two = json.dumps({"shots": [
         {"beat": "A cites @her_face."},
         {"beat": "B cites @her_face."},
-    ]}})
+    ]})
     errs, _ = P.validate_swap(two, rail_tags=["her_face"], identity_tag="her_face")
     ck("two shots are refused",
        any("one hop" in e.lower() or "length 1" in e.lower() for e in errs),
@@ -126,10 +127,11 @@ def main():
     print("video_swap.js never writes the rail and Accepts one shot")
     js = io.open(os.path.join(HERE, "js", "editor", "video_swap.js"),
                  encoding="utf-8").read()
-    ck("video_swap.js does not mention ref_plan",
-       "ref_plan" not in js,
-       "SWAP may not write the rail. Pick identity from parseRefPlan; do not "
-       "call the rail's writer.")
+    ck("video_swap.js reads the rail, it does not write it",
+       "parseRefPlan" in js and "refPlanToJson" not in js
+       and "refWidget" not in js,
+       "parseRefPlan is how SWAP lists identity tags. refPlanToJson is the "
+       "rail's write -- SWAP must not call it.")
     ck("video_swap.js does not call refPlanToJson",
        "refPlanToJson" not in js,
        "that is the rail's write/commit. SWAP Accepts a shot, not a register.")
@@ -144,7 +146,7 @@ def main():
                  encoding="utf-8").read()
     # The SWAP onWritten is the createVideoSwap callback. It must not assign
     # refWidget -- that assignment is WRITE's.
-    swap_cb = ui.split("createVideoSwap")[1].split("const tabs")[0] if "createVideoSwap" in ui else ""
+    swap_cb = ui.split("const videoSwap = createVideoSwap")[-1].split("const tabs")[0] if "const videoSwap = createVideoSwap" in ui else ""
     ck("SWAP onWritten does not assign refWidget",
        "refWidget" not in swap_cb,
        "WRITE owns ref_plan. SWAP's Accept callback writes shot_plan only.")

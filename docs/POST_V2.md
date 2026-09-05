@@ -73,3 +73,42 @@ with the rest of the pack's direction, but test it on its own.
   argued, never measured end to end. Instrument it on the next long render.
 - **Block repetition** — running block N twice per step, re-feeding the same
   latent. An untested idea, noted only so it is not lost.
+
+## The contributed SWAP tab — held for 2.1
+
+A user sent a working tree adding a **SWAP tab**: video to identity swap, automatic frame
+extraction, an LLM-drafted plan, a 3-way background mode, a 3-way wardrobe mode, five new
+toggles, and a shared generate/validate/repair refactor. Reviewed in full; the report is
+`CONTRIB_REVIEW.md`, kept outside the repo because it quotes their filenames.
+
+**It is good work and it is not in 2.0.0.** Three reasons, in order:
+
+1. **A data-loss bug that needs a design decision rather than a fix.** SWAP sends at most
+   three refs where WRITE sends the whole rail, and Accept replaces `ref_plan` wholesale, so
+   every other reference on the register is silently deleted. Separately its `railRefs()` is
+   a copy of `writer_bar.js`'s with the `mp` field dropped, and `_restore_rail_only` is
+   authoritative-not-restorative, so every SWAP write resets every megapixel cap to native --
+   the `chain_00047` failure documented fifteen lines above the function they copied. The
+   first of those is not a typo: "what should Accept do when a tab knows only a subset of the
+   register" is a question about how the rail works.
+2. **No validation budget.** A whole new tab with an LLM path, on a release that already
+   ships more untested surface than is comfortable, after the GPU window closed. It would go
+   out on reading alone.
+3. **It is a working tree off v1.1 that keeps diverging.** 96% applies clean to v2, but the
+   semantic cost is a day or two, dominated by SWAP assuming one clip where v2 has 3x3 media
+   slots.
+
+**Deliberately NOT cherry-picking the safe parts.** The media helpers, the refactor and
+"describe frame only" are clean takes on their own, but pulling three pieces out of somebody
+else's working tree fragments their contribution and makes their rebase harder, for features
+nobody has asked for yet.
+
+**Plan: invite a rebase onto v2 after 2.0.0 is tagged.** That is easier for them against a
+tag than against a moving branch, and the collisions are already enumerated.
+
+Worth sending them regardless of what we merge, because it is live in their tree today: the
+`mp` drop and the wholesale `ref_plan` replacement are biting them right now. And the
+wardrobe-drift diagnosis they report -- video pixels outlasting the text instruction -- is an
+assertion: three prose comments, no chain ids, no measurements, in a pack that cites
+`chain_000NN` in exactly that kind of comment everywhere else. If they have the evidence it is
+worth a great deal; if it is a hunch it should read as one.

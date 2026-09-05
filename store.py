@@ -40,6 +40,15 @@ VIDEO_EXT = ".mkv"
 AUDIO_EXT = ".npy"
 META_EXT = ".json"
 LATENT_EXT = ".latent.safetensors"
+# What 1.1 and earlier wrote. It is never READ -- reading it back needs
+# weights_only=False, which is the pickle load this pack retired on purpose --
+# but it still has to be ACCOUNTED for. A cache carried across the upgrade has
+# one of these beside every entry, and a cleanup path that does not know about
+# a file is how the master spill leaked 9 GB a render: the sweep sized entries
+# from the three current extensions, so a legacy sidecar was invisible to the
+# budget AND survived the eviction of the entry it belonged to. About 15 MB
+# each, forever, under a budget that could not see them.
+LEGACY_LATENT_EXT = ".latent.pt"
 
 # FFV1 through PyAV, in process. This used to shell out to an `ffmpeg` binary
 # on PATH, which cost two things:
@@ -426,7 +435,7 @@ class HopStore:
             except OSError:
                 continue
             size = st.st_size
-            for e in (AUDIO_EXT, META_EXT, LATENT_EXT):
+            for e in (AUDIO_EXT, META_EXT, LATENT_EXT, LEGACY_LATENT_EXT):
                 try:
                     size += os.path.getsize(self._p(key, e))
                 except OSError:
@@ -451,7 +460,8 @@ class HopStore:
                 break
             if key in keep:
                 continue
-            for e in (VIDEO_EXT, AUDIO_EXT, META_EXT, LATENT_EXT):
+            for e in (VIDEO_EXT, AUDIO_EXT, META_EXT, LATENT_EXT,
+                      LEGACY_LATENT_EXT):
                 try:
                     os.remove(self._p(key, e))
                 except OSError:

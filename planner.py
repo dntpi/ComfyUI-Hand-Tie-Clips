@@ -811,8 +811,12 @@ def attach_images(text, images):
         return text
     parts = [{"type": "text", "text": text}]
     for im in images:
-        tag = str(im.get("tag") or "").lstrip("@")
-        parts.append({"type": "text", "text": f"@{tag} is this picture:"})
+        cap = str(im.get("caption") or "").strip()
+        if cap:
+            parts.append({"type": "text", "text": cap})
+        else:
+            tag = str(im.get("tag") or "").lstrip("@")
+            parts.append({"type": "text", "text": f"@{tag} is this picture:"})
         parts.append({"type": "image_url",
                       "image_url": {"url": im["data_url"]}})
     return parts
@@ -1323,3 +1327,307 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     return {"ok": False, "shot_plan": shot_text, "ref_plan": ref_text,
             "attempts": int(attempts), "errors": last_errors,
             "warnings": warnings}
+
+
+# -- SWAP implant: same repair loop, different prompt and validator ---------
+
+SWAP_PROMPT = "prompt_pack/SWAP_PROMPT.md"
+
+
+def swap_prompt():
+    """SWAP's instruct. Own file; never SYSTEM_PROMPT.md."""
+    try:
+        with open(_pack_file(SWAP_PROMPT), encoding="utf-8") as fh:
+            return fh.read()
+    except Exception as exc:
+        raise RuntimeError(f"{TAG}: SWAP_PROMPT.md unreadable ({exc})") from exc
+
+
+def swap_schema():
+    """One shot_plan. No ref_plan key, so the model cannot be required to emit one."""
+    return {
+        "type": "object",
+        "required": ["shot_plan"],
+        "additionalProperties": False,
+        "properties": {
+            "shot_plan": {
+                "type": "object",
+                "required": ["shots"],
+                "additionalProperties": False,
+                "properties": {
+                    "shots": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 1,
+                        "items": {"type": "object"},
+                    }
+                },
+            }
+        },
+    }
+
+
+_VIDEO_DESC = re.compile(r"^VIDEO_DESC:\s*(.+)$", re.M)
+
+
+def parse_swap_reply(raw):
+    """One shot_plan string and an optional clip caption. Never a ref_plan.
+
+    SWAP's reply parsing is its own function: WRITE's split_reply looks for
+    a ref_plan document and SWAP must not.
+    """
+    raw = (raw or "").strip()
+    video_desc = ""
+    m = _VIDEO_DESC.search(raw)
+    if m:
+        video_desc = m.group(1).strip()
+        raw = (raw[:m.start()] + raw[m.end():]).strip()
+    shot_text = ""
+    try:
+        whole = json.loads(raw)
+    except ValueError:
+        whole = None
+    if isinstance(whole, dict):
+        if "shot_plan" in whole:
+            sp = whole.get("shot_plan")
+            shot_text = sp if isinstance(sp, str) else json.dumps(sp, indent=2)
+        elif "shots" in whole:
+            shot_text = json.dumps({"shots": whole.get("shots")}, indent=2)
+    if not shot_text:
+        blocks = [b.strip() for b in _FENCE.findall(raw) if b.strip()]
+        for b in blocks:
+            try:
+                obj = json.loads(b)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if "shot_plan" in obj:
+                sp = obj.get("shot_plan")
+                shot_text = sp if isinstance(sp, str) else json.dumps(sp, indent=2)
+                break
+            if "shots" in obj:
+                shot_text = json.dumps({"shots": obj.get("shots")}, indent=2)
+                break
+    return shot_text, video_desc
+
+
+def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None):
+    """SWAP policy: one shot, tags already on the rail, no register document.
+
+    Errors go back to the model. This is not `validate()`: that function
+    requires a `ref_plan` and would force SWAP to emit one.
+    """
+    errors, warnings = [], []
+    try:
+        shots = _plan.parse_plan(shot_text)
+    except Exception as exc:
+        return [_clean(exc)], warnings
+    if not shots:
+        return ["SWAP writes one hop. The plan is empty."], warnings
+    if len(shots) != 1:
+        return [
+            f"SWAP writes one hop. This plan has {len(shots)} shot(s). "
+            "Return a shots array of length 1."
+        ], warnings
+
+    ident = str(identity_tag or "").lstrip("@").strip()
+    known = [str(t).lstrip("@").strip() for t in (rail_tags or []) if str(t).strip()]
+    if ident and ident not in known:
+        known = [ident] + known
+    rail = [{"tag": t, "file": t + ".png"} for t in known]
+    try:
+        _plan.validate_shot_refs(shots, rail)
+    except Exception as exc:
+        errors.append(_clean(exc))
+
+    beat = shots[0].get("beat") or ""
+    if ident and ("@" + ident) not in beat:
+        errors.append(
+            f"the beat must cite @{ident} -- that is the identity being "
+            "swapped in, and a generate that does not name it will keep "
+            "the person from the clip."
+        )
+
+    refs = shots[0].get("refs")
+    if refs is not None and ident and ident not in refs:
+        errors.append(
+            f"shot.refs must include @{ident} (the identity). "
+            f"Got {refs!r}."
+        )
+
+    tail = (shots[0].get("directives") or {}).get("tail")
+    if tail not in ("settle", "hold"):
+        warnings.append(
+            "the only shot should set tail to settle or hold -- it is the "
+            "last hop."
+        )
+
+    if duration:
+        # Same lint WRITE uses, via the real table, but SWAP does not import
+        # h3_ref_chain: the route passes the widget string and the prompt
+        # already named the band.
+        pass
+    return errors, warnings
+
+
+def _ensure_identity_refs(shot_text, identity_tag):
+    """Stage 3: the one shot lists the identity tag in shot.refs."""
+    ident = str(identity_tag or "").lstrip("@").strip()
+    if not ident or not shot_text:
+        return shot_text
+    try:
+        obj = json.loads(shot_text)
+    except ValueError:
+        return shot_text
+    if not isinstance(obj, dict):
+        return shot_text
+    shots = obj.get("shots")
+    if not isinstance(shots, list) or not shots:
+        return shot_text
+    shot = dict(shots[0] or {})
+    refs = shot.get("refs")
+    if refs is None:
+        shot["refs"] = [ident]
+    elif ident not in refs:
+        shot["refs"] = list(refs) + [ident]
+    obj = dict(obj)
+    obj["shots"] = [shot]
+    return json.dumps(obj, indent=2)
+
+
+def build_swap_user_turn(brief, identity_tag, duration=None):
+    ident = str(identity_tag or "").lstrip("@").strip()
+    lines = [
+        f"Identity tag: @{ident}",
+        "Write one hop that replaces the person in the clip frame with that "
+        "photograph. Cite the tag in the beat. Do not emit ref_plan.",
+    ]
+    if duration:
+        lines.append(f"Hop length: {duration}. Fill that duration.")
+    brief = str(brief or "").strip()
+    if brief:
+        lines.append("Extra context from the user: " + brief)
+    return "\n".join(lines)
+
+
+async def _repair_loop(messages, complete_fn, attempts, on_step, consume,
+                       schema=None):
+    """Generate / validate / repair. Mechanism, not policy.
+
+    `consume(reply, attempt, schema) -> (done, result, repair, next_schema)`.
+    WRITE and SWAP each pass their own consume. A second copy of this loop
+    is how SWAP forgot `words` in the contribution: the parameter existed
+    on one path and was never threaded through the other.
+    """
+    turn_sch = schema
+    last = None
+    for attempt in range(1, int(attempts) + 1):
+        if on_step:
+            on_step({"attempt": attempt, "of": int(attempts),
+                     "errors": (last or {}).get("errors") or []})
+        reply = await complete_fn(messages, schema=turn_sch)
+        done, last, repair, turn_sch = consume(reply, attempt, turn_sch)
+        if done:
+            return last
+        if attempt >= int(attempts) or not repair:
+            break
+        messages.append({"role": "assistant", "content": reply})
+        messages.append({"role": "user", "content": repair})
+    return last
+
+
+async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
+                          images=None, duration=None, attempts=MAX_ATTEMPTS,
+                          on_step=None):
+    """One hop, no register. Returns no `ref_plan` key."""
+    ident = str(identity_tag or "").lstrip("@").strip()
+    if not ident:
+        return {"ok": False, "shot_plan": "",
+                "attempts": 0, "errors": ["SWAP needs an identity tag."],
+                "warnings": []}
+    text = build_swap_user_turn(brief, ident, duration=duration)
+    messages = [{"role": "system", "content": swap_prompt()},
+                {"role": "user", "content": attach_images(text, images)}]
+    sch = swap_schema()
+    last_errors, warnings = [], []
+    shot_text = video_desc = ""
+
+    def consume(reply, attempt, turn_sch):
+        nonlocal last_errors, warnings, shot_text, video_desc
+        new_shot, new_desc = parse_swap_reply(reply)
+        if new_shot:
+            shot_text = new_shot
+        if new_desc:
+            video_desc = new_desc
+        if not shot_text:
+            last_errors = [
+                "the reply contained no shot_plan JSON. Return one object "
+                "with shot_plan.shots of length 1. Do not emit ref_plan."
+            ]
+        else:
+            last_errors, warnings = validate_swap(
+                shot_text, rail_tags=rail_tags, identity_tag=ident,
+                duration=duration)
+        if not last_errors:
+            out = {
+                "ok": True,
+                "shot_plan": _ensure_identity_refs(shot_text, ident),
+                "attempts": attempt,
+                "errors": [],
+                "warnings": warnings,
+            }
+            if video_desc:
+                out["video_desc"] = video_desc
+            return True, out, None, turn_sch
+        repair = (
+            "The node rejected that plan:\n\n"
+            + "\n".join(f"- {e}" for e in last_errors)
+            + "\n\nReturn one corrected shot_plan with a single shot. "
+              "Do not emit ref_plan."
+        )
+        fail = {
+            "ok": False,
+            "shot_plan": shot_text,
+            "attempts": attempt,
+            "errors": last_errors,
+            "warnings": warnings,
+        }
+        if video_desc:
+            fail["video_desc"] = video_desc
+        return False, fail, repair, turn_sch
+
+    out = await _repair_loop(
+        messages, complete_fn, attempts, on_step, consume, schema=sch)
+    if out is None:
+        return {"ok": False, "shot_plan": "",
+                "attempts": int(attempts), "errors": last_errors,
+                "warnings": warnings}
+    return out
+
+
+_DESCRIBE_SYSTEM = (
+    "You caption one video frame for a MiniMax H3 reference clip. "
+    "One or two sentences: who is in it, the place, the action being "
+    "copied. No JSON. No @tags. No identity swap."
+)
+
+
+async def describe_frame(*, complete_fn, frame_data_url):
+    """One-call caption. No repair loop, no shot_plan, no ref_plan."""
+    if not frame_data_url:
+        return {"ok": False, "error": "no frame could be extracted from the clip"}
+    messages = [
+        {"role": "system", "content": _DESCRIBE_SYSTEM},
+        {"role": "user", "content": attach_images(
+            "Describe this frame.",
+            [{"caption": "The reference clip's frame at the trim IN point. "
+                         "It is not a @tag.",
+              "data_url": frame_data_url}])},
+    ]
+    reply = await complete_fn(messages, schema=None)
+    text = " ".join(str(reply or "").strip().split())
+    if not text:
+        return {"ok": False, "error": "the model returned an empty caption"}
+    return {"ok": True, "description": text[:500]}
+

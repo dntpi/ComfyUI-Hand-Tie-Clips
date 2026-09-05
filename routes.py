@@ -42,6 +42,8 @@ FILES_ROUTE = "/h3_ref_chain/files"
 PEAKS_ROUTE = "/h3_ref_chain/peaks"
 LLM_ROUTE = "/h3_ref_chain/llm"
 PLAN_ROUTE = "/h3_ref_chain/plan"
+SWAP_PLAN_ROUTE = "/h3_ref_chain/swap_plan"
+SWAP_DESCRIBE_ROUTE = "/h3_ref_chain/swap_describe"
 UNLOAD_ROUTE = "/h3_ref_chain/llm/unload"
 
 # Decoded waveform summaries, keyed (name, mtime, n).
@@ -490,6 +492,185 @@ def register():
 
         if out["ok"]:
             print(f"[{TAG}] wrote a {hops}-hop plan in {out['attempts']} "
+                  f"attempt(s)", flush=True)
+        return web.json_response(out)
+
+    def _swap_conn():
+        from . import llm as _llm
+        from . import planner as _planner
+        conn = _llm.load_conn()
+        return _llm, _planner, conn
+
+    @instance.routes.post(SWAP_DESCRIBE_ROUTE)
+    async def _swap_describe(request):
+        """Caption the clip frame at the trim IN point. No plan, no rail."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response(
+                {"ok": False, "error": "expected a JSON body"}, status=400)
+        video = str(body.get("video") or "").strip()
+        if not video:
+            return web.json_response(
+                {"ok": False, "error": "pick a reference clip first"})
+        try:
+            start = float(body.get("video_start_s") or 0.0)
+        except (TypeError, ValueError):
+            start = 0.0
+        try:
+            _llm, _planner, conn = _swap_conn()
+        except Exception as exc:
+            return web.json_response(
+                {"ok": False, "error": f"SWAP failed to load: {exc}"})
+        if not conn.get("model"):
+            return web.json_response(
+                {"ok": False, "error": "no model is selected -- open WRITE, "
+                                       "Settings, and pick one."})
+
+        import asyncio
+
+        def encode():
+            return _media.video_first_frame_data_url(video, start=start)
+
+        try:
+            frame = await asyncio.get_running_loop().run_in_executor(
+                None, encode)
+        except Exception as exc:
+            return web.json_response(
+                {"ok": False, "error": f"could not read the clip: {exc}"})
+        if not frame:
+            return web.json_response(
+                {"ok": False, "error": "could not extract a frame at that "
+                                       "IN point. Trim the clip on MEDIA."})
+
+        async def complete_fn(messages, schema=None):
+            return await _llm.complete(
+                conn["server_url"], conn["model"], messages,
+                schema=schema, temperature=conn["temperature"])
+
+        try:
+            out = await _planner.describe_frame(
+                complete_fn=complete_fn, frame_data_url=frame)
+        except _llm.LLMError as exc:
+            return web.json_response({"ok": False, "error": str(exc)})
+        except Exception as exc:
+            print(f"[{TAG}] swap_describe failed: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)})
+        if not conn.get("keep_warm"):
+            try:
+                await _llm.unload(conn["server_url"], conn["model"])
+            except Exception:
+                pass
+        return web.json_response(out)
+
+    @instance.routes.post(SWAP_PLAN_ROUTE)
+    async def _swap_plan(request):
+        """One-hop identity swap. Never returns a ref_plan key."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response(
+                {"ok": False, "error": "expected a JSON body"}, status=400)
+        brief = str(body.get("brief") or "").strip()
+        duration = str(body.get("duration") or "").strip()
+        video = str(body.get("video") or "").strip()
+        identity = body.get("identity") if isinstance(body.get("identity"), dict) else {}
+        ident_tag = str(identity.get("tag") or "").lstrip("@").strip()
+        ident_file = str(identity.get("file") or "").strip()
+        if not video:
+            return web.json_response(
+                {"ok": False, "error": "pick a reference clip first"})
+        if not ident_tag:
+            return web.json_response(
+                {"ok": False, "error": "pick an identity picture from the rail"})
+        try:
+            start = float(body.get("video_start_s") or 0.0)
+        except (TypeError, ValueError):
+            start = 0.0
+        rail_tags = body.get("rail_tags")
+        if not isinstance(rail_tags, list):
+            rail_tags = [ident_tag]
+        try:
+            _llm, _planner, conn = _swap_conn()
+        except Exception as exc:
+            return web.json_response(
+                {"ok": False, "error": f"SWAP failed to load: {exc}"})
+        if not conn.get("model"):
+            return web.json_response(
+                {"ok": False, "error": "no model is selected -- open WRITE, "
+                                       "Settings, and pick one."})
+
+        import asyncio
+
+        def encode():
+            images = []
+            if ident_file:
+                url = _media.vision_data_url(ident_file)
+                if url:
+                    images.append({"tag": ident_tag, "data_url": url})
+            frame = _media.video_first_frame_data_url(video, start=start)
+            if frame:
+                images.append({
+                    "caption": (
+                        "This is a frame from the reference clip at the trim "
+                        "IN point. It is NOT a @tag. Do not write "
+                        "@reference_video."
+                    ),
+                    "data_url": frame,
+                })
+            return images, frame
+
+        try:
+            images, frame = await asyncio.get_running_loop().run_in_executor(
+                None, encode)
+        except Exception as exc:
+            print(f"[{TAG}] SWAP could not attach stills: {exc!r}", flush=True)
+            images, frame = [], None
+        if not frame:
+            return web.json_response(
+                {"ok": False, "error": "could not extract a frame at that "
+                                       "IN point. Trim the clip on MEDIA."})
+
+        vision_notes = []
+
+        async def complete_fn(messages, schema=None):
+            try:
+                return await _llm.complete(
+                    conn["server_url"], conn["model"], messages,
+                    schema=schema, temperature=conn["temperature"])
+            except _llm.LLMError as exc:
+                if _llm.has_images(messages) and "HTTP 4" in str(exc):
+                    print(f"[{TAG}] server rejected SWAP stills; "
+                          f"retrying from filenames only", flush=True)
+                    vision_notes.append(
+                        "the model could not look at the pictures; "
+                        "the draft used filenames only")
+                    return await _llm.complete(
+                        conn["server_url"], conn["model"],
+                        _llm.text_only(messages),
+                        schema=schema, temperature=conn["temperature"])
+                raise
+
+        try:
+            out = await _planner.write_swap_plan(
+                brief, complete_fn=complete_fn, identity_tag=ident_tag,
+                rail_tags=rail_tags, images=images, duration=duration)
+        except _llm.LLMError as exc:
+            return web.json_response({"ok": False, "error": str(exc)})
+        except Exception as exc:
+            print(f"[{TAG}] swap_plan failed: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)})
+        if vision_notes:
+            out["warnings"] = list(out.get("warnings") or []) + vision_notes
+        if "ref_plan" in out:
+            out.pop("ref_plan", None)
+        if not conn.get("keep_warm"):
+            try:
+                await _llm.unload(conn["server_url"], conn["model"])
+            except Exception:
+                pass
+        if out.get("ok"):
+            print(f"[{TAG}] SWAP wrote a 1-hop plan in {out.get('attempts')} "
                   f"attempt(s)", flush=True)
         return web.json_response(out)
 

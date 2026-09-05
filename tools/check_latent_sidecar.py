@@ -139,6 +139,28 @@ def main():
         ck("the samples beside it are still intact",
            torch.equal(list(out4["samples"].unbind())[0], v))
 
+        # A cache carried across the 1.1 upgrade has a .latent.pt beside every
+        # entry. It is never read -- that would be the pickle this pack retired
+        # -- but the sweep has to SEE it, or it is invisible to the budget and
+        # survives the eviction of the entry it belongs to. ~15 MB each,
+        # forever. Exactly the shape of the master-spill leak.
+        print("the pickle-era sidecar is accounted for, never read")
+        ck("the legacy extension is still named",
+           getattr(store, "LEGACY_LATENT_EXT", None) == ".latent.pt")
+        with open(os.path.join(HERE, "store.py"), encoding="utf-8") as _fh:
+            src = _fh.read()
+        entries = src[src.index("def entries("):src.index("def sweep(")]
+        sweep = src[src.index("def sweep("):]
+        ck("the budget counts it", "LEGACY_LATENT_EXT" in entries,
+           "or the cache silently exceeds its own budget")
+        ck("eviction removes it", "LEGACY_LATENT_EXT" in sweep,
+           "or it outlives the entry it belongs to")
+        ck("nothing ever reads it",
+           "LEGACY_LATENT_EXT" not in src[src.index("def get_latent("):
+                                          src.index("def entries(")]
+           if "def get_latent(" in src else True,
+           "reading it back would need weights_only=False")
+
         print("refusals -- None means cache the frames, skip the latent")
         ck("a dict with no samples is refused", to_flat({"x": 1}) is None)
         ck("a non-dict is refused", to_flat(torch.randn(2)) is None)

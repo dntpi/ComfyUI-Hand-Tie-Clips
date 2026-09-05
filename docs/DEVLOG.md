@@ -3151,3 +3151,49 @@ The honest description of the failure is not "texture degrades". It is that
 the chain converges on a static, evenly-lit, motionless picture -- which is
 what "plastic" looks like, and which explains why chasing skin detail found
 nothing.
+## 55. Two channels at a third of capacity (2026-09-05)
+
+A user asked why the MEDIA tab offers one reference clip and one voice. The
+answer was that nobody had checked what the model takes. Core declares it
+outright, in the node's own input template: 9 reference images, 3 reference
+videos, 3 standalone reference audios, 3 per-video soundtracks. The pack
+matched the 9 and hardcoded one of each of the rest, two lines apart.
+
+So `ref_videos` and `ref_audios` ran at a third of capacity, and
+`ref_video_audios` ran at zero -- a reference clip reached the model SILENT
+even when the file had sound. Twelve widgets and a pairing loop later, all
+three channels are full.
+
+### The ordinals are the trap
+
+`<Video N>` and `<Audio N>` are positional: core numbers reference blocks by
+the order it iterates them, and the prompt cites those numbers. So the
+numbering has to be DENSE. Fill slots 1 and 3 and the model must see `<Video
+1>` and `<Video 2>`, not 1 and 3 -- and the consequence, which is now in the
+tooltip and the README, is that clearing a slot RENUMBERS the ones after it.
+A beat naming "the second clip" then cites something else, and nothing would
+report it. That is the same class of defect `refs.py` fixed for pictures and
+paid for once already.
+
+### What the cache needed
+
+`chain_salt` digested slot 1 of each. Left alone, a chain rendered with a
+second voice would be served to a run that dropped it -- the
+silently-wrong-frames class the key exists to prevent. It digests all three
+of each now, plus which clips carried sound. `IS_CHANGED` grew the new
+filenames too, so overwriting `clip2.mp4` in place re-runs rather than
+serving the old render.
+
+### The guard that did not exist
+
+`tools/check_media_slots.py` asserts the dense numbering including the gap
+case, and then something broader: that every `*_file` widget the node
+declares is claimed by a slot in `media_strip.js`. A Python file widget with
+no slot falls through to a native dial where the user types a filename by
+hand -- the 0.4.0 failure recorded at `run_panel.js:53`, which has recurred
+since and recurred again during this very session on the shot editor.
+Nothing checked for it. Now something does.
+
+Not rendered. The plumbing is checked and the ordinals are tested; whether
+three voices actually behave -- and what three sets of reference blocks cost
+per step -- needs a GPU.

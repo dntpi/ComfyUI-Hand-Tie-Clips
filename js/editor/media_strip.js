@@ -35,6 +35,24 @@ const SLOTS = [
     ["voice_file", "audio", "voice",
      "Voice or timbre reference for hop 1 as <Audio 1>. Later hops use the pin.",
      "voice", null, null],
+    // Slots 2 and 3. H3 takes three reference videos and three standalone
+    // reference audios; the pack passed one of each until now. Numbering is
+    // DENSE -- clearing slot 2 renumbers slot 3, so a beat that cites an
+    // ordinal would then name a different clip. Slots 2 and 3 share slot 1's
+    // reference video size, which is a decode budget rather than a creative
+    // choice.
+    ["reference_video_2_file", "video", "reference clip 2",
+     "Second motion/look plate, cited as <Video 2>. Shares slot 1's decode size.",
+     "reference_video_2", null, null],
+    ["reference_video_3_file", "video", "reference clip 3",
+     "Third motion/look plate, cited as <Video 3>. Shares slot 1's decode size.",
+     "reference_video_3", null, null],
+    ["voice_2_file", "audio", "voice 2",
+     "Second voice reference, cited as <Audio 2>. Every reference audio is attended on every step of every hop -- trim it.",
+     "voice_2", null, null],
+    ["voice_3_file", "audio", "voice 3",
+     "Third voice reference, cited as <Audio 3>. Trim it.",
+     "voice_3", null, null],
     // Not a reference at all: this one is never shown to the model. It is mixed
     // under the finished chain after the last hop is joined, so it sits here
     // because this is where you look for audio -- not because it behaves like

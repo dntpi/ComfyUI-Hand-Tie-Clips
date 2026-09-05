@@ -1210,6 +1210,22 @@ def _alloc_master(total_frames, height, width):
         return torch.empty(shape, dtype=torch.float32)
 
 
+def _dense_media(prefix, items):
+    """Number the filled slots 1..N with no gaps. -> dict or None.
+
+    `<Video N>` and `<Audio N>` are POSITIONAL: core numbers reference blocks
+    by the order it iterates them, and the prompt cites those ordinals. A gap
+    would hand core `ref_video_1` and `ref_video_3`, and a beat written about
+    "the second clip" would then name something else. So slot 3 becomes
+    <Video 2> when slot 2 is empty, and the tooltips say so.
+    """
+    out = {}
+    for x in items:
+        if x is not None:
+            out[f"{prefix}{len(out) + 1}"] = x
+    return out or None
+
+
 def _pin_mech_for(hop_index, overlap_n, prev_sampled, mode="auto"):
     """Which mechanism `_pin_continue` will pick, without doing the work.
 
@@ -2040,6 +2056,86 @@ class HandTieClips:
                         "pin_mech=addguide for it to feed back."
                     ),
                 }),
+                # APPENDED after pin_mech and tone_anchor_ref. Those two already
+                # shipped on this trunk; the 3x3 extra slots go last so existing
+                # v2 workflows keep their last two values as pin_mech /
+                # tone_anchor_ref. H3 natively takes 9 reference images, 3
+                # reference videos and 3 standalone reference audios; the pack
+                # matched the 9 and passed exactly one of each of the others.
+                "reference_video_2_file": ("STRING", {
+                    "default": "",
+                    "tooltip": (
+                        "Reference clip 2 of 3. H3 takes three; this pack "
+                        "passed one until now. Cited as <Video 2> when every "
+                        "earlier slot is filled -- the numbering is dense, so "
+                        "clearing slot 2 renumbers slot 3. Decoded at the same "
+                        "reference video size as slot 1. Set in the panel."
+                    ),
+                }),
+                "reference_video_2_start_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim in, seconds, for reference clip 2.",
+                }),
+                "reference_video_2_end_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim out, seconds, for reference clip 2. 0 = to the end.",
+                }),
+                "reference_video_3_file": ("STRING", {
+                    "default": "",
+                    "tooltip": (
+                        "Reference clip 3 of 3. H3 takes three; this pack "
+                        "passed one until now. Cited as <Video 3> when every "
+                        "earlier slot is filled -- the numbering is dense, so "
+                        "clearing slot 2 renumbers slot 3. Decoded at the same "
+                        "reference video size as slot 1. Set in the panel."
+                    ),
+                }),
+                "reference_video_3_start_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim in, seconds, for reference clip 3.",
+                }),
+                "reference_video_3_end_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim out, seconds, for reference clip 3. 0 = to the end.",
+                }),
+                "voice_2_file": ("STRING", {
+                    "default": "",
+                    "tooltip": (
+                        "Voice reference 2 of 3, cited as <Audio 2>. H3 takes "
+                        "three standalone reference audios; this pack passed one "
+                        "until now. Dense numbering, so clearing slot 2 renumbers "
+                        "slot 3 -- and a beat that names an ordinal would then "
+                        "cite the wrong voice. Every reference audio is attended "
+                        "on every step of every hop, so trim them. Set in the panel."
+                    ),
+                }),
+                "voice_2_start_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim in, seconds, for voice 2.",
+                }),
+                "voice_2_end_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim out, seconds, for voice 2. 0 = to the end.",
+                }),
+                "voice_3_file": ("STRING", {
+                    "default": "",
+                    "tooltip": (
+                        "Voice reference 3 of 3, cited as <Audio 3>. H3 takes "
+                        "three standalone reference audios; this pack passed one "
+                        "until now. Dense numbering, so clearing slot 2 renumbers "
+                        "slot 3 -- and a beat that names an ordinal would then "
+                        "cite the wrong voice. Every reference audio is attended "
+                        "on every step of every hop, so trim them. Set in the panel."
+                    ),
+                }),
+                "voice_3_start_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim in, seconds, for voice 3.",
+                }),
+                "voice_3_end_s": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
+                    "tooltip": "Trim out, seconds, for voice 3. 0 = to the end.",
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2066,7 +2162,9 @@ class HandTieClips:
     @classmethod
     def IS_CHANGED(cls, ref_plan="", start_image_file="",
                    reference_video_file="", voice_file="",
-                   soundtrack_file="", **_):
+                   soundtrack_file="",
+                   reference_video_2_file="", reference_video_3_file="",
+                   voice_2_file="", voice_3_file="", **_):
         """Re-run when a reference file changes underneath its name.
 
         Every picture now arrives as a basename, and a basename is a stable
@@ -2077,7 +2175,9 @@ class HandTieClips:
         would force a full re-render of an expensive node on every queue.
         """
         names = [start_image_file, reference_video_file, voice_file,
-                 soundtrack_file]
+                 soundtrack_file,
+                 reference_video_2_file, reference_video_3_file,
+                 voice_2_file, voice_3_file]
         try:
             for r in (_refs.parse_ref_plan(ref_plan).get("refs") or []):
                 if r.get("file"):
@@ -2107,6 +2207,12 @@ class HandTieClips:
             reference_video_desc="",
             reference_video_size=None,
             pin_mech="auto", tone_anchor_ref="hop1",
+            reference_video_2_file="", reference_video_2_start_s=0.0,
+            reference_video_2_end_s=0.0,
+            reference_video_3_file="", reference_video_3_start_s=0.0,
+            reference_video_3_end_s=0.0,
+            voice_2_file="", voice_2_start_s=0.0, voice_2_end_s=0.0,
+            voice_3_file="", voice_3_start_s=0.0, voice_3_end_s=0.0,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -2325,7 +2431,56 @@ class HandTieClips:
         voice = (_media.load_audio(voice_file,
                                    start=float(voice_start_s), end=float(voice_end_s))
                  if voice_file else None)
-        for _name, _got in (("start_image", start_image_file and start_image is None),
+
+        # Slots 2 and 3. All three decode at the same reference_video_size --
+        # it is an area budget for the decode, not a per-clip creative choice,
+        # and three of them is already three times the RAM.
+        def _more_video(fname, t0, t1):
+            return (_media.load_video(
+                fname, max_frames=max(lengths) if lengths else length,
+                start=float(t0), end=float(t1),
+                size=reference_video_size or _media.DEFAULT_VIDEO_SIZE)
+                if fname else None)
+
+        def _more_voice(fname, t0, t1):
+            return (_media.load_audio(fname, start=float(t0), end=float(t1))
+                    if fname else None)
+
+        reference_video_2 = _more_video(reference_video_2_file,
+                                        reference_video_2_start_s, reference_video_2_end_s)
+        reference_video_3 = _more_video(reference_video_3_file,
+                                        reference_video_3_start_s, reference_video_3_end_s)
+        voice_2 = _more_voice(voice_2_file, voice_2_start_s, voice_2_end_s)
+        voice_3 = _more_voice(voice_3_file, voice_3_start_s, voice_3_end_s)
+
+        # Each clip's own soundtrack, paired to the same ordinal. Core takes
+        # ref_video_audios beside ref_videos and this pack never passed them,
+        # so a reference clip reached the model silent even when the file had
+        # sound. Trimmed to the same window as its picture.
+        def _clip_audio(fname, t0, t1):
+            if not fname:
+                return None
+            try:
+                return _media.load_audio(fname, start=float(t0), end=float(t1),
+                                         kinds=("audio", "video"))
+            except Exception as e:  # noqa: BLE001 -- a silent clip is not a failure
+                print(f"[{TAG}] reference clip {fname}: no usable audio track "
+                      f"({e!r}); passing it silent", flush=True)
+                return None
+
+        _vid_slots = [
+            (reference_video, _clip_audio(reference_video_file,
+                                          reference_video_start_s, reference_video_end_s)),
+            (reference_video_2, _clip_audio(reference_video_2_file,
+                                            reference_video_2_start_s, reference_video_2_end_s)),
+            (reference_video_3, _clip_audio(reference_video_3_file,
+                                            reference_video_3_start_s, reference_video_3_end_s)),
+        ]
+        for _name, _got in (("reference_video_2", reference_video_2_file and reference_video_2 is None),
+                            ("reference_video_3", reference_video_3_file and reference_video_3 is None),
+                            ("voice_2", voice_2_file and voice_2 is None),
+                            ("voice_3", voice_3_file and voice_3 is None),
+                            ("start_image", start_image_file and start_image is None),
                             ("reference_video", reference_video_file and reference_video is None),
                             ("voice", voice_file and voice is None),
                             ("soundtrack", soundtrack_file and soundtrack is None
@@ -2381,7 +2536,20 @@ class HandTieClips:
                       f"character(s) {_chars}. Both inject identity text -- drop "
                       f"the characters block and keep setting only.", flush=True)
         ref_images = _collect_ref_images(slot_images)
-        base_videos = None if reference_video is None else {"ref_video_1": reference_video}
+        base_videos, base_video_audios = {}, {}
+        for _v, _a in _vid_slots:
+            if _v is None:
+                continue
+            _n = len(base_videos) + 1
+            base_videos[f"ref_video_{_n}"] = _v
+            if _a is not None:
+                base_video_audios[f"ref_video_audio_{_n}"] = _a
+        base_videos = base_videos or None
+        base_video_audios = base_video_audios or None
+        if base_videos and len(base_videos) > 1:
+            print(f"[{TAG}] {len(base_videos)} reference clips"
+                  + (f", {len(base_video_audios)} with sound" if base_video_audios else "")
+                  , flush=True)
         # The author's clip is always <Video 1>: _attach_pin_to_qwen APPENDS the
         # pinned tail (`live_v = len(videos) + 1`), so unlike the stills nothing
         # shifts it. One line, built once, and empty unless the field is filled.
@@ -2394,7 +2562,9 @@ class HandTieClips:
                   "description, so it goes to the encoder as <Video 1> with "
                   "nothing saying why. Fill reference_video_desc if the render "
                   "keeps drifting toward the clip.", flush=True)
-        ref_audios = None if voice is None else {"ref_audio_1": voice}
+        ref_audios = _dense_media("ref_audio_", [voice, voice_2, voice_3])
+        if ref_audios and len(ref_audios) > 1:
+            print(f"[{TAG}] {len(ref_audios)} voice references", flush=True)
 
         # Fingerprint the model as it arrives -- after whatever LoRA and
         # attention nodes are drawn upstream, before this node touches it.
@@ -2506,8 +2676,14 @@ class HandTieClips:
             # chain. Changing one late reference cost a full run. A reference
             # can only change the pixels of a hop it is actually handed to, so
             # that is where it belongs.
-            "voice": _store.audio_digest(voice),
-            "refvid": _store.tensor_digest(reference_video),
+            # All three slots, not just the first. Digesting only slot 1 would
+            # let a chain rendered with a second voice be served to a run that
+            # dropped it -- the silently-wrong-frames class this key exists to
+            # prevent.
+            "voice": [_store.audio_digest(v) for v in (voice, voice_2, voice_3)],
+            "refvid": [_store.tensor_digest(v) for v in
+                       (reference_video, reference_video_2, reference_video_3)],
+            "refvid_audio": sorted(base_video_audios or {}),
             # tensor_digest already covers the pixels, and the pixels change
             # with the size -- but only once the clip is decoded. Naming the
             # setting keeps the key readable when a cache miss has to be
@@ -2936,6 +3112,11 @@ class HandTieClips:
                     ref_image_size=ref_image_size,
                     ref_images=hop_images,
                     ref_videos=hop_videos,
+                    # Paired by ordinal with ref_videos. The pin clip, when
+                    # pin_to_qwen appends one, takes the next number and simply
+                    # has no entry here -- it is the previous hop's picture and
+                    # has no soundtrack of its own.
+                    ref_video_audios=base_video_audios,
                     ref_audios=(ref_audios if hop_voice else None),
                 )
                 cond, latent = _result(packed)[0], _result(packed)[1]

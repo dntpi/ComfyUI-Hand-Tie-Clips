@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `ComfyUI-Hand-Tie-Clips` chains multiple MiniMax H3 Reference-to-Video generates into one longer clip. Each hop after the first is guided by the previous hop's last overlap frames + audio via stock `MiniMaxH3AddGuide` (requires a ComfyUI build with `MiniMaxH3AddGuide`, ComfyUI PR #15439). It is explicitly **not** the H3-Multishot/airlock pack; do not merge that pack's syntax in here.
 
-Two nodes ship: `HandTieClips` (**H3 Ref2VA Chain**, the whole pipeline) and `HTCContinuityState` (legacy continuity text, superseded — see below).
+Four nodes ship: `HandTieClips` (**H3 Ref2VA Chain**, the whole pipeline), `HTCChainPreview`, `HTCToneCompensate` (hand-built chains only), and `HTCContinuityState` (legacy continuity text, superseded — see below).
 
 It lives inside a full ComfyUI checkout (`D:\ComfyUI\custom_nodes\ComfyUI-Hand-Tie-Clips`) and imports directly from ComfyUI internals (`comfy.model_management`, `comfy.samplers`, `comfy.utils`, `comfy_extras.nodes_minimax_h3`, `comfy_extras.nodes_custom_sampler`, `comfy_extras.nodes_audio`, `nodes`, `folder_paths`). It only runs as a loaded custom node inside that ComfyUI instance — there is no standalone entrypoint, package manager, or test harness.
 
@@ -53,6 +53,14 @@ The core invariant, and the thing most likely to be broken by a careless change:
 
 **DiT pin (hop 2+):** keep the previous hop’s **sampler AV latent** and call `MiniMaxH3MotionContext` (already installed) with `context_length` matching overlap (22) and `audio_context_length=24`. That is the Multishot `context_pin` path: no pixel VAE round trip, audio end-aligned on this clip’s timeline. If the node is missing, fall back to `MiniMaxH3AddGuide` on decoded frames and log it. A cache hit no longer forces that fallback: the sampler latent is stored beside the frames and restored on a hit (see the hop store below). Hop 1 `start_image` still uses AddGuide.
 
+**`pin_mech`** (`auto` / `motion_context` / `addguide`, default `auto`) is the widget for that choice. `auto` is the behaviour above. Forcing one does not fall back — it fails with the reason, because a lever that silently becomes the other setting cannot be compared against it. The mechanism is in the per-hop cache key, so switching re-renders hops 2+ and leaves hop 1. A restart outranks it (`pin_mech_pred = "none"`): a pin-less hop relays nothing.
+
+**`last_frame_guide`** (`off` / `before_restart` / `still`, default `off`) is a second, opt-in AddGuide: it plants `start_image` at this hop's **last PIXEL frame** (`frame_idx=-1`, not latent T-1). It does not become the next hop's frame 0.
+
+- Reach for **`before_restart`**. It guides only a hop whose *next* shot is `anchor=restart`, so both sides of that cut meet on the photograph and the restart reads as a match cut rather than a jump. Measured: four hop endings converge to 3.8/255 of each other against 39.1/255 unguided, while mid-hop frames stay as varied as ever (65.8 against 61.1). Two people watching the clip in motion could not see the convergence.
+- **`still` is the "I know what I am doing" setting.** It plants the photograph on *every* hop, unconditionally. A shot authored `framing: close` plays close for six seconds and then snaps to the still's wider framing in about 0.6 s; the next hop pushes back in and snaps again. Watched without prompting: "the camera kept cutting in and out." Frame-by-frame, hop 3, `framing: close`: 1.58s close, 3.67s close, 4.92s close, 5.96s close-ish, 6.58s WIDE, 7.04s WIDE. Safe only when no shot authors a framing.
+- `still` without `start_image_file` is refused on the queue. The cache field follows what the hop *gets*, not the widget: under `before_restart` unguided hops keep the key they had when the feature did not exist.
+
 **5 s is not a join-validation canvas.** Multishot: 124 f drops the airlock. `00028` 1→2 joined at 8 s. Verify after this pass is 2 × **8 s**. `join=continuous` at 5 s logs a note. A different seed on the 5 s pin-only graph did join (not a strict pass) — 777777 was join-hostile; `seed_per_shot` stays ON. Seed is not a substitute for the latent pin or an 8 s airlock budget.
 
 ### 1. Shot plan (`plan.py`)
@@ -93,13 +101,15 @@ Fixes two real bugs:
 
 ### 4. Hop store (`store.py`)
 
-Lossless FFV1 (`rgb48le`) video + a float32 `.npy` waveform + a `.latent.pt` sidecar per hop under ComfyUI's temp dir, enabled by `cache_hops`, LRU-evicted above `cache_budget_gb`. Encoded in process with PyAV, which ComfyUI already depends on -- no `ffmpeg` binary on PATH is needed, and nothing here shells out.
+Lossless FFV1 (`rgb48le`) video + a float32 `.npy` waveform + a `.latent.safetensors` sidecar per hop under ComfyUI's temp dir, enabled by `cache_hops`, LRU-evicted above `cache_budget_gb`. Encoded in process with PyAV, which ComfyUI already depends on -- no `ffmpeg` binary on PATH is needed, and nothing here shells out.
 
 **The latent sidecar is what makes the cache useful past hop 1** (added 2026-08-27). It stores this hop's sampler output so a hit can seed the *next* hop's Motion-Context pin. Without it, a hit left `prev_sampled` empty, the next hop predicted the AddGuide fallback, and because the mechanism is in the per-hop key that key no longer matched what was on disk -- so **nothing past hop 1 could ever hit, and the hop after a hit was joined by the weaker mechanism.** `cache_hops=on` was measurably worse than off. Verified in-browser: hop 1 hit, hop 2 logged `previous hop has no sampler latent (cache hit); AddGuide pixel pin`, hops 2-3 re-rendered.
 
-The sidecar is optional in both directions: `has()` ignores it, so entries written before this change still hit (returning `latent=None` and the old fallback), and a latent that will not serialise is logged and skipped rather than failing the hop. It is `torch.save`/`torch.load(weights_only=False)` because `samples` is a `comfy.nested_tensor.NestedTensor` -- a plain Python class holding a tensor list, which `weights_only=True` refuses. Cost is ~2.9% of the entry (measured: 8.4 MB against a ~285 MB video at 0.3 MP / 243f). **Verified end to end 2026-08-27:** fresh render 186.9 s writing three sidecars, then a `cache_budget_gb` nudge re-queue at 17.97 s with all three hops logging `loaded from cache`, zero DiT loads, zero SLA passes, and the same `drift -80 ms` as the fresh run. Invalidation confirmed in the same sitting: LoRA strength 0.800 -> 1.000 produced **zero** cache hits and re-rendered every hop, so `_model_fingerprint` does see a strength change.
+The sidecar is optional in both directions: `has()` ignores it, so entries written before this change still hit (returning `latent=None` and the old fallback), and a latent that will not serialise is logged and skipped rather than failing the hop. It is **`.latent.safetensors`**, not `torch.save`. `samples` is a `comfy.nested_tensor.NestedTensor`; `latents.parts()` already decomposes it into plain tensors, which is a safetensors payload. Other nested members go the same way — `master_audio_file` sets `noise_mask` as `NestedTensor((vmask, amask))`, and refusing that used to log `latent not cached (not representable without pickling)` on every locked hop. Cost was ~2.9% of the entry when it was still pickle (measured: 8.4 MB against a ~285 MB video at 0.3 MP / 243f). **Verified end to end 2026-08-27** (pickle-era numbers, the cache *path*): fresh render 186.9 s writing three sidecars, then a `cache_budget_gb` nudge re-queue at 17.97 s with all three hops logging `loaded from cache`, zero DiT loads, zero SLA passes, and the same `drift -80 ms` as the fresh run. Invalidation confirmed in the same sitting: LoRA strength 0.800 -> 1.000 produced **zero** cache hits and re-rendered every hop, so `_model_fingerprint` does see a strength change.
 
 **The key chains**: each hop's key mixes in the previous hop's key plus a `chain_salt` of everything constant across the run — canvas, sampler, scheduler, shifts, `pin_to_qwen`, tensor digests of every wired ref / voice / reference video / start image, **and `_model_fingerprint`**, because a hop rendered under different LoRAs or a different attention path is not the same hop. The *pin mechanism* is keyed per hop rather than chain-wide (Motion-Context vs the AddGuide fallback produce different frames, and which one runs depends on whether the previous hop was a cache hit). So editing shot 1 correctly invalidates 2..N. That is correct behaviour and must be surfaced in any UI, or it reads as a bug.
+
+**`master_audio_file`** (MEDIA, empty = off). One continuous take every hop lip-syncs to, sliced on the picture clock (hop 1 starts at 0.00 s of the file), encoded on the 40 Hz audio-latent grid, frozen with a NestedTensor `noise_mask` so only the picture is denoised. Delivered audio is a passthrough of the file, no VAE round trip. The beat still needs the words in `<d>[English] …</d>` — unmatched text can pull the mouth off the take. Empty string does not move a cache key; a set file does (digest in `chain_salt`). A restart hop's window follows the master *head*, not a uniform stride, or lips lock 0.9 s early of the picture.
 
 **Anti-ratchet levers were dead until 2026-08-27.** `pin_renorm` and `pin_noise` both ran through `_condition_pin_latent`, which called `.std()` on `latent["samples"]` — a `comfy.nested_tensor.NestedTensor`, which has no `.std()`. Every hop logged `pin conditioning skipped (AttributeError(...))` and both widgets did nothing; the line looked like routine noise next to the other per-hop output. `NestedTensor` is a trap to write against: it *does* have `.float()`, `.cpu()` and `.shape`, but `.shape` returns `tensors[0].shape` — the video component's, silently speaking for both — so the noise draw would have been sized to the video and broadcast onto the audio.
 
@@ -245,6 +255,8 @@ The H3 denoiser applies a tone bias to each generated segment, so the master ste
 - **After `hop_store.put`** — the cache holds *raw* hops, so the mode stays out of the hop key. Switching modes costs nothing instead of invalidating ~285 MB per entry. Correct on the way out, hit or miss.
 - **Before the master write** — the delivered video is corrected.
 - **Before `prev_imgs = imgs[-tail_n:].clone()`** — so hop N+1 is measured against hop N's *corrected* tail, which is what makes each hop's shift cumulative and lands the whole chain on hop 1's tone. **This does not stop the generator drifting, and an earlier version of this note wrongly claimed it did.** Measured 2026-08-28: with tone on and all three hops rendering fresh, hop 3 was generated from a corrected `prev_imgs` and still came out +3.48/255 above raw hop 2 — so it needed a `2d` correction, not `d`. `prev_sampled`, the Motion-Context latent, dominates the conditioning and is never touched by a pixel fix. Correcting here is still right (it is free, and it keeps `prev_imgs` consistent with the master), but the benefit is a clean cumulative repaint, not a cure for the drift at source.
+
+**`tone_anchor_ref`** (`hop1` default / `still`) is what `tone_compensate=anchor` pulls toward. `hop1` is the original behaviour, on the reasoning that hop 1 is the one tone in the chain nothing has drifted into yet. An outside ten-run 9-hop study measured that this is false. Before any relay has happened the still sat at chroma 33.6 / b* 26.6 / fine detail 1.00 against hop 1 at 30 / 22 / 0.72–0.99. Hop 1 is the first casualty; a chain anchored on it holds a target that already fell short. `still` holds `start_image` instead, which does not drift, and it pulls hop 1 itself — the only way that 33.6-against-30 gap ever closes. Needs `start_image_file` (refused on the queue otherwise). Under the Motion-Context join the correction still only reaches the delivered frames, not the next hop's pin — `pin_mech=addguide` is what closes that loop.
 
 **Two consequences, both deliberate:**
 
@@ -436,17 +448,20 @@ wrong -- live in [`docs/DEVLOG.md`](docs/DEVLOG.md). They are history, not
 instructions. This file is the brief; the log is why the brief says what it
 says, and it is worth reading before changing any of it.
 
-Most recent: **sections 56–62** (v2 writing + GPU tests 1–2). Section 21 is
+Most recent: **sections 56–63** (v2 writing, GPU tests 1–2, NestedTensor sidecar). Section 21 is
 the first ComfyUI session, where two of the seven features shipped in 0.4.0
 turned out to be broken in ways no offline test could have caught.
 
-## Live queue (2026-09-05) — Grok hands back to Claude
+## Live queue (2026-09-05)
 
-Branch **`v2`**, unpushed, head **`2b22e73`**. Writing for 2.0.0 is done.
-GPU tests **1 and 2 passed** (audio lock on/off). **You run tests 3–5.**
+Branch **`v2`**, unpushed. Code owner is in `h3_ref_chain.py` / `seam.py` /
+`tools/` (including `last_frame_guide=before_restart`). Docs owner is in
+`README.md`, this file, `PROMPTING.md`, `prompt_pack/**`. Do not collide.
 
-Pickup (read first): `docs/GROK_TO_CLAUDE.md` — also on the Desktop as
-`GROK_TO_CLAUDE.md`. Remaining GPU tests: `docs/GROK_V2_GPU_TESTS.md`.
-Full writing log: `docs/GROK_V2_HANDBACK.md`.
+Four widgets this file used to omit — `last_frame_guide`, `tone_anchor_ref`,
+`pin_mech`, `master_audio_file` — are documented above. `shot.refs` is consumed,
+not merely parsed. The latent sidecar is safetensors, not pickle.
 
-Do not push. Do not merge `texture-lab`. Next DEVLOG section is **63**.
+GPU tests **1 and 2 passed** (audio lock on/off). Pickup and remaining GPU
+protocol: `docs/GROK_TO_CLAUDE.md`, `docs/GROK_V2_GPU_TESTS.md`. Do not push.
+Do not merge `texture-lab`.

@@ -30,14 +30,18 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 
 > **2.0.0 — 2026-09-05.** Full release. One continuous take every hop can
 > lip-sync to (`master_audio_file`, empty = off). An opt-in last-frame
-> AddGuide (`last_frame_guide=still`) pins `start_image` at the end of every
-> hop; default off. `anchor: "restart"` is a chain start and now writes its
-> full length instead of dropping 0.9 s of new content. A shot can name
-> which stills ride it (`refs`); omitted is the register default, `[]` is
-> none. Three reference-clip slots, three voice slots, Lab tone anchor,
-> `pin_mech`, and a hop cache that no longer pickles. New widgets were
-> appended, so saved 1.1 graphs keep their values. What a GPU has not
-> confirmed yet is named in [`CHANGELOG.md`](CHANGELOG.md).
+> AddGuide (`last_frame_guide`) pins `start_image` at a hop's last pixel;
+> default `off`, recommended `before_restart` (only the hop before an
+> `anchor: restart`, so the cut meets on one image). `still` plants it on
+> every hop and fights an authored `framing`. `anchor: "restart"` is a
+> chain start and now writes its full length instead of dropping 0.9 s of
+> new content. A shot can name which stills ride it (`refs`); omitted is
+> the register default, `[]` is none. `tone_anchor_ref=still` holds the
+> photograph rather than hop 1, which already missed it. Three
+> reference-clip slots, three voice slots, `pin_mech`, and a hop cache
+> that no longer pickles. New widgets were appended, so saved 1.1 graphs
+> keep their values. What a GPU has not confirmed yet is named in
+> [`CHANGELOG.md`](CHANGELOG.md).
 
 > **0.4.1 — 2026-08-30.** The 0.4.0 feature set was built without a browser or a
 > GPU and verified offline only. It has now been run in ComfyUI, and two things
@@ -286,7 +290,7 @@ Two modes:
 
 Only one of them is on screen at a time, so there is never a text box quietly doing nothing.
 
-Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls (`pin_mech`, `last_frame_guide`, tone), and the hop cache. Its title line summarises the run — `1344x768 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both. `last_frame_guide` ships `off`; `still` pins the start image at the last pixel of every hop and needs a start image.
+Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls (`pin_mech`, `last_frame_guide`, tone), and the hop cache. Its title line summarises the run — `1344x768 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both. `last_frame_guide` ships `off`; reach for `before_restart` when the plan has a restart, and leave `still` alone unless no shot authors a framing (see [Last-frame guide](#last-frame-guide)).
 
 **`tone_compensate`** lives in that panel's *join & pin* group. The H3 denoiser biases each hop's tone, so a chain gets steadily brighter; this measures the bias on the overlap each hop regenerated and undoes it, correcting each hop against the previous **corrected** one so the whole chain lands on hop 1's tone. `frame_shift` is the mode to reach for: all three modes remove the drift equally well (within 0.4/255 of each other), but `gain_bias` and `lut` pair pixels between a frame and its *regeneration*, which fits a slope that is not really there and flattens contrast a little more with every hop. `frame_shift` uses frame averages only, so it can shift but never distort. **Measured on a 3-hop render: chain drift 5.6/255 without it, 0.3/255 with it.** Worth turning on for anything past two hops. It ships off because enabling it also clamps the master to 0..1, and because the correction grows with hop count — by hop 10 it is subtracting ~23/255 and will start crushing blacks. Switching modes never invalidates the hop cache, so it is free to A/B. Do **not** judge it by whether the seams flatten to zero: real scene brightness changes across a cut should survive, and they do.
 
@@ -321,7 +325,7 @@ Fields, all optional except `beat`:
 | `seed`, `steps`, `duration` | Per-shot overrides. `duration` takes the same labels as the widget (`"8 s"`). |
 | `locked` | Reuse this shot's cached render even when its inputs changed -- freeze a take you like while you rewrite the hops around it. Needs `cache_hops=on`, and give the shot an `id`. Not to be confused with `subjects.N.locked`, which is identity text. |
 | `tone` | `"free"` skips the chain-wide tone pull once; `"rebase"` also moves the anchor onto this hop. Omit it unless a scene is deliberately darker or brighter from here. |
-| `anchor` | `"restart"` makes this hop a chain start: the start image is frame 0, nothing is relayed. It is a cut. Pair with `join: hard_cut`. Never on shot 1. |
+| `anchor` | `"restart"` makes this hop a chain start: the start image is frame 0, nothing is relayed. It is a **cut**, so it belongs where a cut is motivated — a pause, a change of thought, a new beat — not on a hop interval. Pair with `join: hard_cut` or `match_cut`; `continuous` is refused. Name the room in the beat: a pin-less hop has nothing else telling it where it is. Never on shot 1. Needs a start image. |
 | `refs` | Which register stills ride this hop, as tags. Omit for the register default. `[]` is none. A list is those tags only, in that order. |
 | `id` | Stable name, used as the cache pointer. Generated if absent. |
 
@@ -516,7 +520,7 @@ The key **chains** — each hop's key includes the previous hop's — because ho
 - edit shot 1 → all three re-render, which is correct, not a bug;
 - change resolution, sampler, the checkpoint, a LoRA, or an attention setting → the whole chain re-renders;
 - change `pin_to_qwen` or `overlap` → only hops 2+ re-render, because neither can reach hop 1. A restart hop is a start, so overlap does not reach it either;
-- turn on `last_frame_guide` or set `master_audio_file` → every hop re-renders (both reach hop 1). Empty / `off` do not move existing keys;
+- set `last_frame_guide=still` or set `master_audio_file` → every hop re-renders (both reach hop 1). `before_restart` only moves the hop that actually gets the guide; empty / `off` do not move existing keys;
 - change a reference picture → only the hops that picture rides re-render. Swapping the file behind `@outfit` when it rides hop 5 leaves hops 1-4 on cache. Before 1.1 this invalidated everything.
 
 That last one is worth knowing about. The node cannot read the settings on your LoRA and attention nodes, so instead it fingerprints what they *did* to the model — which weight keys were patched, at what strengths, and the attention overrides — plus the base model itself: its class, its dtype and its parameter count. Change a LoRA strength, or load the int8 build where you had the bf16 one, and the cache correctly invalidates. Nodes that configure themselves by closure or by object are read the same way, so changing a setting on one moves the key rather than only installing it. Two remaining gaps: two different LoRAs touching exactly the same keys at exactly the same strengths, and two different builds of the same architecture at the same dtype and parameter count.
@@ -581,9 +585,32 @@ starts from there. Seam correction cannot see this — every individual join is
 exact while the film gets steadily dimmer. The 8×15 s reference chain slid from
 luma 46 to 11 across hops 2–6 with every seam already corrected.
 
-`tone_compensate=anchor` is frame_shift plus a pull back toward **hop 1's**
-exposure — the one tone in the chain nothing drifted into. Two things keep it
-from causing the problem it is fixing:
+`tone_compensate=anchor` is frame_shift plus a pull back toward a target.
+`tone_anchor_ref` chooses which.
+
+**`hop1` (default) holds whatever hop 1 rendered.** That was the original
+reasoning: hop 1 is the one tone in the chain nothing has drifted into yet. An
+outside ten-run 9-hop study measured that this is false. Before any relay has
+happened:
+
+| | reference still | hop 1 |
+|---|---|---|
+| chroma | 33.6 | 30 |
+| b* (warmth) | 26.6 | 22 |
+| fine detail | 1.00 | 0.72–0.99 |
+
+Hop 1 is not the reference — it is the **first casualty**. A chain anchored on
+it converges on a target that already fell short.
+
+**Reach for `still` when you want the chain to hold the photograph**, not hop
+1's already-short copy. It uses `start_image` instead, which does not drift,
+and it pulls hop 1 itself — the only way that 33.6-against-30 gap ever closes.
+
+Costs: needs `start_image_file` (the queue refuses otherwise). Under the
+Motion-Context join the correction still only reaches the delivered frames,
+not the next hop's pin — `pin_mech=addguide` is what closes that loop.
+
+Two things keep the pull from causing the problem it is fixing:
 
 - the pull **ramps in** across the first two seconds of each hop, so frame 0
   still matches the previous hop's last frame exactly and the seam stays as
@@ -643,7 +670,16 @@ They briefly lived inside this node as a `model_patches` JSON widget. That made 
 
 ## Pinning the previous hop
 
-Three widgets tune the pin, all defaulting to their pre-existing behaviour:
+`pin_mech` chooses the join. `auto` (default) is Motion-Context when the pack
+is installed, the overlap has a matching `context_length`, and the previous hop
+left a sampler latent; AddGuide pixels otherwise. Forcing `motion_context` or
+`addguide` does not fall back — it fails with the reason, because a lever that
+silently becomes the other setting cannot be compared against it.
+`motion_context` is a latent join, no decode/re-encode. `addguide` re-encodes
+decoded pixels, which is itself a VAE round trip. Switching re-renders hops 2+
+and leaves hop 1 on disk. A restart hop pins nothing.
+
+Three more widgets tune the pin, all defaulting to their pre-existing behaviour:
 
 | widget | default | what it does |
 |---|---|---|
@@ -662,6 +698,32 @@ The DiT pin is the previous hop’s **sampler latent** through Motion-Context wh
 
 `@tags` in beats resolve per hop, so stills shifting to Picture 2+ does not break prose. Literal `<Picture N>` in hop 2+ beats would.
 
+## Last-frame guide
+
+`last_frame_guide` plants `start_image` at a hop's last **pixel** frame
+(AddGuide `frame_idx=-1`, not latent T-1). It does not become the next hop's
+frame 0. Needs a start image. Ships `off`.
+
+**Reach for `before_restart`.** It guides only a hop whose *next* shot is
+`anchor=restart`. That restart opens on the same photograph, so both sides of
+the cut meet on one image and it reads as a match cut rather than a jump —
+hop 3 used to end tight and smiling, hop 4 open wide and neutral; with the
+guide, hop 3 *arrives* at the still's framing. Measured: the four hop endings
+of a 4-hop chain converge to 3.8/255 of each other against 39.1/255 unguided,
+while mid-hop frames stay as varied as ever (65.8 against 61.1). Two people
+watched it in motion and could not see the convergence.
+
+**`still` is the "I know what I am doing" setting.** It plants the photograph
+on every hop, unconditionally. A shot authored `framing: close` plays as a
+close-up for six seconds and then snaps to the still's wider framing in about
+0.6 s at its ending. Then the next hop pushes back in. Then snaps again. A
+user watching this described it, unprompted, as "the camera kept cutting in
+and out." Frame-by-frame from that run, hop 3, `framing: close`:
+
+    1.58s close   3.67s close   4.92s close   5.96s close-ish   6.58s WIDE   7.04s WIDE
+
+Safe when no shot authors a framing; visibly wrong when they do.
+
 ## Defaults
 
 | | |
@@ -676,6 +738,10 @@ The DiT pin is the previous hop’s **sampler latent** through Motion-Context wh
 | cache budget | 20 GB |
 | tone_compensate | off (both shipped workflows set `frame_shift`) |
 | tone_anchor | 0.35, used only by `tone_compensate=anchor` |
+| tone_anchor_ref | `hop1` (holds hop 1's already-short copy). `still` holds the photograph; needs a start image |
+| pin_mech | `auto` |
+| last_frame_guide | `off`. Recommended `before_restart` when the plan has a restart |
+| master_audio_file | empty (generated voice). A set file is the lip-sync lock |
 | quality | final |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master after the overlap is dropped.

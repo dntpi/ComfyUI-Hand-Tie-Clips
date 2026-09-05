@@ -284,7 +284,26 @@ the model picks one. Earn the framing on the move (`push_in`, `pull_back`,
 **`push_in` + `wide`, or `pull_back` + `close`.** The move points the opposite way
 from the destination. Physically contradictory at any join value.
 
-**`tail: settle` or `tail: hold`, followed by a beat that opens mid-action.**
+### `anchor: restart` is a cut, not a hop interval
+
+A restart re-reads the start image and relays nothing. That bounds the decay
+every hop otherwise inherits from its predecessor's most settled frames. It is
+also a **cut**: the hop opens on the photograph's pose, not where the previous
+hop ended.
+
+Put one where a cut is motivated — a real pause, a change of thought, a new
+beat — and not on a fixed hop interval. Pair it with `join: hard_cut` or
+`match_cut`; `continuous` is refused on the queue. Name the **room** in that
+beat: a pin-less hop has nothing else telling it where it is. Never on shot 1.
+Needs a start image.
+
+On a pin-less restart, identity stills that would otherwise ride the hop can
+win the middle of it (the identity photograph as a mid-hop attractor). Set
+`"refs": []` on that shot to drop them; omit the field and you get the register
+default.
+
+### `tail: settle` or `hold`, then a beat that opens mid-action
+
 This is the over-delivery defect of law 3, caught mechanically. `settle` brings
 the subject to rest and `hold` freezes the frame — so a next beat that opens
 with *"She continues…"*, *"Walking to the window…"*, *"Mid-sentence…"* is asking
@@ -606,8 +625,11 @@ continuations of it, and if you edited them they still change.
 | Dialogue continues into hops that have none written | The hop before ended on speech, and the audio pin carried it | Land the line early; leave a non-verbal action running into the seam; give every quiet hop its own sound bed |
 | A character walks between two rooms and one morphs into the other | `join: continuous` across a real location change | `match_cut` |
 | The film gets steadily dimmer over a long chain, but no single join looks wrong | Each hop darkens across its own frames and hands the darker tail on; seam correction cannot see this | `tone_compensate=anchor`. Measure it first with **H3 Seam Report** — a large one-signed *sum of steps* is the signature |
+| The chain holds hop 1's colour, which already missed the still | Hop 1 is the first casualty: a 9-hop study read the still at chroma 33.6 / b* 26.6 against hop 1 at 30 / 22, before any relay | `tone_anchor_ref=still` (needs a start image). Under Motion-Context the pull still does not reach the next hop's pin — `pin_mech=addguide` closes that |
 | A hop ignores what you told it and carries on the previous action | The previous shot's `tail` promised a stop your beat then overrode | Over-delivery: change the `tail`, or rewrite the opening |
 | A deliberately dark scene keeps getting brightened back up | `tone_compensate=anchor` cannot tell intent from drift | `"tone": "rebase"` on the first shot of the darker scene |
+| The camera keeps cutting in and out, even on a close-up | `last_frame_guide=still` plants the photograph at the end of *every* hop. A `framing: close` hop plays close for ~6 s then snaps wide in ~0.6 s | `before_restart` — only the hop before an `anchor: restart`. `still` is safe only when no shot authors a framing |
+| A restart is an obvious jump (tight/smiling into wide/neutral) | A pin-less hop opens on the still's pose while the previous hop ended somewhere else | `last_frame_guide=before_restart` so hop N *arrives* at the still. Pair the restart with `hard_cut` or `match_cut`, and name the room in the beat |
 | Silence renders as speech | Silence written as an absence | Name room tone, a fridge, a distant car |
 | Ambience is a five-second hiss | Broadband wording | Narrowband, or a single discrete event |
 | Two characters' faces merge | Both declared as the same `subject` | One subject number per person |

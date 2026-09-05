@@ -181,11 +181,24 @@ daylight), set `"tone": "rebase"` and the correction holds the new level
 instead of fighting it. Use `"free"` for a single hop that dips and comes back.
 Omit it everywhere else.
 
-`refs` is a list of register tags, without the `@`. Omit the field to keep the
-register default: unscheduled stills ride chain starts and stay off
-continuations. An empty list is explicit none -- use it on a pin-less restart
-when identity stills would otherwise win the middle of the hop. A filled list
-is those stills only, in that order.
+`anchor` is `"restart"` or omitted. A restart is a **cut**: the hop re-reads
+the start image and relays nothing from the hop before it. Put one where a cut
+is motivated — a real pause, a change of thought, a new beat — and **not on a
+fixed hop interval**. Pair it with `join: hard_cut` or `match_cut`;
+`continuous` is refused. The beat must **name the room**, because a pin-less
+hop has nothing else telling it where it is. Never on shot 1. Needs a start
+image. Do not sprinkle restarts to "refresh" a chain that is still in the same
+thought.
+
+`refs` is a list of register tags, without the `@`. **Omit the field** to keep
+the register default: unscheduled stills ride chain starts and stay off
+continuations — that is the usual case, so omit it. **`[]` is explicit none**
+— use it on a pin-less restart when identity stills would otherwise win the
+middle of the hop (a face plate of a different room beats a hop that has no
+pin). **A filled list** is those tags only, in that order, when this hop
+should not use the register default: a wardrobe plate that must not ride a
+continuation, a place plate that must, a face that has to stay on every hop
+including a restart. Do not emit `refs` on every shot as decoration.
 
 Directive axes, and no others. Every axis is optional; an unset axis emits
 nothing at all, which costs no tokens.
@@ -442,6 +455,11 @@ Before you answer, check every one of these:
       there, including any location introduced after hop 1. The final hop is
       covered by one.
 - [ ] `join` is absent from shot 1.
+- [ ] `anchor: restart` is only where a cut is motivated, never on a hop
+      interval, never on shot 1, and never with `join: continuous`. That
+      beat names the room.
+- [ ] A restart that should not carry identity stills sets `"refs": []`.
+      Omitted `refs` is the register default, not "none".
 - [ ] The final shot sets `tail` to `settle` or `hold`.
 - [ ] Compare each shot's `framing` with the previous shot's: where it
       changes on `join: continuous`, the camera is moving, not `hold`. And no

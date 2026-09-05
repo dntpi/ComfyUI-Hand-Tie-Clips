@@ -8,6 +8,7 @@ Everything needed to have a language model write plans for this node.
 | **`EXAMPLE_6_HOP.md`** | A worked six-hop plan with the reasoning behind its reference schedule. Useful as a second message to the model when you want it to match a shape. |
 | **`SYSTEM_PROMPT.md`** | The same thing with the human preamble stripped, for pasting into a *System Prompt* box. Select all, paste, done. |
 | **`SCHEMA.json`** | JSON Schema for both documents, for anyone wiring this into their own tooling. Carries the rule set under `x-rules` and the duration/frame table under `x-duration-frames`. |
+| **`SWAP_PROMPT.md`** | Instruct for the SWAP tab only: one hop, identity from the rail, no `ref_plan`. Not WRITE's prompt. |
 
 ## Using it in LM Studio (or any local chat app)
 

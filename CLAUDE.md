@@ -244,6 +244,24 @@ Settings live in a gitignored `htc_llm.json` beside the node — a machine
 property, never a widget, so a shared workflow cannot point at someone else's
 server. No API keys: local servers only.
 
+### 6c. SWAP (`js/editor/video_swap.js`, `planner.write_swap_plan`)
+
+SWAP is a one-hop identity-swap helper, not a chain writer. It may write
+`shot_plan` (exactly one shot) and `reference_video_desc`, may bind MEDIA
+clip slot 1, and may set that shot's `refs` to tags that already exist on
+the rail. It must not write `ref_plan`, must not add, remove or rewrite
+rail rows, must not share WRITE's system prompt or WRITE's
+generate/validate/repair loop, and must not Accept over a multi-shot plan
+without an explicit replace. A change that is about hops 2+, the pin, the
+tone anchor, the audio lock, or the hop cache is not a SWAP change.
+
+The generate/validate/repair *loop* (`planner._repair_loop`) is shared
+mechanism; SWAP's instruct (`prompt_pack/SWAP_PROMPT.md`) and validator
+(`validate_swap`) are separate policy. WRITE's `validate()` and
+`system_prompt()` are not on this path. `tools/check_swap_boundary.py`
+enforces the clauses that can be checked without a browser. Gaps it cannot
+cover are named in that file's docstring.
+
 ### 7. Tone compensation (`tone.py`)
 
 The H3 denoiser applies a tone bias to each generated segment, so the master steps in brightness at every seam. The estimator is ported from [`rkfg/ComfyUI-MiniMaxH3-ToneCompensate`](https://github.com/rkfg/ComfyUI-MiniMaxH3-ToneCompensate) (MIT, as is this pack). Three modes: `frame_shift` (per-frame per-channel additive), `gain_bias` (global affine), `lut` (tone curve). `frame_shift` is the one that suits our case, because the target's first frames are the model's *regeneration* of the source's last frames — same content, not a pixel-wise transform.

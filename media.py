@@ -85,6 +85,25 @@ def refs_dir(create=False):
     return d
 
 
+def _pil_jpeg_data_url(im, max_side=VISION_SIDE):
+    """JPEG data-URL of a PIL image, resized to `max_side`. -> str."""
+    import base64
+    import io
+    from PIL import Image, ImageOps  # noqa: PLC0415
+    im = ImageOps.exif_transpose(im)
+    w, h = im.size
+    if max(w, h) > int(max_side) > 0:
+        scale = int(max_side) / float(max(w, h))
+        im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))),
+                       Image.Resampling.LANCZOS)
+    if im.mode != "RGB":
+        im = im.convert("RGB")
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=False)
+    return "data:image/jpeg;base64," + base64.b64encode(
+        buf.getvalue()).decode("ascii")
+
+
 def vision_data_url(name, max_side=VISION_SIDE):
     """JPEG data-URL of a still, for one chat-completion turn. -> str or None.
 
@@ -95,24 +114,43 @@ def vision_data_url(name, max_side=VISION_SIDE):
     if path is None:
         return None
     try:
-        import base64
-        import io
-        from PIL import Image, ImageOps  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
         with Image.open(path) as im:
-            im = ImageOps.exif_transpose(im)
-            w, h = im.size
-            if max(w, h) > int(max_side) > 0:
-                scale = int(max_side) / float(max(w, h))
-                im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))),
-                               Image.Resampling.LANCZOS)
-            if im.mode != "RGB":
-                im = im.convert("RGB")
-            buf = io.BytesIO()
-            im.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=False)
-        return "data:image/jpeg;base64," + base64.b64encode(
-            buf.getvalue()).decode("ascii")
+            return _pil_jpeg_data_url(im, max_side=max_side)
     except Exception as exc:
         print(f"[{TAG}] could not attach {os.path.basename(path)}: {exc!r}",
+              flush=True)
+        return None
+
+
+def video_first_frame_data_url(name, start=0.0, max_side=VISION_SIDE):
+    """JPEG data-URL of one frame at `start` seconds. -> str or None.
+
+    Prefix-checked through `resolve`. Frames are counted rather than sought,
+    matching `load_video`: a keyframe seek can land a second off, and a
+    caption of the wrong frame is worse than no caption. Failure is None,
+    never a raise.
+    """
+    path = resolve(name, kinds={"video"})
+    if path is None:
+        return None
+    try:
+        import av  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        with av.open(path) as container:
+            vs = container.streams.video[0]
+            fps = float(vs.average_rate or 0) or 24.0
+            first = max(0, int(round(float(start or 0.0) * fps)))
+            for i, frame in enumerate(container.decode(video=0)):
+                if i < first:
+                    continue
+                arr = frame.to_ndarray(format="rgb24")
+                im = Image.fromarray(arr)
+                return _pil_jpeg_data_url(im, max_side=max_side)
+        return None
+    except Exception as exc:
+        print(f"[{TAG}] could not attach a frame of {name!r}: {exc!r}",
               flush=True)
         return None
 

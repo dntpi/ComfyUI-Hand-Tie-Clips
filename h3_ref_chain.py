@@ -1680,9 +1680,14 @@ class HandTieClips:
                         "Undo the denoiser's tone bias on each hop, measured on the "
                         "overlap that hop regenerated. The estimate needs both copies "
                         "of the overlap, which only exist inside this node -- a "
-                        "downstream node cannot do this. frame_shift is the mode that "
-                        "suits regenerated content; gain_bias is more robust; lut "
-                        "overfits. Enabling any mode also clamps the master to 0..1."
+                        "downstream node cannot do this. Enabling any mode also "
+                        "clamps the master to 0..1. "
+                        "MEASURED on a 3-hop chain, mean seam step against off "
+                        "(2.36/255): anchor 0.68, gain_bias 0.76, lut 0.77, "
+                        "frame_shift 1.35. anchor is the one to reach for. Every "
+                        "mode OVERSHOOTS -- an uncorrected seam brightens, a "
+                        "corrected one darkens -- and none of them fixes the FIRST "
+                        "join, which all four overshoot by a similar margin."
                     ),
                 }),
                 # ---------------------------------------------------------

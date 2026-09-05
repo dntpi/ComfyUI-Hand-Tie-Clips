@@ -22,9 +22,12 @@ The three modes, most to least specific:
   continuation (no seam).
 - gain_bias:   global per-channel affine  s = A*g + C. Robust, extrapolates
   cleanly; good when the drift is a roughly uniform shift/compression.
-- lut:         per-pixel piecewise-linear tone curve. Captures nonlinear drift;
-  flexible, but overfits when the target is regenerated content (pixels differ
-  from the source).
+- lut:         per-pixel piecewise-linear tone curve. Captures nonlinear drift.
+  Long described here as overfitting on regenerated content; MEASURED on a
+  3-hop chain it tracks `gain_bias` to within 0.02/255 at both seams, so on
+  that evidence the overfitting is not observable and the warning was
+  inherited rather than tested. Left in the list; treat the caution as
+  unproven, not established.
 
 Alignment: source's last `overlap` frames are paired with target's first
 `overlap` frames, so the whole previous segment can be passed as `source` and it
@@ -525,9 +528,11 @@ class HTCToneCompensate:
                 "mode": (MODES, {
                     "default": "frame_shift",
                     "tooltip": (
-                        "frame_shift: per-frame additive shift; best when the target is "
-                        "regenerated content, which it is here. gain_bias: global affine, "
-                        "robust. lut: tone curve, captures nonlinear drift but overfits. "
+                        "frame_shift: per-frame additive shift. gain_bias: global "
+                        "affine, robust. lut: tone curve, captures nonlinear drift -- "
+                        "measured indistinguishable from gain_bias, not the overfitter "
+                        "this once claimed. On a measured 3-hop chain frame_shift was "
+                        "the WEAKEST correction of the four. "
                         "anchor behaves as frame_shift HERE -- its chain-wide half needs "
                         "hop 1's statistics, which only HandTieClips carries."
                     ),

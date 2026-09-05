@@ -79,6 +79,19 @@ So every mode that swaps somebody names the tag **twice**:
 and it has been observed to render the clip's own person unchanged. Do not
 write the identity as a possessive aside.
 
+## If the swap only takes hold part-way through
+
+Not something you can fix in the beat, but worth knowing why the beat is not
+at fault. Core aligns reference frame N with output frame N, so wherever the
+clip shows a clear face it is competing with the identity stills for that
+same face -- and at a large decode size it wins. The swap then appears only
+once the clip's own face is obscured or turned away.
+
+The levers are on the node, not here: lower VIDEO INPUT SIZE (0.3 MP has
+fixed it on a measured case), add more identity stills, or trim the clip past
+the part where the original face is clearest. Write the beat the same either
+way.
+
 ## Costumes, wigs and masks
 
 If the clip's person is in costume, the wardrobe and the head can disagree.

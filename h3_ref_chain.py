@@ -2241,7 +2241,18 @@ class HandTieClips:
                         "nothing here ever scales up. Megapixels are decimal "
                         "here -- 0.5 MP is 500,000 pixels, whatever the clip's "
                         "aspect ratio, which is the point of budgeting by area "
-                        "rather than by edge."
+                        "rather than by edge. "
+                        "It is also an INFLUENCE dial, not only a memory one. "
+                        "Area sets how many tokens the clip costs, and that is "
+                        "how loudly it speaks: core aligns reference frame N "
+                        "with output frame N, so wherever the clip shows a "
+                        "clear face it competes with your identity stills for "
+                        "that same face. At MAX it wins. An identity swap that "
+                        "only takes hold part-way through the hop -- the "
+                        "clip's person at the start, yours once the "
+                        "clip's face is obscured -- is this, and 0.3 MP "
+                        "fixed it on a measured case. Lower it when "
+                        "identity matters more than the clip's detail."
                     ),
                 }),
                 # APPENDED, never inserted. `widgets_values` is a bare ordered

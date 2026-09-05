@@ -2313,8 +2313,9 @@ The relay chain loses about a fifth of the skin's colourfulness over nine hops
 loss of chroma and a loss of level, arriving together.
 
 `tone_compensate=anchor` was built to hold exactly this and did not, for two
-reasons. The first is a plumbing problem and is section 46's. The second is
-this one: `anchor_pull` matched a per-channel RGB MEAN. Three channel means
+reasons. The first is a plumbing problem -- under the latent join the corrected
+frames never become the next hop's pin -- and it is the pin anchor's to fix.
+The second is this one: `anchor_pull` matched a per-channel RGB MEAN. Three channel means
 cannot distinguish "less colourful" from "differently coloured", because a hop
 that has greyed out can have all three of its means sitting exactly on the
 reference. The correction had nothing to correct with.
@@ -2355,6 +2356,68 @@ that survived a forward and inverse transform, not the pixel that went in.
 
 Two things this does not fix, both deliberate. It still corrects the DELIVERED
 frames, so under the Motion-Context latent join it still never reaches the next
-hop's pin (section 46). And it still measures the whole frame at once, so a
+hop's pin. And it still measures the whole frame at once, so a
 chain where the skin greys while the background gains edges -- which is what
 hers did -- gets one compromise correction for two opposite drifts.
+## 47. Choosing the pin, and refusing to pretend (2026-09-04)
+
+The node has always known which mechanism pinned each hop.
+`_motion_context_cls()` resolves the upstream class and rejects forks whose
+`apply()` differs, `run()` logs the path each hop took, and the preview
+shows it per hop. The only thing missing was the ability to choose, which
+made a whole class of question unanswerable: does the AddGuide pixel path
+ratchet less than Motion-Context? Its VAE round trip is itself a projection
+and might scrub the off-manifold latent structure that accumulates -- at the
+cost of the join quality Motion-Context was picked for. Today the only way
+to ask was to uninstall a pack.
+
+`pin_mech` is `auto` / `motion_context` / `addguide`, defaulting to `auto`,
+which is exactly what shipped.
+
+The one way to get this wrong is well documented, by the code itself.
+`_pin_mech_for` predicts the mechanism so it can go in the per-hop cache key
+before the pin runs, and its docstring says "Every condition here mirrors
+_pin_continue". If the predicted mechanism and the executed one disagree,
+the key stops describing what is on disk -- which is the failure that made
+`cache_hops=on` measurably worse than off before the latent sidecar landed.
+So the override is applied in both, and both carry a comment saying not to
+change one without the other.
+
+Forcing does not add a fifth condition to the predictor. It removes the
+four, which is the point. A forced setting that silently degrades to the
+other mechanism answers a question nobody asked, and worse, poisons the A/B
+it was turned on to run. So `motion_context` refuses rather than falls back.
+The two chain-wide preconditions -- pack installed, and an overlap with a
+matching `context_length` -- are checked before any sampling, next to the
+duration validation, so a bad combination fails on the queue rather than
+three hops in and names the accepted frame counts. The per-hop precondition,
+a previous hop that came from a cache entry written before latents were
+stored, cannot be known up front and raises at the hop it affects, with the
+two ways out. And if Motion-Context itself raises at call time -- the one
+thing the predictor was always unable to foresee -- a forced setting
+re-raises instead of quietly downgrading.
+
+The cache work was already done, years of it in one comment. The mechanism
+is in the per-hop key and deliberately NOT in `chain_salt`, so switching
+re-renders hops 2+ and hop 1 hits cache. That is the ideal A/B and it fell
+out of the existing design with nothing added. Adding `pin_mech` to
+`chain_salt` would have thrown away a byte-identical hop 1 on every
+comparison, which is the mistake the comment two lines above it records
+about `overlap`.
+
+Two things this cost that are worth writing down. The widget is APPENDED,
+never inserted: `widgets_values` is a bare ordered array indexed against the
+schema, so a widget added anywhere but the end silently reassigns every
+later value in every saved workflow. Section 27 said it in one line --
+adding options to a combo is safe, adding widgets is not. And
+`check_workflows.py` caught the other half immediately, 48 widgets against
+49, because both shipped workflows carry their own `widgets_values` array
+and neither knew about the new dial. That check existing is the only reason
+this was a thirty-second fix rather than a bug report about a Starter that
+loads with its dials one position out.
+
+Last, a message. Forcing `addguide` sets the Motion-Context class to None
+internally, which walked straight into the existing "Motion-Context not
+available; install it for a latent join" line -- false, and precisely the
+line a user would read while wondering why forcing the setting appeared to
+do nothing. Forced now says it was forced.

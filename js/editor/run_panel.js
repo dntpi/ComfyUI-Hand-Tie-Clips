@@ -41,6 +41,11 @@ const GROUPS = [
                   "control_after_generate", "seed_per_shot",
                   "shift_video", "shift_audio"]],
     ["join & pin", ["hop_script", "pin_to_qwen", "ref_image_size",
+                    // pin_mech sits with the other pin dials even though it is
+                    // the newest widget on the node: the panel's order is
+                    // display only, and INPUT_TYPES appends it last so saved
+                    // workflows keep their widget indices.
+                    "pin_mech",
                     "audio_pin_frames", "pin_renorm", "pin_noise",
                     // tone_anchor sits next to the mode it modifies: it is
                     // read only when tone_compensate is `anchor`, and split

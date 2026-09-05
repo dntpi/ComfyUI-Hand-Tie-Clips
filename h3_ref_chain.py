@@ -936,7 +936,7 @@ def _core_call(node_cls, what, **kw):
         ) from e
 
 
-def _pin_mech_for(hop_index, overlap_n, prev_sampled):
+def _pin_mech_for(hop_index, overlap_n, prev_sampled, mode="auto"):
     """Which mechanism `_pin_continue` will pick, without doing the work.
 
     The hop cache key has to be built *before* the pin runs, and the two
@@ -945,9 +945,29 @@ def _pin_mech_for(hop_index, overlap_n, prev_sampled):
     predict is Motion-Context raising at call time, which the caller catches by
     comparing this against the mechanism actually used and declining to cache
     that hop.
+
+    `mode` is the `pin_mech` widget. "auto" is the shipped behaviour and the
+    four conditions below. Forcing does not add a fifth condition -- it removes
+    them, which is the point: a forced setting that quietly degrades to the
+    other mechanism tells you nothing, and the reason to force one is to
+    compare it against the other. The two chain-wide preconditions are
+    validated before any sampling starts, so the only one that can still be
+    false here is the per-hop latent.
     """
     if hop_index == 0:
         return "none"
+    if mode == "addguide":
+        return "addguide_pixels"
+    if mode == "motion_context":
+        if prev_sampled is None:
+            raise ValueError(
+                f"{TAG}: hop {hop_index + 1}: pin_mech=motion_context needs the "
+                "previous hop's sampler latent, and this one came from a cache "
+                "entry written before latents were stored. Re-render that hop "
+                "(edit it, or turn cache_hops off for one run) or use pin_mech="
+                "auto, which falls back to the AddGuide pixel pin here."
+            )
+        return "motion_context"
     if _motion_context_cls() is None:
         return "addguide_pixels"
     if str(overlap_n) not in MC_CONTEXT_LENGTHS:
@@ -958,7 +978,8 @@ def _pin_mech_for(hop_index, overlap_n, prev_sampled):
 
 
 def _pin_continue(cond, latent, vae, audio_vae, overlap_n,
-                  prev_sampled, prev_imgs, prev_audio, audio_ctx=24):
+                  prev_sampled, prev_imgs, prev_audio, audio_ctx=24,
+                  mode="auto"):
     """Hop 2+ motion pin. Latent Motion-Context when possible; AddGuide otherwise.
 
     AddGuide re-encodes decoded pixels and anchors audio forwards from frame 0
@@ -972,7 +993,11 @@ def _pin_continue(cond, latent, vae, audio_vae, overlap_n,
     pin was available.
     """
     ctx_label = str(overlap_n)
-    mc = _motion_context_cls()
+    # `mode` mirrors _pin_mech_for. Both have to honour it or the mechanism in
+    # the per-hop key stops matching the one on disk, which is the failure that
+    # made cache_hops=on measurably worse than off before the latent sidecar
+    # landed. Do not change one of these without the other.
+    mc = None if mode == "addguide" else _motion_context_cls()
     if mc is not None and ctx_label not in MC_CONTEXT_LENGTHS:
         print(
             f"[{TAG}] overlap {overlap_n}f has no Motion-Context context_length "
@@ -999,11 +1024,27 @@ def _pin_continue(cond, latent, vae, audio_vae, overlap_n,
             # exception rather than swallowed -- repr(), because a bare
             # TypeError from a renamed upstream kwarg stringifies to nothing
             # useful.
+            if mode == "motion_context":
+                # Asked for explicitly, so falling back would answer a question
+                # nobody asked and quietly poison an A/B against the other
+                # mechanism.
+                raise RuntimeError(
+                    f"{TAG}: pin_mech=motion_context but Motion-Context raised "
+                    f"({e!r}). Use pin_mech=auto to fall back to the AddGuide "
+                    "pixel pin."
+                ) from e
             print(
                 f"[{TAG}] Motion-Context pin failed ({e!r}); AddGuide pixel pin",
                 flush=True,
             )
-    if mc is None:
+    if mode == "addguide":
+        # Asked for. Saying "not available" here would be false, and it is the
+        # line a user would read while wondering why forcing it did nothing.
+        print(
+            f"[{TAG}] pin_mech=addguide: AddGuide pixel pin ({overlap_n}f)",
+            flush=True,
+        )
+    elif mc is None:
         print(
             f"[{TAG}] Motion-Context not available; AddGuide pixel pin "
             f"({overlap_n}f). Install ComfyUI-H3-Motion-Context for a latent join.",
@@ -1680,6 +1721,28 @@ class HandTieClips:
                         "rather than by edge."
                     ),
                 }),
+                # APPENDED, never inserted. `widgets_values` is a bare ordered
+                # array matched to this schema by index, so a widget added
+                # anywhere but the end silently reassigns every later value in
+                # every saved workflow. Adding options to an existing combo is
+                # safe; adding a widget is not.
+                "pin_mech": (["auto", "motion_context", "addguide"], {
+                    "default": "auto",
+                    "tooltip": (
+                        "Which mechanism pins hops 2+ to the previous hop. "
+                        "auto = Motion-Context when the pack is installed, the "
+                        "overlap has a matching context_length and the previous "
+                        "hop left a sampler latent; AddGuide pixels otherwise. "
+                        "Forcing one does not fall back -- it fails with the "
+                        "reason, because a lever that silently becomes the "
+                        "other setting cannot be compared against it. "
+                        "motion_context: latent join, no decode/re-encode. "
+                        "addguide: re-encodes decoded pixels, which is itself a "
+                        "VAE round trip and may scrub differently. The "
+                        "mechanism is in the per-hop cache key, so switching "
+                        "re-renders hops 2+ and leaves hop 1 on disk."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -1746,6 +1809,7 @@ class HandTieClips:
             music_start_s=0.0, music_end_s=0.0, render_from=0,
             reference_video_desc="",
             reference_video_size=None,
+            pin_mech="auto",
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -1936,6 +2000,24 @@ class HandTieClips:
                     "join=continuous. A restart is a cut -- it opens on the "
                     "start image's pose, not the previous hop's last frame. "
                     "Use join=hard_cut or match_cut on that shot.")
+        # pin_mech=motion_context: both chain-wide preconditions checked before
+        # any sampling, so a forced setting fails on the queue rather than three
+        # hops in. The per-hop one (no sampler latent) cannot be known here and
+        # is raised by _pin_mech_for at the hop it affects.
+        if str(pin_mech) == "motion_context":
+            if _motion_context_cls() is None:
+                raise ValueError(
+                    f"{TAG}: pin_mech=motion_context but ComfyUI-H3-Motion-Context "
+                    "is not installed. Install it, or use pin_mech=auto for the "
+                    "AddGuide pixel pin."
+                )
+            if str(overlap_n) not in MC_CONTEXT_LENGTHS:
+                raise ValueError(
+                    f"{TAG}: pin_mech=motion_context but overlap {overlap} "
+                    f"({overlap_n} frames) has no Motion-Context context_length. "
+                    f"It accepts {', '.join(sorted(MC_CONTEXT_LENGTHS, key=int))} "
+                    "frames; pick an overlap with one of those, or use pin_mech=auto."
+                )
         for i, ln in enumerate(lengths):
             if overlap_n >= ln:
                 raise ValueError(
@@ -2399,8 +2481,13 @@ class HandTieClips:
             if hop_restart:
                 print(f"[{TAG}] hop {i + 1}: ANCHOR RESTART -- start image is "
                       f"frame 0, the previous hop is not relayed", flush=True)
+            # A restart outranks a forced `pin_mech`: it relays nothing, so
+            # there is no mechanism left to pick. Asking for motion_context on
+            # a restart hop is not a contradiction to raise on, it is a setting
+            # that does not reach this hop.
             pin_mech_pred = ("none" if hop_restart
-                             else _pin_mech_for(i, overlap_n, prev_sampled))
+                             else _pin_mech_for(i, overlap_n, prev_sampled,
+                                                mode=str(pin_mech)))
             pin_mech_used = pin_mech_pred
             if hop_store is not None:
                 # `None`, not prev_key, on a restart: the hop genuinely does
@@ -2541,7 +2628,7 @@ class HandTieClips:
                     cond, pin_mech_used = _pin_continue(
                         cond, latent, vae, audio_vae, overlap_n,
                         pin_latent, prev_imgs, prev_audio,
-                        audio_ctx=audio_ctx,
+                        audio_ctx=audio_ctx, mode=str(pin_mech),
                     )
 
                 _offload_text_encoder(clip, model)

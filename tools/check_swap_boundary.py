@@ -172,9 +172,20 @@ def main():
     for m in ("replace_person", "head_swap", "face_only"):
         ck("%s cites the identity" % m,
            "@mia" in P.build_swap_user_turn("", "mia", "8 s", mode=m))
+    hs = P.build_swap_user_turn("", "mia", "8 s", mode="head_swap")
     ck("head_swap keeps the body with the clip",
-       "body stays with the clip"
-       in P.build_swap_user_turn("", "mia", "8 s", mode="head_swap"))
+       "stay exactly as the clip has them" in hs)
+    # The citation discipline, which is the difference between a swap that
+    # renders and one that does not. A single subordinate mention loses to the
+    # clip: many frames of conditioning against one photograph, added rather
+    # than weighed. Every swapping mode names the tag twice and leads with the
+    # pack's own idiom.
+    for m in ("replace_person", "head_swap", "face_only"):
+        turn = P.build_swap_user_turn("", "mia", "8 s", mode=m)
+        ck("%s leads with the looking-like idiom" % m,
+           "looking like @mia" in turn, m)
+        ck("%s names the identity twice" % m, turn.count("@mia") >= 2,
+           "%d mentions" % turn.count("@mia"))
     ck("an unknown mode falls back rather than raising",
        P.normalise_swap_mode("banana") == P.DEFAULT_SWAP_MODE)
     ck("only keep_person waives the identity",

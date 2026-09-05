@@ -1358,20 +1358,31 @@ NO_IDENTITY_MODES = ("keep_person",)
 BG_MODES = ("clip", "picture", "free")
 DEFAULT_BG_MODE = "clip"
 
+# Each rule names the tag TWICE, and the first is always the pack's own idiom:
+# "<subject> ..., looking like @tag". That is not style. A beat citing the
+# identity once, in a subordinate clause, loses to the reference clip: the clip
+# is many frames of conditioning and the still is one picture, sampling is
+# additive at cfg 1.0, and nothing weighs them against each other. The run that
+# worked said "looking like @ref_1" AND then restated face, hair and skin tone
+# as a second sentence; the run that did not said "the person with the head of
+# @ref_1" once and rendered the clip's own person.
 _MODE_RULE = {
     "replace_person":
-        "The person in the clip is replaced by @{ident}: face, build and "
-        "hairstyle follow that photograph exactly, and the wardrobe is the "
-        "photograph's.",
+        "Say the subject is looking like @{ident}, then state in a second "
+        "sentence that the face, build, hairstyle and wardrobe of @{ident} "
+        "are the subject's own.",
     "head_swap":
-        "The head is the only thing that changes. Face, hair and skin tone "
-        "come from @{ident}. The body stays with the clip: build, posture, "
-        "hands, and every garment and worn accessory are the clip's. If the "
-        "photograph shows clothing it contributes a head and nothing below "
-        "the collar. The neck and jaw meet the clip's body.",
+        "Say the subject is looking like @{ident}, then state in a second "
+        "sentence that the face, hair and skin tone of @{ident} sit on the "
+        "clip's own body -- build, posture, hands, and every garment and worn "
+        "accessory stay exactly as the clip has them, and the neck and jaw "
+        "meet that body. If the photograph shows clothing it contributes a "
+        "head and nothing below the collar.",
     "face_only":
-        "Only the facial features come from @{ident}. Hair, ears, expression "
-        "range, build and every garment stay with the clip.",
+        "Say the subject is looking like @{ident}, then state in a second "
+        "sentence that only the facial features of @{ident} are theirs -- "
+        "hair, ears, expression range, build and every garment stay exactly "
+        "as the clip has them.",
     "keep_person":
         "Nobody is swapped. The person shown in the clip is kept as they are, "
         "and the clip is a scene and motion plate. Do not cite an identity "

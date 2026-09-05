@@ -61,6 +61,34 @@ lets it govern the whole subject.
   they are, and the clip is a scene and motion plate. There is no identity
   tag to cite; do not invent one, and do not cite any @tag for a face.
 
+## Name the identity twice, and lead with the idiom
+
+The identity photograph is ONE picture. The reference clip is many frames of
+conditioning. Sampling is additive and nothing weighs them against each
+other, so a beat that mentions the identity once -- and in a subordinate
+clause -- loses, and the clip's own person is what renders.
+
+So every mode that swaps somebody names the tag **twice**:
+
+1. the pack's idiom first, attached to the subject:
+   "...crouches low on the bed, **looking like @tag**, ..."
+2. then a second sentence saying what of @tag is theirs and what stays with
+   the clip.
+
+"The person with the head of @tag crouches low" is a single glancing mention
+and it has been observed to render the clip's own person unchanged. Do not
+write the identity as a possessive aside.
+
+## Costumes, wigs and masks
+
+If the clip's person is in costume, the wardrobe and the head can disagree.
+A wig is hair, and a head swap takes hair from the photograph -- so on a
+cosplay clip, asking for the head can also ask for the wig to go. Say which
+you mean: if the costume's hair is part of the outfit being kept, write that
+the hairpiece stays with the clip and only the face and skin tone come from
+@tag. A beat that is silent about it will be resolved by whichever signal is
+stronger, and on a strong costume that is the clip.
+
 ## The background
 
 The user message names a background mode.

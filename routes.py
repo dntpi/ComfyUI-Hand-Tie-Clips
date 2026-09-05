@@ -617,6 +617,16 @@ def register():
         if not ident_tag and _planner.swap_mode_needs_identity(mode):
             return web.json_response(
                 {"ok": False, "error": "pick an identity picture from the rail"})
+        # Say what was actually used. A mode picked in the browser and a mode
+        # the server acted on are two different things whenever ComfyUI has not
+        # been restarted since the Python changed -- an older route ignores the
+        # field entirely and silently writes the default, which reads exactly
+        # like "the mode does not work".
+        print(f"[{TAG}] SWAP: mode={mode} background={background or 'clip'}"
+              + (f" background_tag=@{background_tag}" if background_tag else "")
+              + (f" wardrobe=@{wardrobe_tag}" if wardrobe_tag else "")
+              + (f" identity=@{ident_tag}" if ident_tag else " identity=none"),
+              flush=True)
 
         import asyncio
 

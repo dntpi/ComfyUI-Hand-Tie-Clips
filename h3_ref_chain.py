@@ -325,6 +325,33 @@ def _model_fingerprint(model):
     full state-dict walk per run.
     """
     h = hashlib.sha256()
+
+    # The base checkpoint itself. Everything below describes what was PATCHED
+    # onto the model and nothing identified the model underneath it, so an int8
+    # build and a bf16 build of the same architecture, under the same LoRA
+    # stack at the same strengths and the same attention settings, produced
+    # byte-identical hop keys -- and the cache served frames rendered under the
+    # other checkpoint. `model_dtype()` is ModelPatcher's own accessor
+    # (comfy/model_patcher.py); it returns None when the inner model has no
+    # `get_dtype`, which is hashed as a value rather than skipped so "no dtype"
+    # and "some dtype" cannot collide.
+    #
+    # Residual gap, narrower than the one it closes: two *different* int8
+    # builds of the same architecture still match. Separating those needs
+    # digests of a few fixed weight keys, which costs a state-dict walk per run.
+    base = getattr(model, "model", None)
+    try:
+        base_dtype = model.model_dtype() if hasattr(model, "model_dtype") else None
+    except Exception:  # noqa: BLE001 -- a patcher that cannot answer is still a key
+        base_dtype = "?"
+    h.update(f"base:{type(base).__name__}:{base_dtype}".encode())
+    _dm = getattr(base, "diffusion_model", None)
+    if _dm is not None:
+        try:
+            h.update(f":n{sum(p.numel() for p in _dm.parameters()):d}".encode())
+        except Exception:  # noqa: BLE001
+            h.update(b":n?")
+
     patches = getattr(model, "patches", None) or {}
     for key in sorted(patches):
         h.update(str(key).encode())
@@ -367,6 +394,77 @@ def _model_fingerprint(model):
                          else type(v).__name__)
         return "fn(" + ",".join(parts) + ")"
 
+    def _object_scalars(obj):
+        """Public scalar attributes of something that configures itself by
+        instance rather than by closure.
+
+        `_closure_scalars` digs settings out of a callable's cells, which is how
+        H3-SLA-Attention carries its config. A node that installs a configured
+        *object* instead -- `set_model_patch_replace(cache, "dit", "block_loop",
+        0)` with an instance on it -- has no closure at all, and an instance
+        inherits neither `__qualname__` nor `__name__` from its class, so it
+        rendered as the bare constant "fn()" and every setting on it vanished
+        from the key. Toggling such a node moved the fingerprint (a new key
+        appears in `patches_replace`); changing its settings did not. That is
+        the SLA bug one type away.
+
+        Scalars only, for the same reason the closure walk is scalars only.
+        Note the tradeoff this accepts: a scalar attribute the node mutates
+        during a run makes the fingerprint move between runs and the cache stop
+        hitting while that node is installed. That direction is deliberate --
+        this pack treats serving frames from the wrong settings as worse than
+        not serving them at all.
+        """
+        try:
+            items = vars(obj).items()
+        except TypeError:  # no __dict__ (slots, builtins) -- nothing to read
+            return ""
+        parts = [f"{k}={v!r}" for k, v in sorted(items, key=lambda kv: str(kv[0]))
+                 if not str(k).startswith("_")
+                 and (isinstance(v, (str, int, float, bool)) or v is None)]
+        return "{" + ",".join(parts) + "}" if parts else ""
+
+    def _callable_scalars(fn, depth=0):
+        """Settings a callable carries, whichever way it carries them.
+
+        There are four ways a node hands a configured callable to the model and
+        all four have to reach the hash, because they are interchangeable from
+        the installing node's point of view and indistinguishable from here:
+
+          * a closure          -- cells               (`_closure_scalars`)
+          * a configured instance -- its attributes   (`_object_scalars`)
+          * a BOUND METHOD of a configured instance -- neither. `vars()` on a
+            bound method proxies to the underlying *function's* `__dict__`,
+            which is empty, so the instance's settings were invisible; only
+            `__qualname__` survived. A node registering `self.forward` rather
+            than `self` is the object case one attribute away.
+          * a `functools.partial` -- neither either. It has no `__name__`, no
+            `__qualname__`, no `__closure__`, and an empty `__dict__`, so it
+            collapsed to the constant "fn()" exactly as a bare instance did.
+            Everything it carries is in `func`, `args` and `keywords`.
+
+        Depth-bounded because `partial` can wrap `partial`.
+        """
+        parts = [_closure_scalars(fn), _object_scalars(fn)]
+        if depth <= 3:
+            owner = getattr(fn, "__self__", None)
+            if owner is not None:
+                parts.append("@" + type(owner).__name__ + _object_scalars(owner))
+            inner = getattr(fn, "func", None)
+            if inner is not None and callable(inner):
+                bound = ["<" + _callable_scalars(inner, depth + 1)]
+                for a in (getattr(fn, "args", None) or ()):
+                    bound.append(repr(a) if isinstance(a, (str, int, float, bool)) or a is None
+                                 else type(a).__name__)
+                kw = getattr(fn, "keywords", None) or {}
+                for k in sorted(kw, key=str):
+                    v = kw[k]
+                    bound.append(f"{k}=" + (repr(v)
+                                            if isinstance(v, (str, int, float, bool)) or v is None
+                                            else type(v).__name__))
+                parts.append(",".join(bound) + ">")
+        return "".join(parts)
+
     def _scalars(obj, depth=0):
         """Only names and scalars -- tensors and mutable state are not stable."""
         if depth > 3:
@@ -383,8 +481,8 @@ def _model_fingerprint(model):
         if isinstance(obj, (str, int, float, bool)) or obj is None:
             return repr(obj)
         if callable(obj):
-            return _closure_scalars(obj)
-        return type(obj).__name__
+            return _callable_scalars(obj)
+        return type(obj).__name__ + _object_scalars(obj)
 
     h.update(_scalars(transformer).encode())
     return h.hexdigest()[:16]
@@ -2206,8 +2304,15 @@ class HandTieClips:
             hop_store = _store.HopStore(
                 os.path.join(folder_paths.get_temp_directory(), "h3_ref_chain_hops"),
                 budget_gb=float(cache_budget_gb), fps=FPS)
+            # The fingerprint is printed because it is the one cache input a
+            # user cannot see and cannot derive. If a run that should have hit
+            # re-rendered everything, this line moving between two runs says so
+            # in one glance -- and a node that mutates a public scalar attribute
+            # on itself between queues (see `_object_scalars`) is exactly the
+            # case that would otherwise look like the cache is simply broken.
             print(f"[{TAG}] hop cache: {hop_store.root} "
-                  f"(budget {float(cache_budget_gb):.0f} GB)", flush=True)
+                  f"(budget {float(cache_budget_gb):.0f} GB, model {model_fp})",
+                  flush=True)
         # Note on how render_from works, since this is where the store appears:
         # the leading hops are NOT seeded into prev_imgs / prev_audio /
         # prev_sampled / prev_key from here. They run through the loop like any
@@ -2229,7 +2334,12 @@ class HandTieClips:
             # lever does not reach.
             "sampler": str(sampler_name), "scheduler": str(scheduler),
             "shift_v": float(shift_video), "shift_a": float(shift_audio),
-            "ref_size": str(ref_image_size), "pin": str(pin_to_qwen),
+            "ref_size": str(ref_image_size),
+            # No "pin" here either, for the same reason as "overlap" above:
+            # `_attach_pin_to_qwen` is called only under `if i > 0`, so
+            # pin_to_qwen cannot reach hop 1's pixels. Keyed chain-wide it threw
+            # away a byte-identical cached hop 1 on every pin_to_qwen A/B. It is
+            # in the per-hop key below, from hop 2.
             # No "pin_mech" here: the mechanism is decided per hop at runtime
             # in _pin_continue (Motion-Context when a sampler latent exists,
             # AddGuide pixels otherwise), so it belongs in the per-hop key
@@ -2602,6 +2712,10 @@ class HandTieClips:
                     # claim that was always true.
                     "tone": ((tone_mode, round(float(tone_anchor), 4),
                               str(tone_anchor_ref)) if not hop_is_start else None),
+                    # Same rule. `_attach_pin_to_qwen` runs only when this hop
+                    # has a predecessor pin, so a restart (hop_is_start) is
+                    # keyed like hop 1: the setting cannot reach its pixels.
+                    "pin_qwen": (str(pin_to_qwen) if not hop_is_start else None),
                     # Whether this hop actually received the voice tensor.
                     # chain_salt already digests the file; without this a hop 2
                     # rendered with the clip on would be served to a later run

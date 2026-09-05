@@ -2584,3 +2584,87 @@ because they were already built, and the support cost of the first two was
 being paid in bug reports against correct code. When a capability is
 requested, check whether it exists and is merely unfindable before designing
 it.
+
+## 50. What the fingerprint could not see (2026-09-04)
+
+Three holes in hop-cache invalidation, none of them live while `cache_hops`
+ships off, all of them the same shape: something that changes the rendered
+frames does not change the key that identifies them. That is the failure
+mode the fingerprint exists to prevent, and its own docstring names the
+stakes -- "silently wrong output, which is worse than no cache at all."
+
+The first is the base checkpoint, and it is the one a second person makes
+likely. `_model_fingerprint` hashed the LoRA patch keys, the per-key
+strength scalars and the scalar half of `transformer_options`. Every one of
+those describes something patched ONTO the model. Nothing described the
+model. So an int8 build and a bf16 build of the same architecture, under the
+same LoRA stack at the same strengths and the same attention settings,
+produced byte-identical hop keys. ComfyUI re-executes the node because the
+loader's output changed, `run()` recomputes the same keys, and the cache
+serves frames rendered under the other checkpoint. It now hashes the inner
+model's class, its dtype through ModelPatcher's own `model_dtype()`, and its
+parameter count. Two different int8 builds of the same architecture still
+match; separating those needs digests of fixed weight keys and a state-dict
+walk per run, which is a worse trade.
+
+The second is the more interesting one, because it is the SLA bug wearing a
+different coat. That fix -- which lives only in the `_closure_scalars`
+docstring, never having been written up here -- taught `_scalars` to dig
+settings out of a callable's closure, because H3-SLA-Attention installs its
+config that way and changing sparsity 0.90 -> 0.50 had been leaving the key
+unmoved. But a node can also configure itself with a plain object --
+`set_model_patch_replace(cache, "dit", "block_loop", 0)` with a configured
+instance -- and closure-digging cannot reach that. Worse, such an instance
+is usually callable, so it went down the closure path and came back as the
+constant `"fn()"`: an instance inherits neither `__qualname__` nor
+`__name__` from its class, and it has no `__closure__` at all. Every setting
+on it hashed to the same four characters as every other. Presence was
+detected, because installing the node adds a key to `patches_replace`;
+configuration was not.
+
+That is not hypothetical. It is the shape of an approximate step cache that
+is actively recommended alongside this model, whose whole behaviour is three
+numbers -- a reuse threshold, a window, a step cap -- carried on the
+instance.
+
+`_object_scalars` reads an object's public scalar attributes before falling
+back to its type name. Review then found two more bindings that hide an
+object behind a callable and lose it just as completely. A BOUND METHOD:
+`vars()` on one proxies to the underlying function's `__dict__`, which is
+empty, not to the instance, so a node registering `self.forward` instead of
+`self` is the same bug one attribute away. And a `functools.partial`: no
+name, no cells, no attributes of its own, everything it carries sitting in
+`func`, `args` and `keywords` -- the SLA bug one binding away. Both
+collapsed to the same four characters as a bare instance did.
+`_callable_scalars` now unwraps all four shapes.
+
+The tradeoff is worth writing down plainly, because the first draft of this
+entry got it wrong and review caught that too. A public scalar the node
+mutates during a run IS hashed. Only mutable *containers* are skipped, and a
+step counter is normally a plain int on the instance rather than a dict, so
+it is hashed like any other setting. A node that counts on itself between
+queues therefore moves the fingerprint between runs and the cache stops
+hitting for as long as it is installed. That is wasteful rather than wrong,
+and it is the direction this pack should err in -- but it is a real cost,
+and it used to be an invisible one. The run now prints the fingerprint
+beside the hop-cache line, because a cache that has quietly stopped hitting
+is otherwise indistinguishable from one that is merely cold.
+
+The third is not a hole but a cost. `pin_to_qwen` sat in `chain_salt`, which
+mixes into every hop -- while `_attach_pin_to_qwen` is called only under `if
+i > 0`. So the setting could not reach hop 1's pixels, and keying it
+chain-wide threw away a byte-identical cached hop 1 on every pin_to_qwen
+A/B. That is exactly the mistake the comment two lines above it was written
+to record about `overlap`, repeated one field over. It has moved to the
+per-hop key, from hop 2, next to `overlap` and `pin_cond` which already live
+there for the same reason. Read the comment block in `chain_salt` as a
+checklist: any lever whose effect starts at hop 2 does not belong in it.
+
+None of this can be caught by reading a diff, which is why it now has a
+checker. `tools/check_cache_keys.py` builds two graphs differing in exactly
+one thing and requires the digests to disagree -- and requires two identical
+graphs to agree, because a fingerprint that always moves is a cache that
+never hits. It carries a regression guard for the closure path as well, so
+the SLA case cannot come back quietly. Before the fix it fails on the dtype
+case and the object case and passes the rest, which is the only real
+evidence that a cache key fix did anything at all.

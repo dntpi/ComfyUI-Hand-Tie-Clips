@@ -40,6 +40,7 @@ CHECKS = [
     ("check_workflows.py", []),
     ("check_features.py", []),
     ("check_core_calls.py", []),
+    ("check_cache_keys.py", []),
     ("check_planner.py", []),
     ("gen_schema.py", ["--check"]),
 ]

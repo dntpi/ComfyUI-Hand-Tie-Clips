@@ -47,6 +47,7 @@ CHECKS = [
     ("check_media_slots.py", []),
     ("check_audio_lock.py", []),
     ("check_last_frame_guide.py", []),
+    ("check_restart_trim.py", []),
     ("check_planner.py", []),
     ("gen_schema.py", ["--check"]),
 ]

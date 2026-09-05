@@ -3257,3 +3257,28 @@ Untested, because this machine has no GPU window:
 - Chroma pulse at the still/render gap, named in the tooltip. Off by
   default, so a bad result costs nothing shipped.
 
+## 58. Restart hops write their full length (2026-09-05)
+
+A restart is a chain start. It overlaps with nothing. The master-write
+path still dropped the leading `overlap_n` frames of every hop after
+index 0, and the preallocation `sum(lengths) - overlap * (n - 1)` sized
+the buffer to match. Two restarts on a 9 x 8 s / 0.9 s chain threw away
+44 frames (1.83 s) -- either silence at the end or an overrun raise,
+depending on which side you looked at.
+
+The write now keys on `hop_is_start`, not `i == 0`. The preallocation
+counts only the hops that actually trim. The audio-lock window moves
+with the master head: a restart hop's take slice starts at the current
+write position, not at `hop_index * stride`. Leaving the uniform stride
+in place would have locked lips 0.9 s earlier than the picture, once
+per restart, compounding.
+
+`overlap` leaves the per-hop key on a restart the same way `pin_cond`
+does -- the lever cannot reach a start hop's pixels. `tools/check_restart_trim.py`
+has the 1552 / 1596 table and the 510/24 vs 532/24 window split.
+
+Untested: the 40 ms audio xfade at a restart cut (same helper as a
+continuation join). A hard concat might click; we did not hear it.
+GPU test 4 in `GROK_V2_GPU_TESTS.md` is the length check -- the log
+line names the frame count.
+

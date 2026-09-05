@@ -65,12 +65,46 @@ WINDOW_TABLE = {
 }
 
 
-def hop_audio_window_s(hop_index, hop_frames, overlap_frames, fps=FPS):
+def master_frame_count(lengths, overlap_frames, start_at):
+    """Preallocated master length: full hops at chain starts, trimmed else.
+
+    A restart is a chain start -- it overlaps with nothing -- so it must
+    not be charged an overlap trim. `start_at[i]` is True for hop 0 and
+    every `anchor=restart` hop. The old formula `sum(lengths) - overlap
+    * (n - 1)` assumed every hop past the first was trimmed; two
+    restarts on a 9 x 192 / 22 chain silently dropped 44 frames (1.8 s).
+    """
+    if len(lengths) != len(start_at):
+        raise ValueError(
+            f"master_frame_count: lengths ({len(lengths)}) and start_at "
+            f"({len(start_at)}) must be the same length")
+    overlap_frames = int(overlap_frames)
+    n_trims = sum(1 for flag in start_at if not flag)
+    total = sum(int(n) for n in lengths) - overlap_frames * n_trims
+    if total <= 0:
+        raise ValueError(
+            f"master_frame_count: non-positive length {total} "
+            f"(lengths={list(lengths)}, overlap={overlap_frames}, "
+            f"starts={list(start_at)})")
+    return int(total)
+
+
+def hop_audio_window_s(hop_index, hop_frames, overlap_frames, fps=FPS,
+                       lengths=None, start_at=None):
     """Seconds ``[t0, t1)`` of the master recording for this hop.
 
-    `hop_index` is 0-based. Hop 0 starts at 0. Each later hop starts
-    `hop_frames - overlap_frames` into the take, so the overlap region
-    of hop N is the same slice of the recording as the tail of hop N-1.
+    `hop_index` is 0-based. Hop 0 starts at 0.
+
+    Without `lengths` / `start_at`: uniform hops, hop 0 is a start, every
+    later hop trims overlap. Each hop starts `hop_frames - overlap_frames`
+    into the take, so the overlap region of hop N is the same slice of
+    the recording as the tail of hop N-1. That is the original table.
+
+    With `start_at`: a True hop writes its full length (chain start /
+    restart). Its window begins at the master head. A continuation
+    begins `overlap_frames` before the master head, because those frames
+    are generated then discarded. A restart that kept the uniform-stride
+    window would lock lips to a take 0.9 s earlier than the picture.
     """
     hop_index = int(hop_index)
     hop_frames = int(hop_frames)
@@ -85,8 +119,28 @@ def hop_audio_window_s(hop_index, hop_frames, overlap_frames, fps=FPS):
         raise ValueError(
             "hop_audio_window_s: overlap_frames must be in "
             f"[0, hop_frames), got {overlap_frames} vs {hop_frames}")
-    stride = hop_frames - overlap_frames
-    t0 = hop_index * stride / fps
+    if lengths is None and start_at is None:
+        stride = hop_frames - overlap_frames
+        t0 = hop_index * stride / fps
+        t1 = t0 + hop_frames / fps
+        return t0, t1
+    if lengths is None:
+        lengths = [hop_frames] * (hop_index + 1)
+    if start_at is None:
+        start_at = [True] + [False] * (len(lengths) - 1)
+    if hop_index >= len(lengths) or hop_index >= len(start_at):
+        raise ValueError(
+            f"hop_audio_window_s: hop_index {hop_index} is past "
+            f"lengths ({len(lengths)}) / start_at ({len(start_at)})")
+    hop_frames = int(lengths[hop_index])
+    before = 0
+    for i in range(hop_index):
+        before += (int(lengths[i]) if start_at[i]
+                   else int(lengths[i]) - overlap_frames)
+    if start_at[hop_index]:
+        t0 = before / fps
+    else:
+        t0 = (before - overlap_frames) / fps
     t1 = t0 + hop_frames / fps
     return t0, t1
 

@@ -2787,7 +2787,23 @@ class HandTieClips:
         # new masters are briefly live *together* alongside prev_imgs and imgs.
         # Total length is known up front, so one allocation plus slice-writes
         # removes that doubling.
-        total_frames = sum(lengths) - overlap_n * (n - 1)
+        #
+        # A restart is a chain start: it overlaps with nothing, so it must
+        # not be charged an overlap trim. `sum(lengths) - overlap * (n - 1)`
+        # assumed every hop past the first was trimmed and silently dropped
+        # 0.9 s of new content per restart.
+        hop_starts = [
+            i == 0 or str((sh or {}).get("anchor") or "") == "restart"
+            for i, sh in enumerate(shots)
+        ]
+        total_frames = _alock.master_frame_count(lengths, overlap_n, hop_starts)
+        n_trims = sum(1 for flag in hop_starts if not flag)
+        if n_trims != n - 1:
+            print(f"[{TAG}] master length {total_frames}f "
+                  f"({n - n_trims} chain start(s), {n_trims} overlap trim(s); "
+                  f"old formula would have been "
+                  f"{sum(lengths) - overlap_n * (n - 1)}f)",
+                  flush=True)
         # A dry run must not allocate the master. At 8 x 15 s and 1280x736 that
         # is 2742 full float frames -- ~31 GB -- for a feature whose entire
         # point is that it costs seconds.
@@ -3225,8 +3241,11 @@ class HandTieClips:
                                  if not hop_is_start else None),
                     # Same rule, moved out of chain_salt: how many frames the
                     # previous hop hands over changes this hop's conditioning
-                    # and its trim, and nothing on hop 1.
-                    "overlap": (overlap_n if i > 0 else None),
+                    # and its trim, and nothing on a chain start. A restart
+                    # is a start -- it neither pins nor trims -- so overlap
+                    # cannot reach its pixels. `i > 0` here used to re-render
+                    # every restart whenever overlap moved.
+                    "overlap": (overlap_n if not hop_is_start else None),
                     # Tone, and the same "only from hop 2" rule again. The
                     # comment above `hop_store.put` explains why the mode is
                     # kept out of the key: the cache holds RAW hops, corrected
@@ -3385,7 +3404,8 @@ class HandTieClips:
                     # the sampler: the freeze has to be in place when
                     # denoise runs.
                     _t0, _t1 = _alock.hop_audio_window_s(
-                        i, hop_length, overlap_n, FPS)
+                        i, hop_length, overlap_n, FPS,
+                        lengths=lengths, start_at=hop_starts)
                     _parts = _latents.from_dict(latent)
                     if _parts is None or len(_parts) < 2:
                         raise RuntimeError(
@@ -3429,7 +3449,8 @@ class HandTieClips:
                     # decoded generate. Replace this hop's audio with the
                     # matching window of the recording.
                     _t0, _t1 = _alock.hop_audio_window_s(
-                        i, hop_length, overlap_n, FPS)
+                        i, hop_length, overlap_n, FPS,
+                        lengths=lengths, start_at=hop_starts)
                     audio = _slice_take_audio(locked, _t0, _t1, sr)
                     wav = audio["waveform"].contiguous().cpu()
                     if wav.dim() == 3:
@@ -3515,10 +3536,27 @@ class HandTieClips:
                         print(f"[{TAG}] hop {i + 1} tone: {anchor_note}",
                               flush=True)
 
-            if i == 0:
-                master_imgs[0:imgs.shape[0]] = imgs
-                write_pos = int(imgs.shape[0])
-                master_wav = wav
+            if hop_is_start:
+                keep_n = int(imgs.shape[0])
+                if write_pos + keep_n > total_frames:
+                    raise ValueError(
+                        f"{TAG}: hop {i + 1} overruns the preallocated master "
+                        f"({write_pos + keep_n} > {total_frames}). A hop decoded a "
+                        f"different length than planned.")
+                master_imgs[write_pos:write_pos + keep_n] = imgs
+                write_pos += keep_n
+                if i == 0:
+                    master_wav = wav
+                else:
+                    # A cut, but 40 ms of xfade still kills the click at the
+                    # sample boundary. Nothing is trimmed: this hop does not
+                    # overlap the previous one.
+                    master_wav = _xfade_audio(master_wav, wav, sr)
+                    print(
+                        f"[{TAG}] hop {i + 1}: restart, wrote all {keep_n} "
+                        f"frames (no overlap trim)",
+                        flush=True,
+                    )
             else:
                 if imgs.shape[0] <= overlap_n:
                     raise ValueError(
@@ -3542,11 +3580,11 @@ class HandTieClips:
                 del trimmed
 
             if want_sheet:
-                # The frames this hop actually CONTRIBUTES: hop 1 gives all of
-                # them, every later hop gives what survives the overlap trim.
-                # Showing imgs[0] on a continuation would show a frame the
-                # master never contains.
-                _f0 = imgs[0] if i == 0 else imgs[overlap_n]
+                # The frames this hop actually CONTRIBUTES: a chain start
+                # (hop 1 or a restart) gives all of them, a continuation
+                # gives what survives the overlap trim. Showing imgs[0] on
+                # a continuation would show a frame the master never contains.
+                _f0 = imgs[0] if hop_is_start else imgs[overlap_n]
                 _row_seed = (int(shot["seed"]) if shot.get("seed") is not None
                              else ((int(seed) + i) if seed_per_shot else int(seed)))
                 sheet_rows.append({

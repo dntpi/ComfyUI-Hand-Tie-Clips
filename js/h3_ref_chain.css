@@ -714,10 +714,13 @@
  * picture, and a cropped face is worse than a letterboxed one.
  */
 .h3e-pick { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* 46px was a swatch: enough to see that a slot is filled, not enough to see
+ * WHICH file is in it, which is the question actually being asked of a strip
+ * with eleven of them. */
 .h3e-thumb {
     position: relative;
     width: 100%;
-    height: 46px;
+    height: 76px;
     border: 1px dashed var(--h3-border);
     background: var(--h3-sunken);
     display: flex;
@@ -783,17 +786,27 @@
 /* -- media strip ---------------------------------------------------------- */
 .h3e-media-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
     gap: var(--h3-gap-sm);
     margin-top: 4px;
 }
 .h3e-media-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* One line, always. These are grid siblings that flow from the top of their
+ * cell, so a label that wraps to two lines pushes ITS drop zone down and only
+ * its own -- the row stops lining up, which is how `master audio (lip-sync
+ * lock)` sat half a cell lower than everything beside it. The rename fixes
+ * that one; the ellipsis keeps the row honest whatever a future slot is
+ * called. The cell already carries the slot's description as a title, so a
+ * truncated label is not a dead end. */
 .h3e-media-label {
     font-size: var(--h3-fs-xs);
     font-weight: var(--h3-weight-label);
     letter-spacing: var(--h3-track);
     text-transform: uppercase;
     color: var(--h3-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 /* Full width under the reference clip's trim bar: this is a sentence, and a
  * sentence squeezed into a 104px cell is unreadable for the same reason a

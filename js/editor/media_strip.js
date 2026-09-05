@@ -63,8 +63,8 @@ const SLOTS = [
     // Last: a file widget with no slot here falls through to a native dial.
     // The take is not a reference -- the model does not generate it. Every hop
     // lip-syncs to one window of this file. Empty = off.
-    ["master_audio_file", "audio", "master audio (lip-sync lock)",
-     "One continuous take every hop lip-syncs to. Empty = generated voice as before. Delivered audio is this file, no VAE round trip.",
+    ["master_audio_file", "audio", "master audio",
+     "The spoken take for the whole chain. Every hop is given its own window of this file and generates the picture to match, so the voice is yours rather than the model's. Not a reference and not the SOUNDTRACK beside it: this one is delivered verbatim, no VAE round trip. Empty = the model generates a voice, as before.",
      null, null, null],
 ];
 
@@ -174,8 +174,8 @@ export function createMediaStrip(node, { onChange } = {}) {
         grid.appendChild(cell);
         pickers.push(pick);
 
-        // The bar goes in its own full-width row under the grid, not inside the
-        // 104px cell: a waveform squeezed to a thumbnail's width is a smear,
+        // The bar goes in its own full-width row under the grid, not inside a
+        // media cell: a waveform squeezed to a thumbnail's width is a smear,
         // and the whole point is to see where the transients are.
         if (ws && we) {
             const row = el("div", "h3e-trimrow");

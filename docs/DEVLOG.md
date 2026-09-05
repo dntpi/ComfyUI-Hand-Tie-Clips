@@ -3305,3 +3305,11 @@ opt-in. Neither ships as a silent drop.
 Untested: whether `refs: []` on hop 4 actually keeps the couch. The
 diagnosis is from pictures, not from this code path. GPU test 3.
 
+## 60. 2.0.0 (2026-09-05)
+
+Version bump. `pyproject.toml` 2.0.0, editor `VERSION` v2.0.0, README and
+`CHANGELOG.md` written against the code. Shot-field table, MEDIA strip,
+hop-cache notes and the "no shot-level refs" line were stale; `join: cut`
+in a README example is not a join value. `docs/HANDOVER_*.md` left as
+history; `BETA_NOTES.md` marked superseded. No behaviour change.
+

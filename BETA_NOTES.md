@@ -1,5 +1,9 @@
 # 1.2.0-beta1 — `anchor: "restart"`
 
+> **Superseded by 2.0.0.** `anchor: "restart"` shipped, and restart hops now
+> write their full length. Keep this file as the beta note; do not treat it
+> as the state of the pack.
+
 Beta. Two things over 1.1.0: a crash fix everyone needs, and one new feature
 that wants testing on a real chain.
 

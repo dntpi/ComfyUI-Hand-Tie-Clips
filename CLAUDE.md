@@ -59,9 +59,9 @@ The core invariant, and the thing most likely to be broken by a careless change:
 
 A plan is one JSON string in the `shot_plan` widget: an ordered list of shots, one per hop. **The shot count IS the hop count**, which removes the whole class of "3 blocks but chains=4" mismatches — when `shot_plan` is non-empty it is authoritative, `hop_script` is forced to `next`, and `chains` is ignored with a log line (`h3_ref_chain.py`, `run()`; search `shot_plan present -> hop_script=next`).
 
-Shot fields (all optional except `beat`): `beat`, `directives`, `prose`, `seed`, `steps`, `duration`, `locked`, `id`. There is no shot-level `refs` field -- a reference activates itself through its own `shots` list in `ref_plan`, and the shot-level one was removed 2026-08-27 (parsed and printed, read by nothing, and silently dropped by the editor). Per-shot `seed`/`steps`/`duration` really are per-shot — sigmas are built per distinct step count behind `sigma_cache` and durations are validated up front so a bad value fails before any sampling.
+Shot fields (all optional except `beat`): `beat`, `directives`, `prose`, `seed`, `steps`, `duration`, `locked`, `tone`, `anchor`, `refs`, `id`. Per-shot `seed`/`steps`/`duration` really are per-shot — sigmas are built per distinct step count behind `sigma_cache` and durations are validated up front so a bad value fails before any sampling.
 
-**`refs` on a shot is parsed and printed but not consumed.** Ref activation comes only from each ref's own `shots` field in `refs.py`. The editor deliberately does not expose it, so nothing implies it works. Either wire it up or drop the field.
+**`refs` on a shot is a choice.** Omitted keeps the register default: a ref activates itself through its own `shots` list, and unscheduled stills ride chain starts / stay off continuations under `hop_script=next`. `[]` is explicit none. A filled list is those tags only, in that order. The editor round-trips both a filled list and `[]`. Unknown tags fail on the queue.
 
 `prompt` is the legacy path, read only when `shot_plan` is empty (`_parse_shots`/`_expand_shots` + `hop_script=verbatim|next`).
 

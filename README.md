@@ -28,6 +28,17 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > the rename keeps loading** — they are just hidden from node search. Nothing
 > needs migrating.
 
+> **2.0.0 — 2026-09-05.** Full release. One continuous take every hop can
+> lip-sync to (`master_audio_file`, empty = off). An opt-in last-frame
+> AddGuide (`last_frame_guide=still`) pins `start_image` at the end of every
+> hop; default off. `anchor: "restart"` is a chain start and now writes its
+> full length instead of dropping 0.9 s of new content. A shot can name
+> which stills ride it (`refs`); omitted is the register default, `[]` is
+> none. Three reference-clip slots, three voice slots, Lab tone anchor,
+> `pin_mech`, and a hop cache that no longer pickles. New widgets were
+> appended, so saved 1.1 graphs keep their values. What a GPU has not
+> confirmed yet is named in [`CHANGELOG.md`](CHANGELOG.md).
+
 > **0.4.1 — 2026-08-30.** The 0.4.0 feature set was built without a browser or a
 > GPU and verified offline only. It has now been run in ComfyUI, and two things
 > were broken: the five new dials were never added to the run panel's widget list
@@ -210,8 +221,8 @@ Then:
 It is installed correctly when all three are true:
 
 - the startup log carries a line beginning `[HandTieClips]`
-- the browser console says `[HandTieClips] editor ui v1.5.0 loaded`
-- node search shows a **Hand Tie Clips** category with four nodes, each listed once
+- the browser console says `[HandTieClips] editor ui v2.0.0 loaded`
+- node search shows a **Hand Tie Clips** category with five nodes, each listed once
 
 Workflows saved before the 2026-08-29 rename keep loading: the old ids are still registered as deprecated aliases. Nothing needs migrating.
 
@@ -275,7 +286,7 @@ Two modes:
 
 Only one of them is on screen at a time, so there is never a text box quietly doing nothing.
 
-Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls, and the hop cache. Its title line summarises the run — `1344x768 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both.
+Under the script sits **RUN**, collapsed, holding everything that is not per-shot: output size and length, sampling, the join and pin controls (`pin_mech`, `last_frame_guide`, tone), and the hop cache. Its title line summarises the run — `1344x768 · 10s ×3 · 14 steps res_multistep · cache off` — so you can read the setup without opening it. In Shots mode `chains` and `hop_script` are not offered there, because the shot list already decides both. `last_frame_guide` ships `off`; `still` pins the start image at the last pixel of every hop and needs a start image.
 
 **`tone_compensate`** lives in that panel's *join & pin* group. The H3 denoiser biases each hop's tone, so a chain gets steadily brighter; this measures the bias on the overlap each hop regenerated and undoes it, correcting each hop against the previous **corrected** one so the whole chain lands on hop 1's tone. `frame_shift` is the mode to reach for: all three modes remove the drift equally well (within 0.4/255 of each other), but `gain_bias` and `lut` pair pixels between a frame and its *regeneration*, which fits a slope that is not really there and flattens contrast a little more with every hop. `frame_shift` uses frame averages only, so it can shift but never distort. **Measured on a 3-hop render: chain drift 5.6/255 without it, 0.3/255 with it.** Worth turning on for anything past two hops. It ships off because enabling it also clamps the master to 0..1, and because the correction grows with hop count — by hop 10 it is subtracting ~23/255 and will start crushing blacks. Switching modes never invalidates the hop cache, so it is free to A/B. Do **not** judge it by whether the seams flatten to zero: real scene brightness changes across a cut should survive, and they do.
 
@@ -309,6 +320,9 @@ Fields, all optional except `beat`:
 | `prose` | Free text appended verbatim, for anything the vocabulary lacks. |
 | `seed`, `steps`, `duration` | Per-shot overrides. `duration` takes the same labels as the widget (`"8 s"`). |
 | `locked` | Reuse this shot's cached render even when its inputs changed -- freeze a take you like while you rewrite the hops around it. Needs `cache_hops=on`, and give the shot an `id`. Not to be confused with `subjects.N.locked`, which is identity text. |
+| `tone` | `"free"` skips the chain-wide tone pull once; `"rebase"` also moves the anchor onto this hop. Omit it unless a scene is deliberately darker or brighter from here. |
+| `anchor` | `"restart"` makes this hop a chain start: the start image is frame 0, nothing is relayed. It is a cut. Pair with `join: hard_cut`. Never on shot 1. |
+| `refs` | Which register stills ride this hop, as tags. Omit for the register default. `[]` is none. A list is those tags only, in that order. |
 | `id` | Stable name, used as the cache pointer. Generated if absent. |
 
 ### Hops of different lengths
@@ -318,7 +332,7 @@ Fields, all optional except `beat`:
 ```json
 {
   "shots": [
-    {"beat": "She slams the drawer shut.",            "duration": "5 s",  "directives": {"join": "cut", "pace": "urgent"}},
+    {"beat": "She slams the drawer shut.",            "duration": "5 s",  "directives": {"join": "hard_cut", "pace": "urgent"}},
     {"beat": "She crosses to the window, still talking.", "duration": "15 s", "directives": {"join": "continuous", "camera": "push_in"}},
     {"beat": "She stops and looks back."}
   ]
@@ -501,7 +515,8 @@ The key **chains** — each hop's key includes the previous hop's — because ho
 - edit shot 3 and re-queue → shots 1 and 2 load from cache, only 3 renders;
 - edit shot 1 → all three re-render, which is correct, not a bug;
 - change resolution, sampler, the checkpoint, a LoRA, or an attention setting → the whole chain re-renders;
-- change `pin_to_qwen` or `overlap` → only hops 2+ re-render, because neither can reach hop 1;
+- change `pin_to_qwen` or `overlap` → only hops 2+ re-render, because neither can reach hop 1. A restart hop is a start, so overlap does not reach it either;
+- turn on `last_frame_guide` or set `master_audio_file` → every hop re-renders (both reach hop 1). Empty / `off` do not move existing keys;
 - change a reference picture → only the hops that picture rides re-render. Swapping the file behind `@outfit` when it rides hop 5 leaves hops 1-4 on cache. Before 1.1 this invalidated everything.
 
 That last one is worth knowing about. The node cannot read the settings on your LoRA and attention nodes, so instead it fingerprints what they *did* to the model — which weight keys were patched, at what strengths, and the attention overrides — plus the base model itself: its class, its dtype and its parameter count. Change a LoRA strength, or load the int8 build where you had the bf16 one, and the cache correctly invalidates. Nodes that configure themselves by closure or by object are read the same way, so changing a setting on one moves the key rather than only installing it. Two remaining gaps: two different LoRAs touching exactly the same keys at exactly the same strengths, and two different builds of the same architecture at the same dtype and parameter count.
@@ -667,9 +682,11 @@ Three shots at 10 s with a 0.9 s overlap is about 28 s of master after the overl
 
 ## Voice, music and trims
 
-The **MEDIA** strip takes a first frame, a look reference clip, a voice
-reference and a music bed — all files under `input/h3_refs`, all picked in the
-panel, none of them a `Load Image` node you have to wire.
+The **MEDIA** strip takes a first frame, up to three look reference clips, up
+to three voice references, a music bed, and an optional **master audio** take
+every hop lip-syncs to — all files under `input/h3_refs`, all picked in the
+panel, none of them a `Load Image` node you have to wire. Empty master audio
+is off and leaves generated voice as before.
 
 ![The MEDIA tab with a reference clip loaded](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/reference-clip.png)
 
@@ -689,7 +706,7 @@ file still plays out rather than being silently cropped to the old one.
 ## Limits
 
 - **A workflow saved before 2026-08-28 loses its reference pictures.** The old `ref_image_N` sockets carried tensors, so there is no filename to recover. The rail names each affected ref and asks you to pick its picture; nothing else about the plan is lost.
-- There is no shot-level `refs` field. Activation lives on the reference: give a ref a `shots` list, or use the per-hop chips on its row in the rail.
+- Shot-level `refs` is a choice, default omitted. A ref still activates itself through its own `shots` list; the shot field overrides that list for one hop, including the empty list (no stills). Unknown tags fail on the queue.
 - The reference `desc` and subject `locked` text go to the encoder verbatim, every hop. At cfg 1.0 there is no negative branch, so a detail that is not in the photograph is **asked for**, not ignored. Describe what you actually wired.
 - `HTCContinuityState` is **setting only**. Characters live in the reference register; the node's `characters_*` fields were removed because filling in both injected identity text twice.
 - Each join hard-cuts video but crossfades audio ~40 ms, so A/V drifts ~40 ms per hop.
@@ -708,3 +725,7 @@ file still plays out rather than being silently cropped to the old one.
 **H3 Seam Report** — `report` (STRING) + `chart` (IMAGE). **Ships wired on the Starter canvas.** Set `hops` to your shot count: it derives hop length from frames, hops and overlap, so a wrong `hops` does not error — it returns a plausible length and puts every seam where no join exists. Wire the chain's `images` into it and it measures the brightness step at every join, says whether each is invisible / marginal / visible, and totals the chain's cumulative drift. A single reading includes whatever the scene did across the cut — the frames either side are ~0.9 s apart in scene time — so treat one number as an upper bound; to isolate the seam itself, render twice from the same seed and cache changing only `tone_compensate`, and compare.
 
 **H3 Continuity State** — `continuity_state` (STRING) out. **Setting only**: `setting_locked` / `setting_context` / `setting_mutable`. Characters belong in `ref_plan`.
+
+## Docs
+
+[`CHANGELOG.md`](CHANGELOG.md) is what 2.0.0 contains, written for users. [`CLAUDE.md`](CLAUDE.md) is the current map of the pack if you are changing it. `docs/DEVLOG.md` is the engineering log. `docs/HANDOVER_*.md`, root `HANDOVER.md`, and `BETA_NOTES.md` are historical session notes — do not take them as the state of this release.

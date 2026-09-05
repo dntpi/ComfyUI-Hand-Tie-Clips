@@ -3225,3 +3225,35 @@ Untested, because this machine has no GPU window:
   `[B, T, C]` call. A mismatch raises with both signatures.
 - Beat/`<d>` alignment with the take. We do not auto-cut a transcript into
   the beat; unmatched words can pull the mouth off. Visible, recoverable.
+
+## 57. Last-frame guide, opt-in (2026-09-05)
+
+`last_frame_guide`: combo `off` / `still`, default `off`. `still` AddGuide-pins
+`start_image` at the last PIXEL frame of every hop (`frame_idx=-1`, which
+Core counts from the end). Conservative half only: that pin does **not**
+become the next hop's frame 0. Keyframe chaining is a v3 conversation.
+
+Default off is byte-identical. The setting reaches hop 1, so it lives in
+the per-hop key for every hop, and only when not off -- a new `"off"` field
+would have moved every existing cache key. Queue-fails if `still` is set
+with no `start_image_file`.
+
+The index is the thing that was easy to get wrong. AddGuide's `frame_idx`
+is pixel frames. H3's `FRAME_PER_TOKEN` is `(1, 4, 4, 4, 4)`. An 8 s hop
+is 192 pixel frames at latent T=57; `latent_T-1` is pixel 56, about 2.3 s
+in, not the end. `_last_pixel_guide_idx` returns `-1` so that trap has one
+place to live. `tools/check_last_frame_guide.py` asserts it.
+
+Untested, because this machine has no GPU window:
+
+- Whether the DiT actually treats a last-pixel AddGuide as a bound. The
+  hop-4 wander this is medicine for was diagnosed on pin-less restarts;
+  a last-frame pin can still lose if identity stills in the rail outvote
+  it mid-hop. GPU test 5 in `GROK_V2_GPU_TESTS.md`.
+- Whether `-1` after Core's `resolved_frame_index = frame_count + frame_idx`
+  is the last *decoded* frame, not one token-group early. Core's own
+  tooltip says negative values count from the end; we did not decode a
+  hop to confirm the last displayed frame matches.
+- Chroma pulse at the still/render gap, named in the tooltip. Off by
+  default, so a bad result costs nothing shipped.
+

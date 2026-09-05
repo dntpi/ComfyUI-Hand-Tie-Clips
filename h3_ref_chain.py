@@ -1069,6 +1069,47 @@ def _validate_anchors(shots, start_image_file):
                 "on that shot.")
 
 
+def _validate_last_frame_guide(last_frame_guide, start_image_file):
+    """Refuse last_frame_guide=still with no photograph, on the queue.
+
+    Same class as `_validate_anchors`: a guard that only a render would
+    otherwise exercise. Whitespace is not a file.
+    """
+    if str(last_frame_guide) != "still":
+        return
+    if not str(start_image_file or "").strip():
+        raise ValueError(
+            f"{TAG}: last_frame_guide=still but no start image is set. That "
+            "mode pins start_image at the last pixel frame of every hop; "
+            "without one there is nothing to pin. Set start_image_file in "
+            "MEDIA, or leave last_frame_guide=off.")
+
+
+def _last_frame_guide_key_field(last_frame_guide):
+    """Per-hop cache field, or None so the key stays byte-identical when off.
+
+    The setting reaches hop 1 (every hop is guided), so it is not gated on
+    hop_is_start. Omitting the field when off is the empty-string rule from
+    master_audio_file: a None/"off" field would move every existing cache key.
+    """
+    v = str(last_frame_guide or "off")
+    return None if v == "off" else v
+
+
+def _last_pixel_guide_idx():
+    """AddGuide frame_idx for the last pixel frame of this hop.
+
+    AddGuide's index is PIXEL frames, not latent tokens. Core treats a
+    negative value as counted from the end, so -1 is the last pixel frame
+    regardless of this hop's duration.
+
+    Do not pass latent_T-1. FRAME_PER_TOKEN is (1, 4, 4, 4, 4); on an 8 s
+    hop (192 px frames, latent T=57) that index is pixel 56 -- about 2.3 s
+    in -- not the end. That is the bug this helper exists to stop.
+    """
+    return -1
+
+
 # Above this, the master frame buffer is spilled to disk instead of RAM. The
 # number is a judgement, not a measurement: below it the mapping buys nothing
 # worth the I/O, and above it the buffer is competing with the DiT and the VAE
@@ -2265,6 +2306,20 @@ class HandTieClips:
                         "the hop cache."
                     ),
                 }),
+                "last_frame_guide": (["off", "still"], {
+                    "default": "off",
+                    "tooltip": (
+                        "Opt-in last-frame AddGuide. off = shipped behaviour "
+                        "(frame 0 only, hop 1 or a restart). still = also pin "
+                        "start_image at this hop's last PIXEL frame "
+                        "(AddGuide frame_idx=-1), every hop. A pin-less hop "
+                        "then has nowhere to wander. Needs start_image_file. "
+                        "Cost: the end of every hop is pulled toward the "
+                        "still -- a chroma gap can pulse. Does NOT become "
+                        "the next hop's frame 0. GPU-untested: whether the "
+                        "DiT treats that last pixel as a bound."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2345,6 +2400,7 @@ class HandTieClips:
             voice_2_file="", voice_2_start_s=0.0, voice_2_end_s=0.0,
             voice_3_file="", voice_3_start_s=0.0, voice_3_end_s=0.0,
             master_audio_file="",
+            last_frame_guide="off",
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -2509,6 +2565,7 @@ class HandTieClips:
                         flush=True,
                     )
         _validate_anchors(shots, start_image_file)
+        _validate_last_frame_guide(last_frame_guide, start_image_file)
         # Same rule, same reason: checked on the queue, by filename, before any
         # media is loaded. A chain that cannot reach its anchor should say so in
         # a second rather than nine hops later.
@@ -3134,7 +3191,7 @@ class HandTieClips:
                 # every restart whenever anything earlier moved -- and later
                 # hops should chain from the restart, which they do because
                 # this key becomes their prev_key.
-                hop_key = _store.hop_key(None if hop_restart else prev_key, {
+                hop_payload = {
                     "chain": chain_salt,
                     "block": block,
                     "len": hop_length,
@@ -3193,7 +3250,16 @@ class HandTieClips:
                     # rendered with the clip on would be served to a later run
                     # that kept it off.
                     "voice_on": hop_voice,
-                })
+                }
+                # last_frame_guide reaches EVERY hop, including hop 1, so it
+                # is not gated on hop_is_start. Only present when on: adding
+                # "off" would move every existing cache key and break the
+                # default-off byte-identical claim.
+                _lfg = _last_frame_guide_key_field(last_frame_guide)
+                if _lfg is not None:
+                    hop_payload["last_frame_guide"] = _lfg
+                hop_key = _store.hop_key(
+                    None if hop_restart else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
                 # changed -- that is the point of locking. The content key would
                 # have moved, so the pointer is what finds it.
@@ -3292,6 +3358,26 @@ class HandTieClips:
                         pin_latent, prev_imgs, prev_audio,
                         audio_ctx=audio_ctx, mode=str(pin_mech),
                     )
+
+                if (str(last_frame_guide) == "still"
+                        and start_image is not None):
+                    # Conservative half: pin the still at the last PIXEL
+                    # frame. Does NOT become the next hop's frame 0 -- that
+                    # is keyframe chaining, a v3 conversation. After the
+                    # frame-0 / Motion-Context pin so both keyframes sit
+                    # on `cond`; before the audio lock, which mutates the
+                    # latent not the conditioning.
+                    _end = _last_pixel_guide_idx()
+                    cond = _result(_core_call(
+                        MiniMaxH3AddGuide,
+                        "the last-frame guide",
+                        positive=cond, latent=latent, frame_idx=_end,
+                        vae=vae, audio_vae=None,
+                        image=start_image[:1], audio=None,
+                    ))[0]
+                    print(f"[{TAG}] hop {i + 1}: last-frame guide "
+                          f"(still at pixel frame_idx={_end})",
+                          flush=True)
 
                 if locked is not None:
                     # AFTER the pin: Motion-Context may rewrite this hop's

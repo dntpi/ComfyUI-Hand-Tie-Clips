@@ -53,7 +53,8 @@ const GROUPS = [
                     // suppressed in the other modes -- suppression only stops
                     // the panel drawing a dial, and an undrawn dial reappears
                     // as a raw native widget, which is worse than an inert one.
-                    "tone_compensate", "tone_anchor"]],
+                    "tone_compensate", "tone_anchor",
+                    "last_frame_guide"]],
     ["cache", ["cache_hops", "cache_budget_gb"]],
     // Added 2026-08-30. 0.4.0 shipped these five on the Python side and never
     // touched js/, so all five fell through to native dials -- the documented

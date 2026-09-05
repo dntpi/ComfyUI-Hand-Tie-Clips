@@ -77,22 +77,62 @@ def main():
     print("\ntone.anchor_pull")
     ck("anchor is a mode", "anchor" in T.MODES, str(T.MODES))
 
+    # sRGB <-> Lab has to be an identity before anything built on it means
+    # anything: the pull measures in Lab and delivers in sRGB, so a lossy round
+    # trip would show up as drift the anchor itself introduced.
+    probe = torch.rand(3, 8, 8, 3)
+    ck("sRGB -> Lab -> sRGB is identity",
+       float((T._lab_to_srgb(T._srgb_to_lab(probe)) - probe).abs().max()) < 1e-4)
+    grey_lab = T._srgb_to_lab(torch.full((1, 2, 2, 3), 0.5))
+    ck("neutral grey has no chroma",
+       float(grey_lab[..., 1:].abs().max()) < 0.02, "a*/b* on 0.5 grey")
+
+    def lab_of(x):
+        return T.anchor_stats(x)
+
     hop = (torch.rand(N, HW, HW, 3) * 0.1 + 0.30
            + torch.linspace(0.0, -0.05, N).view(-1, 1, 1, 1)).clamp(0, 1)
-    out, _ = T.anchor_pull(hop, torch.tensor([0.5, 0.5, 0.5]))
+    out, _ = T.anchor_pull(hop, lab_of(torch.full((1, HW, HW, 3), 0.5)))
     ck("frame 0 is untouched (the seam stays exact)",
        float((out[0] - hop[0]).abs().max()) < 1e-6)
     ck("the tail is corrected", float((out[-1] - hop[-1]).mean()) > 0.01)
 
     flat = (torch.rand(N, HW, HW, 3) * 0.1 + 0.05).clamp(0, 1)
-    o2, _ = T.anchor_pull(flat, torch.tensor([0.9, 0.9, 0.9]), strength=1.0)
-    ck("per-hop cap is honoured",
-       float((o2[-1] - flat[-1]).mean()) <= T.ANCHOR_MAX_SHIFT + 0.02,
-       "cap %.2f" % T.ANCHOR_MAX_SHIFT)
+    o2, _ = T.anchor_pull(flat, lab_of(torch.full((1, HW, HW, 3), 0.9)),
+                          strength=1.0)
+    # The cap is quoted in 0..1 RGB units and spent in Lab units, so it is
+    # checked where it is spent. The slack covers the L* spread gain, which is
+    # capped separately and also lifts the mean of a dark hop.
+    moved = float(lab_of(o2)[0] - lab_of(flat)[0])
+    ck("per-hop cap is honoured", moved <= T.ANCHOR_MAX_SHIFT * 100.0 + 1.5,
+       "moved %.1f L*, cap %.1f L*" % (moved, T.ANCHOR_MAX_SHIFT * 100.0))
 
     same = (torch.rand(N, HW, HW, 3) * 0.1 + 0.5).clamp(0, 1)
     o3, n3 = T.anchor_pull(same, T.anchor_stats(same))
     ck("no-op when already on the anchor", torch.equal(o3, same) and not n3)
+
+    # The finding this mode was rebuilt for. A per-channel RGB mean cannot pull
+    # a greyed-out hop back toward a colourful reference: it can match all three
+    # means and leave the chroma exactly where it was. Lab can, because a* and
+    # b* are the colour and nothing else is.
+    warm = (torch.rand(N, HW, HW, 3) * 0.1
+            + torch.tensor([0.62, 0.42, 0.30])).clamp(0, 1)
+    greyed = warm.mean(dim=-1, keepdim=True).expand_as(warm).contiguous()
+    o4, _ = T.anchor_pull(greyed, lab_of(warm), strength=1.0)
+    c_before = float(lab_of(greyed)[1:3].pow(2).sum().sqrt())
+    c_after = float(lab_of(o4)[1:3].pow(2).sum().sqrt())
+    ck("chroma is restored, not just the level", c_after > c_before + 1.0,
+       "chroma %.1f -> %.1f (reference %.1f)"
+       % (c_before, c_after, float(lab_of(warm)[1:3].pow(2).sum().sqrt())))
+
+    # A hop whose contrast has collapsed gets it stretched back, but capped.
+    dull = (torch.rand(N, HW, HW, 3) * 0.02 + 0.5).clamp(0, 1)
+    lively = (torch.rand(N, HW, HW, 3) * 0.40 + 0.3).clamp(0, 1)
+    o5, _ = T.anchor_pull(dull, lab_of(lively), strength=1.0)
+    grew = float(lab_of(o5)[3]) / max(1e-6, float(lab_of(dull)[3]))
+    ck("L* spread is pulled up but capped",
+       1.0 < grew <= 1.0 + T.ANCHOR_MAX_GAIN + 0.02,
+       "spread x%.3f, cap x%.2f" % (grew, 1.0 + T.ANCHOR_MAX_GAIN))
 
     a, _ = T.compensate(same, flat, "anchor", OV)
     b, _ = T.compensate(same, flat, "frame_shift", OV)

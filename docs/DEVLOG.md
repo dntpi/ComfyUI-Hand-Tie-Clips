@@ -2298,3 +2298,63 @@ conclusion was reached by reasoning about what the code must be doing rather
 than reading where the cost actually lands, and both times the reasoning was
 written down confidently enough that it stopped anyone looking again. A user
 asking "possible?" was what reopened it.
+
+## 45. A mean cannot see a colour (2026-09-05)
+
+An outside tester ran ten controlled 9-hop chains -- 65 s each, one variable per
+run, same model, LoRA, references, locked audio and seed -- and measured them
+with her own instruments rather than ours. The result that matters here is not
+which lever won. It is her section 5, which explains in our own code why none of
+them could have.
+
+The relay chain loses about a fifth of the skin's colourfulness over nine hops
+(chroma 33.6 in the reference still, 30 at hop 1, 23.8 by hop 9) and darkens it
+(L* 52.3 -> 45.0), while the HUE ANGLE DOES NOT MOVE. It is not a cast. It is a
+loss of chroma and a loss of level, arriving together.
+
+`tone_compensate=anchor` was built to hold exactly this and did not, for two
+reasons. The first is a plumbing problem and is section 46's. The second is
+this one: `anchor_pull` matched a per-channel RGB MEAN. Three channel means
+cannot distinguish "less colourful" from "differently coloured", because a hop
+that has greyed out can have all three of its means sitting exactly on the
+reference. The correction had nothing to correct with.
+
+So the anchor now measures and corrects in CIE Lab, and pulls four numbers
+rather than three: mean L*, mean a*, mean b*, and the SPREAD of L*. a* and b*
+are the colour on its own, which is the thing that was being lost. The spread is
+the contrast, which is what hardens when a face bakes -- her section 3.2
+measured mid-scale contrast rising x1.07 to x1.37 across the ten runs while fine
+detail fell to 0.76-0.96 of the still, the combination that reads as waxy. A
+per-hop cap and the existing ramp are unchanged in spirit; the spread has its
+own cap (`ANCHOR_MAX_GAIN`) because it is a ratio, and a ratio applied to a hop
+whose contrast genuinely collapsed -- a fade, a cut to a flat wall -- would
+stretch it hard.
+
+The cost is real and worth naming. Lab is a non-linear round trip over every
+pixel of every frame, and the first working version cost 32 s on a 362-frame
+1344x768 hop. Three changes took it to 15 s: the statistics are read from 24
+evenly spaced frames rather than all 362 (they agree to 0.005 Lab units, and it
+is four moments over twenty million pixels either way), frames past the ramp
+skip the blend they would multiply by 1.0, and every linear stage -- both
+colour matrices and the f()->Lab assembly -- is a matmul instead of three
+expressions and a `torch.stack`. That last one alone was 9x on the stage it
+touches: 0.032 s to 0.003 s on a full frame, measured, because BLAS does in one
+call what the stack form does in nine multiplies, six adds and a copy.
+
+A 3D LUT was tried first and rejected on its own numbers: 33^3 lattice with
+trilinear interpolation came out SLOWER than the direct conversion (0.301 s
+against 0.256 s on the same chunk) and carried 2.1/255 of error. The intuition
+that a lookup must beat a transcendental is a CPU-era one; on a vectorised
+backend the eight gathers cost more than the two pow calls they replace.
+
+The seam guarantee is unchanged and is still checked: frame 0 comes back
+bit-identical, because the ramp blends against the untouched source in RGB
+rather than in Lab. Through a non-linear round trip that distinction is the
+whole guarantee -- a Lab-side blend of zero strength still returns the pixel
+that survived a forward and inverse transform, not the pixel that went in.
+
+Two things this does not fix, both deliberate. It still corrects the DELIVERED
+frames, so under the Motion-Context latent join it still never reaches the next
+hop's pin (section 46). And it still measures the whole frame at once, so a
+chain where the skin greys while the background gains edges -- which is what
+hers did -- gets one compromise correction for two opposite drifts.

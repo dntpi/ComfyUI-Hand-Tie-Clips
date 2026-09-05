@@ -1496,12 +1496,18 @@ class HandTieClips:
                     "default": _tone.ANCHOR_STRENGTH, "min": 0.0, "max": 1.0, "step": 0.05,
                     "tooltip": (
                         "Strength of tone_compensate=anchor's pull back toward "
-                        "hop 1's exposure. Ignored by every other mode. 0 "
-                        "disables the pull and leaves plain frame_shift; 0.35 "
-                        "closes about a third of the gap per hop, which arrests "
-                        "a long slide without visibly pumping. A shot can opt "
-                        "out with \"tone\": \"free\" or move the anchor to itself "
-                        "with \"tone\": \"rebase\"."
+                        "hop 1's look -- its L* level, its a*/b* colour and its "
+                        "L* spread. Ignored by every other mode. 0 disables the "
+                        "pull and leaves plain frame_shift; 0.35 closes about a "
+                        "third of the gap per hop, which arrests a long slide "
+                        "without visibly pumping. Raise it to 0.6-0.8 for long "
+                        "chains that grey out: a measured 9-hop study lost a "
+                        "fifth of its chroma by the end, and 0.35 only slows "
+                        "that. Costs about 15 s per 15 s hop at 1344x768: the "
+                        "measurement is in Lab, which is a colour-space round "
+                        "trip over every frame. A shot can opt out with "
+                        "\"tone\": \"free\" or move the anchor to itself with "
+                        "\"tone\": \"rebase\"."
                     ),
                 }),
                 # APPENDED, never inserted -- the same rule the ref sockets at
@@ -2617,9 +2623,7 @@ class HandTieClips:
                     anchor_ref = _tone.anchor_stats(imgs)
                     if anchor_ref is not None:
                         print(f"[{TAG}] tone anchor set from hop 1: "
-                              + " ".join(f"{c}{v:.4f}" for c, v
-                                         in zip("rgb", anchor_ref.tolist())),
-                              flush=True)
+                              + _tone.anchor_note(anchor_ref), flush=True)
                 elif shot_tone == "rebase":
                     anchor_ref = _tone.anchor_stats(imgs)
                     print(f"[{TAG}] hop {i + 1}: tone=rebase, anchor moved to "

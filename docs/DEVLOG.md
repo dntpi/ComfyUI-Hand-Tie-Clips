@@ -3385,3 +3385,44 @@ was pointed directly at this. It is that a check is only as good as the resembla
 its fixture and production, and that resemblance decays silently every time a feature lands
 next to an older test. The tell was in the log the whole time, once per hop, in a line that
 said the word `ValueError` and was still easy to read as routine.
+
+## 64. fp16 for the master, and what it actually costs (2026-09-05)
+
+Section 52 deferred this: "fp16 is deliberately not in this change... it is a separate
+decision and should be made on its own." The decision was never made, and the master
+shipped fp32 through the whole of v2. Taking it now.
+
+The master is DELIVERY-ONLY. `prev_imgs` is cloned from `imgs`, never read back out of the
+master, so nothing in the conditioning path depends on its precision. That halves both the
+footprint and the disk I/O of the largest allocation in the pack: an 8 x 15 s 1280x736
+chain goes from ~29 GB to **14.4 GB**.
+
+fp16 and not bf16. The buffer is clamped to 0..1, so exponent range buys nothing and
+mantissa bits are the whole question. fp16's ten space the top octave at about 1/2048;
+bf16's seven space it at 1/256 -- exactly 8-bit output precision with nothing in reserve,
+and the highlights would band.
+
+**It is not free, and the checker now says so in the right units.** The first assertion
+written here was "fp16 delivers the same 8-bit pixels as fp32", and it FAILED. The encode
+truncates rather than rounds -- core's `Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))`
+-- so a value fp16 nudges down across an integer boundary loses one 255th. Measured over
+two million samples: **2.06% of pixels move, every one of them by exactly 1, none by more**,
+and rounding instead of truncating barely changes it (2.06%). That is well under the h264
+encode's own error and is not visible, but "eight times finer than the output" was an
+argument about spacing that quietly implied bit-identity, and bit-identity is not what
+happens. The check asserts the measured bound instead of the comfortable claim.
+
+Two paths were verified not to care: `_frame_to_jpeg_b64` and `sheet.small` both call
+`.detach().float()` before touching pixels, so the preview and the contact sheet are
+unaffected. The one thing offline work cannot settle is a downstream node that assumes an
+IMAGE is fp32 -- core's own save path handles it, third-party nodes are not all core. That
+is a two-hop render away and belongs in the next GPU window.
+
+Also recorded here because it was missing everywhere except this log: the master-spill work
+began with silveroxides putting the problem in exactly these terms and proposing
+`unifiedefficientloader`'s streaming writer. The diagnosis was right. The writer was the
+wrong shape -- it exists to stream many tensors of unknown offset, and this is one tensor of
+known size written in order -- so `np.memmap` won and no code travelled. No licence
+obligation follows from that, which is precisely why the credit is worth writing down: this
+pack already names rkfg in `tone.py` and PromptMasterLD in `audio_lock.py` for techniques
+rather than code, and the same rule applies to a reading that turned out to be correct.

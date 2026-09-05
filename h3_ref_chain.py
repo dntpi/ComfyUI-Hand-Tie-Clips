@@ -1115,6 +1115,27 @@ def _last_pixel_guide_idx():
 # worth the I/O, and above it the buffer is competing with the DiT and the VAE
 # for the length of a run during which nothing reads it.
 MASTER_SPILL_BYTES = 2 << 30            # 2 GiB
+# The master is DELIVERY-ONLY: `prev_imgs` is cloned from `imgs`, never read
+# back out of the master, so nothing in the conditioning path depends on its
+# precision. fp16 halves both the footprint and the disk I/O for free.
+#
+# fp16 and not bf16, because the master is clamped to 0..1 so exponent range
+# buys nothing and mantissa bits are the whole question. fp16's ten mantissa
+# bits space the top octave at ~1/2048, about eight times finer than the 8-bit
+# encode downstream; bf16's seven space it at 1/256 -- exactly 8-bit output
+# precision with nothing in reserve, and highlights would band.
+#
+# Two things make it safer than it first looks. `tone_compensate` runs BEFORE
+# the master write, so all correction arithmetic stays in fp32 and the
+# quantisation never compounds with it. And the anchor mode's failure direction
+# is crushed blacks, which is fp16's strongest region.
+#
+# Emphatically NOT true of the hop cache, where CLAUDE.md's 16-bit reasoning is
+# load-bearing: a cached hop's last frame becomes the next hop's pin, so a
+# lossy round trip there would make a resumed chain diverge from an
+# uninterrupted one. Same-looking decision, opposite answer, different tensor.
+MASTER_DTYPE = torch.float16
+MASTER_NP_DTYPE = np.float16
 
 
 def _open_self_deleting(path, nbytes):
@@ -1194,18 +1215,22 @@ def _alloc_master(total_frames, height, width):
 
     It is allocated once at full chain length, slice-written as each hop lands,
     and then not read again until the final preview frame and the return. At
-    8 x 15 s and 1280x736 that is ~31 GB resident and inactive through every
-    sampling pass, competing with the DiT, the VAE decode buffers, `imgs` and
-    `prev_imgs`.
+    8 x 15 s and 1280x736 that is ~14.4 GB in fp16 -- it was ~29 GB in fp32 --
+    resident and inactive through every sampling pass, competing with the DiT,
+    the VAE decode buffers, `imgs` and `prev_imgs`.
 
-    **This does not save 31 GB.** ComfyUI's IMAGE type is a dense tensor, so the
+    **This does not save 14.4 GB.** ComfyUI's IMAGE type is a dense tensor, so the
     whole master still has to exist to be returned. What moves is the peak:
     from `master + inference` to `max(master, inference)`. On the chains where
     this bites that is the difference between finishing and an OOM, and it is
     not a saving -- do not write it up as one.
 
     A `np.memmap` is the right primitive rather than an incremental writer: one
-    tensor, shape known up front, written in contiguous ranges in order. Every
+    tensor, shape known up front, written in contiguous ranges in order. The
+    problem was first put to us in these terms by silveroxides, who proposed
+    the streaming writer from `unifiedefficientloader` (MIT); the diagnosis was
+    right and the writer was the wrong shape for one tensor of known size, so
+    no code travelled -- but the reading did, and the credit belongs here. Every
     slice-write below is unchanged, and SaveVideo walking frames in order is
     ideal page locality on the way back out.
 
@@ -1216,14 +1241,14 @@ def _alloc_master(total_frames, height, width):
     diagnose from a bug report.
     """
     shape = (int(total_frames), int(height), int(width), 3)
-    nbytes = 4
+    nbytes = int(np.dtype(MASTER_NP_DTYPE).itemsize)
     for d in shape:
         nbytes *= d
     gb = nbytes / 2**30
 
     if nbytes < MASTER_SPILL_BYTES:
         print(f"[{TAG}] master buffer: {gb:.1f} GB in RAM", flush=True)
-        return torch.empty(shape, dtype=torch.float32)
+        return torch.empty(shape, dtype=MASTER_DTYPE)
 
     try:
         import folder_paths
@@ -1232,7 +1257,7 @@ def _alloc_master(total_frames, height, width):
         path = os.path.join(root, f"htc_master_{uuid.uuid4().hex}.raw")
         _sweep_master_spills(path)
         fh = _open_self_deleting(path, nbytes)
-        arr = np.memmap(fh, dtype=np.float32, mode="r+", shape=shape)
+        arr = np.memmap(fh, dtype=MASTER_NP_DTYPE, mode="r+", shape=shape)
         out = torch.from_numpy(arr)
         # Name the owner. The mapping is already kept alive by the tensor's
         # storage, so this changes no lifetime -- it gives anything that needs

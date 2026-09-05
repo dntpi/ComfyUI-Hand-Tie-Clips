@@ -83,16 +83,52 @@ def main():
         return buf[:pos], pos
 
     print("RAM path and spilled path agree")
-    ram = torch.empty((frames, h, w, 3), dtype=torch.float32)
+    # MASTER_DTYPE on both sides on purpose: this pair asks whether the mapping
+    # behaves like RAM, not what the dtype is. That is asserted separately below.
+    ram = torch.empty((frames, h, w, 3), dtype=H3.MASTER_DTYPE)
     a, pos_a = drive(ram)
+
+    # The master is delivery-only, so it is fp16: prev_imgs is cloned from imgs
+    # and nothing in the conditioning path reads the master back. fp16 and not
+    # bf16 because the buffer is clamped to 0..1 -- mantissa bits are the whole
+    # question and bf16's seven give exactly 8-bit output precision with nothing
+    # in reserve.
+    ck("the master is fp16, not fp32", H3.MASTER_DTYPE == torch.float16,
+       str(H3.MASTER_DTYPE))
+    ck("and not bf16, which would band the highlights",
+       H3.MASTER_DTYPE != torch.bfloat16)
+    # What fp16 actually costs at delivery, measured rather than asserted from
+    # the mantissa argument. It is NOT bit-identical: the encode truncates
+    # (`(x * 255).astype(uint8)`, core nodes.py), so a value that fp16 rounds
+    # down across an integer boundary loses one 255th. Measured over 2M random
+    # samples: ~2.1% of pixels move, every one of them by exactly 1, none by
+    # more. That is a quarter of the h264 encode's own error and invisible; the
+    # bound is what matters, so the bound is what is checked.
+    torch.manual_seed(0)
+    probe = torch.rand(200000, dtype=torch.float32)
+    as_master = probe.to(H3.MASTER_DTYPE).float()
+    to_byte = lambda t: (t * 255.0).clip(0, 255).to(torch.uint8)  # noqa: E731
+    delta = (to_byte(probe).int() - to_byte(as_master).int()).abs()
+    ck("fp16 never moves a delivered pixel by more than 1/255",
+       int(delta.max()) <= 1, "max %d" % int(delta.max()))
+    ck("and moves fewer than 5% of them at all",
+       float((delta > 0).float().mean()) < 0.05,
+       "%.2f%% by one 255th" % (100.0 * float((delta > 0).float().mean())))
+
+    ck("a whole 8x15s 1280x736 master is under 16 GB",
+       (2742 * 736 * 1280 * 3 * torch.finfo(H3.MASTER_DTYPE).bits // 8)
+       / 2**30 < 16.0,
+       "%.1f GB" % ((2742 * 736 * 1280 * 3
+                     * torch.finfo(H3.MASTER_DTYPE).bits // 8) / 2**30))
 
     big = H3.MASTER_SPILL_BYTES
     try:
         H3.MASTER_SPILL_BYTES = 0          # force the mapping regardless of size
         spilled = H3._alloc_master(frames, h, w)
-        ck("the spilled buffer is a float32 tensor of the right shape",
+        ck("the spilled buffer matches the master dtype and shape",
            tuple(spilled.shape) == (frames, h, w, 3)
-           and spilled.dtype == torch.float32, str(tuple(spilled.shape)))
+           and spilled.dtype == H3.MASTER_DTYPE,
+           f"{tuple(spilled.shape)} {spilled.dtype}")
         b, pos_b = drive(spilled)
         ck("the same writes land at the same positions", pos_a == pos_b,
            f"{pos_a} vs {pos_b}")

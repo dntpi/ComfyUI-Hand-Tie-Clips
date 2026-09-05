@@ -74,6 +74,7 @@ from . import tone as _tone
 from . import sheet as _sheet
 from . import music as _music
 from . import latents as _latents
+from . import audio_lock as _alock
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -1533,6 +1534,113 @@ def _decode_av(video_vae, audio_vae, latent):
     return imgs, audio
 
 
+def _resample_wav(wav, src_sr, dst_sr):
+    src_sr, dst_sr = int(src_sr), int(dst_sr)
+    if src_sr == dst_sr:
+        return wav
+    import torchaudio
+    return torchaudio.functional.resample(wav, src_sr, dst_sr)
+
+
+def _prepare_master_audio(path):
+    """Load the take once: stereo, native rate kept, plus a 32 kHz copy."""
+    got = _media.load_audio(path)
+    if got is None:
+        raise ValueError(
+            f"{TAG}: master_audio_file {path!r} did not load. The file has to "
+            "resolve under h3_refs the same way voice_file does.")
+    wav = _alock.force_stereo(got["waveform"].contiguous().cpu())
+    sr = int(got["sample_rate"])
+    wav32 = _resample_wav(wav, sr, _alock.VAE_SR)
+    digest = _store.audio_digest({"waveform": wav, "sample_rate": sr})
+    print(f"[{TAG}] master_audio_file: loaded {path!r} "
+          f"({wav.shape[-1] / sr:.2f}s at {sr} Hz, stereo)", flush=True)
+    return {"path": path, "wav": wav, "sr": sr, "wav32": wav32,
+            "digest": digest}
+
+
+def _encode_locked_slice(audio_vae, wav32, t0, t1, audio_latent_len):
+    """VAE-encode one hop's window of the 32 kHz take. -> audio latent tensor."""
+    start, end = _alock.sample_range(t0, t1, _alock.VAE_SR)
+    picture_n = max(1, end - start)
+    grid_n = _alock.grid_samples(audio_latent_len, _alock.VAE_SR)
+    enc_n = max(picture_n, grid_n)
+    enc = _alock.fit_samples(wav32, start + enc_n)[..., start:start + enc_n]
+    # song_lock: encode [B, T, C]. wav32 is [C, T].
+    batch = enc.unsqueeze(0).movedim(1, -1)
+    try:
+        z = audio_vae.encode(batch)
+    except Exception as e:
+        raise RuntimeError(
+            f"{TAG}: audio VAE encode for master_audio_file failed ({e!r}). "
+            "The lock follows PromptMasterLD song_lock.py "
+            "(encode at 32 kHz on the 40 Hz grid). If this ComfyUI's "
+            "audio VAE uses a different signature, that is a version "
+            "mismatch -- report this error."
+        ) from e
+    got = int(z.shape[-1])
+    if got < int(audio_latent_len):
+        extra = int(math.ceil(
+            (int(audio_latent_len) - got + 1) * _alock.VAE_SR / _alock.AUDIO_HZ))
+        enc2 = _alock.fit_samples(wav32, start + enc_n + extra)[
+            ..., start:start + enc_n + extra]
+        z = audio_vae.encode(enc2.unsqueeze(0).movedim(1, -1))
+        got = int(z.shape[-1])
+    if got < int(audio_latent_len):
+        raise RuntimeError(
+            f"{TAG}: audio VAE produced {got} steps, hop needs "
+            f"{int(audio_latent_len)}. The take window was "
+            f"{t0:.3f}s-{t1:.3f}s.")
+    return z[..., :int(audio_latent_len)]
+
+
+def _splice_locked_audio(latent, z_audio):
+    """Replace the hop's audio latent and freeze it. Video stays live."""
+    import comfy.nested_tensor as nt
+    parts = _latents.from_dict(latent)
+    if parts is None or len(parts) < 2:
+        raise RuntimeError(
+            f"{TAG}: master_audio_file splice needs a joint AV latent "
+            f"(video+audio); got {type((latent or {}).get('samples')).__name__}.")
+    video, audio = parts[0], parts[1]
+    z = z_audio.to(device=audio.device, dtype=audio.dtype)
+    if int(z.shape[-1]) != int(audio.shape[-1]):
+        raise RuntimeError(
+            f"{TAG}: locked audio latent length {int(z.shape[-1])} != "
+            f"hop audio length {int(audio.shape[-1])}.")
+    # Match batch/leading dims; take the first encoded copy if we produced extra.
+    while z.dim() < audio.dim():
+        z = z.unsqueeze(0)
+    while z.dim() > audio.dim():
+        z = z[0]
+    if tuple(z.shape[:-1]) != tuple(audio.shape[:-1]):
+        try:
+            z = z.expand(audio.shape)
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"{TAG}: locked audio shape {tuple(z.shape)} will not fit "
+                f"hop audio {tuple(audio.shape)} ({e}).") from e
+    parts[1] = z
+    out = dict(latent)
+    out["samples"] = _latents.rebuild(latent["samples"], parts)
+    # song_lock polarity: ones on video (denoise), zeros on audio (freeze).
+    v_shape = (1, 1) + tuple(int(d) for d in video.shape[2:])
+    a_shape = (1, 1) + tuple(int(d) for d in audio.shape[2:])
+    vmask = torch.ones(v_shape, device=video.device, dtype=torch.float32)
+    amask = torch.zeros(a_shape, device=audio.device, dtype=torch.float32)
+    _alock.assert_mask_polarity(vmask, amask)
+    out["noise_mask"] = nt.NestedTensor((vmask, amask))
+    return out
+
+
+def _slice_take_audio(prepared, t0, t1, sr):
+    """The take window, resampled to `sr`, as an AUDIO dict. For the pin."""
+    start, end = _alock.sample_range(t0, t1, prepared["sr"])
+    chunk = _alock.fit_samples(prepared["wav"], end)[..., start:end]
+    chunk = _resample_wav(chunk, prepared["sr"], int(sr))
+    return {"waveform": chunk.unsqueeze(0), "sample_rate": int(sr)}
+
+
 class HandTieClips:
     """Refs + shot plan + N hops, assembled into one clip.
 
@@ -2136,6 +2244,27 @@ class HandTieClips:
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
                     "tooltip": "Trim out, seconds, for voice 3. 0 = to the end.",
                 }),
+                # APPENDED, never inserted. Empty string leaves every existing
+                # path byte-identical: the lock is not called, the cache key
+                # does not move, the delivered audio is still the generated
+                # chain. The file is ElevenLabs (or any) TTS / a real take;
+                # every hop lip-syncs to one continuous window of it.
+                "master_audio_file": ("STRING", {
+                    "default": "",
+                    "tooltip": (
+                        "One continuous voice take every hop lip-syncs to. "
+                        "Basename under h3_refs. Empty = off, generated voice "
+                        "as before. When set: the take is sliced on the same "
+                        "clock as the picture (hop 1 starts at 0.00s), encoded "
+                        "on the 40 Hz audio-latent grid, and frozen with a "
+                        "noise_mask so only the picture is denoised. Delivered "
+                        "audio is a passthrough of this file, no VAE round "
+                        "trip. The beat still needs the words in "
+                        "<d>[English] ...</d> -- unmatched text can pull the "
+                        "mouth off the take. Changing the file invalidates "
+                        "the hop cache."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2164,7 +2293,8 @@ class HandTieClips:
                    reference_video_file="", voice_file="",
                    soundtrack_file="",
                    reference_video_2_file="", reference_video_3_file="",
-                   voice_2_file="", voice_3_file="", **_):
+                   voice_2_file="", voice_3_file="",
+                   master_audio_file="", **_):
         """Re-run when a reference file changes underneath its name.
 
         Every picture now arrives as a basename, and a basename is a stable
@@ -2177,7 +2307,8 @@ class HandTieClips:
         names = [start_image_file, reference_video_file, voice_file,
                  soundtrack_file,
                  reference_video_2_file, reference_video_3_file,
-                 voice_2_file, voice_3_file]
+                 voice_2_file, voice_3_file,
+                 master_audio_file]
         try:
             for r in (_refs.parse_ref_plan(ref_plan).get("refs") or []):
                 if r.get("file"):
@@ -2213,6 +2344,7 @@ class HandTieClips:
             reference_video_3_end_s=0.0,
             voice_2_file="", voice_2_start_s=0.0, voice_2_end_s=0.0,
             voice_3_file="", voice_3_start_s=0.0, voice_3_end_s=0.0,
+            master_audio_file="",
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -2431,6 +2563,11 @@ class HandTieClips:
         voice = (_media.load_audio(voice_file,
                                    start=float(voice_start_s), end=float(voice_end_s))
                  if voice_file else None)
+        # Empty string is off. The lock is not entered, the cache key does
+        # not grow a new field, delivered audio stays generated. That is
+        # the byte-identical claim.
+        locked = (_prepare_master_audio(master_audio_file)
+                  if str(master_audio_file or "").strip() else None)
 
         # Slots 2 and 3. All three decode at the same reference_video_size --
         # it is an area budget for the decode, not a per-clip creative choice,
@@ -2695,6 +2832,11 @@ class HandTieClips:
             # the incoming model is part of the key. See _model_fingerprint.
             "model": model_fp,
         }
+        if locked is not None:
+            # Only present when the lock is on. Adding a None field while
+            # off would move every existing cache key and break the
+            # empty-string byte-identical claim.
+            chain_salt["master_audio"] = locked["digest"]
         prev_key = None
         hop_keys = []
         # tone_compensate=anchor state. `anchor_ref` is the Lab look every hop
@@ -3151,6 +3293,26 @@ class HandTieClips:
                         audio_ctx=audio_ctx, mode=str(pin_mech),
                     )
 
+                if locked is not None:
+                    # AFTER the pin: Motion-Context may rewrite this hop's
+                    # latent. Locking first would be overwritten. BEFORE
+                    # the sampler: the freeze has to be in place when
+                    # denoise runs.
+                    _t0, _t1 = _alock.hop_audio_window_s(
+                        i, hop_length, overlap_n, FPS)
+                    _parts = _latents.from_dict(latent)
+                    if _parts is None or len(_parts) < 2:
+                        raise RuntimeError(
+                            f"{TAG}: hop {i + 1}: master_audio_file needs a "
+                            "joint AV latent and this hop did not have one.")
+                    _alen = int(_parts[1].shape[-1])
+                    _z = _encode_locked_slice(
+                        audio_vae, locked["wav32"], _t0, _t1, _alen)
+                    latent = _splice_locked_audio(latent, _z)
+                    print(f"[{TAG}] hop {i + 1}: audio locked "
+                          f"[{_t0:.2f}s-{_t1:.2f}s] of master_audio_file",
+                          flush=True)
+
                 _offload_text_encoder(clip, model)
 
                 guider = _result(BasicGuider.execute(model, cond))[0]
@@ -3176,6 +3338,18 @@ class HandTieClips:
                 wav = audio["waveform"].contiguous().cpu()
                 sr = int(audio["sample_rate"])
                 audio = {"waveform": wav, "sample_rate": sr}
+                if locked is not None:
+                    # The pin of the NEXT hop must carry the take, not a
+                    # decoded generate. Replace this hop's audio with the
+                    # matching window of the recording.
+                    _t0, _t1 = _alock.hop_audio_window_s(
+                        i, hop_length, overlap_n, FPS)
+                    audio = _slice_take_audio(locked, _t0, _t1, sr)
+                    wav = audio["waveform"].contiguous().cpu()
+                    if wav.dim() == 3:
+                        wav = wav[0]
+                    audio = {"waveform": wav.unsqueeze(0) if wav.dim() == 2
+                             else wav, "sample_rate": sr}
                 this_sampled = _latent_cpu(sampled)
 
                 del sampled, latent, cond, guider, noise
@@ -3396,6 +3570,16 @@ class HandTieClips:
                   "drift_ms": round((_a_secs - _v_secs) * 1000.0, 1),
                   "hops": int(n), "frames": int(master_imgs.shape[0]),
                   "done": True})
+
+        if locked is not None and master_wav is not None:
+            _n = _alock.passthrough_n_samples(
+                int(master_imgs.shape[0]), locked["sr"], FPS)
+            _out = _alock.fit_samples(locked["wav"], _n)
+            master_wav = _out.unsqueeze(0)
+            sr = locked["sr"]
+            _dur = _n / float(sr) if sr else 0.0
+            print(f"[{TAG}] final audio: passthrough of master_audio_file "
+                  f"[0.00s-{_dur:.2f}s]", flush=True)
 
         # The soundtrack goes on LAST, after every hop is joined and the seams
         # are crossfaded. That placement is the whole safety argument: it runs

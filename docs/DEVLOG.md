@@ -3197,3 +3197,31 @@ Nothing checked for it. Now something does.
 Not rendered. The plumbing is checked and the ordinals are tested; whether
 three voices actually behave -- and what three sets of reference blocks cost
 per step -- needs a GPU.
+
+## 56. One take, every hop (2026-09-05)
+
+`master_audio_file`: one continuous recording every hop lip-syncs to, so a
+chain can carry a scripted voiceover instead of generating a new voice per
+hop and relaying it. Empty string is off and is the default. The reference
+diff that first shipped this on a tester's tree is not in the pack; this
+was rebuilt from the prose, from `PromptMasterLD/song_lock.py` as the
+mask/encode reference, and from seven decisions taken in place of asking.
+
+The window function is 0-based, pure, and checked against a hand-computed
+table for hops 0-8 at 8 s and hops 0-2 at 15 s (`tools/check_audio_lock.py`).
+A 1-based version fails every row of that table. The recording's digest is
+in `chain_salt` only when the file is set -- adding a None field while off
+would have moved every existing cache key. Delivered audio is a passthrough
+of the take trimmed to the rendered duration; the log line names the window.
+
+Untested, because this machine has no GPU window:
+
+- Whether `SamplerCustomAdvanced` honours a NestedTensor `noise_mask` on
+  the audio stream. The polarity is asserted (1 on video, 0 on audio) but
+  an ignored mask would still generate a voice that we then throw away at
+  passthrough -- lips would follow the generate, sound would be the take.
+  GPU test 1 in `GROK_V2_GPU_TESTS.md` is the proof.
+- Whether this ComfyUI's audio VAE `encode` matches song_lock's
+  `[B, T, C]` call. A mismatch raises with both signatures.
+- Beat/`<d>` alignment with the take. We do not auto-cut a transcript into
+  the beat; unmatched words can pull the mouth off. Visible, recoverable.

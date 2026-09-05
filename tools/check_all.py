@@ -45,6 +45,7 @@ CHECKS = [
     ("check_master_spill.py", []),
     ("check_anchor.py", []),
     ("check_media_slots.py", []),
+    ("check_audio_lock.py", []),
     ("check_planner.py", []),
     ("gen_schema.py", ["--check"]),
 ]

@@ -60,6 +60,12 @@ const SLOTS = [
     ["soundtrack_file", "audio", "soundtrack",
      "Music bed mixed under the whole chain once it is joined. Not a reference -- the model never hears it.",
      "music", null, null],
+    // Last: a file widget with no slot here falls through to a native dial.
+    // The take is not a reference -- the model does not generate it. Every hop
+    // lip-syncs to one window of this file. Empty = off.
+    ["master_audio_file", "audio", "master audio (lip-sync lock)",
+     "One continuous take every hop lip-syncs to. Empty = generated voice as before. Delivered audio is this file, no VAE round trip.",
+     null, null, null],
 ];
 
 /** The widget names this strip owns, so the caller hides exactly those. */

@@ -32,3 +32,25 @@ docs/img/
 # those are for users.
 CLAUDE.md
 docs/DEVLOG.md
+
+# Session documents. These were written for whoever picks the work up next --
+# a handoff between agents, a GPU test protocol, a deferred-engineering memo --
+# and they are useful on GitHub for exactly that reason. They must not be in
+# the published artifact, because they name THIS machine -- the pack's install
+# path, a user Desktop, the ComfyUI log, the venv interpreter, the reference
+# stills of one specific graph, and the filename of a voice take belonging to
+# somebody who is not the installer. A published pack that tells a stranger
+# where somebody's desktop is has leaked something whatever else it does right.
+#
+# The paths are DESCRIBED and not written out, for the reason the header of
+# this file gives about scanner tokens: this file ships, so anything quoted in
+# it lands in the zip. tools/check_publish.py enforces that, and caught this
+# very comment quoting them on its first run.
+#
+# BETA_NOTES.md is here for a duller reason: it describes 1.2.0-beta1, is
+# marked superseded, and is not 2.0.0 user material.
+docs/GROK_TO_CLAUDE.md
+docs/GROK_V2_HANDBACK.md
+docs/GROK_V2_GPU_TESTS.md
+docs/POST_V2.md
+BETA_NOTES.md

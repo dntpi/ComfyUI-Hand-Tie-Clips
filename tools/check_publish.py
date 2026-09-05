@@ -28,6 +28,7 @@ refused everywhere else, which is exactly the DEVLOG case.
 from __future__ import annotations
 
 import fnmatch
+import re
 import os
 import subprocess
 import sys
@@ -78,8 +79,52 @@ def published_files():
     return [f for f in tracked if not ignored(f)]
 
 
+# Absolute paths that name THIS machine rather than any machine. The font
+# fallback list in sheet.py is a legitimate Windows path and is not this.
+_LOCAL_PATH = re.compile(r"[A-Za-z]:\\(?:Users|ComfyUI)\\|/[a-z]/ComfyUI/")
+
+
+def check_no_local_paths(files):
+    """Nothing in the published zip may name this disk.
+
+    A session document is written for whoever picks the work up next, and is
+    useful on GitHub for exactly that reason. In the published artifact it is
+    a leak: the handoff notes carry this pack's absolute path, a Desktop path,
+    the ComfyUI log, the venv interpreter, and the filename of a voice take
+    belonging to somebody who is not the installer. They were tracked and NOT
+    in .comfyignore, so they would have shipped.
+
+    Enforced rather than remembered. The .comfyignore entries are the fix;
+    this is what stops the next session document arriving without one.
+    """
+    out = []
+    for rel in files:
+        if os.path.basename(rel) == "sheet.py":
+            continue                     # Windows font fallbacks, deliberate
+        try:
+            with open(os.path.join(HERE, rel), encoding="utf-8",
+                      errors="replace") as fh:
+                for i, line in enumerate(fh, 1):
+                    if _LOCAL_PATH.search(line):
+                        out.append((rel, i, line.strip()[:100]))
+        except (OSError, UnicodeError):
+            continue
+    return out
+
+
 def main():
     files = published_files()
+
+    leaks = check_no_local_paths(files)
+    if leaks:
+        print("PUBLISH CHECK: %d line(s) in the published zip name this "
+              "machine:" % len(leaks))
+        for rel, i, line in leaks[:12]:
+            print("  FAIL %s:%d  %s" % (rel, i, line))
+        print("       Add the file to .comfyignore, or take the path out.")
+        return 1
+    print("  ok   no published file names this disk       "
+          "%d file(s) scanned" % len(files))
     # The guard that matters. A checker which silently checks nothing is the
     # failure mode every checker has; check_ui.py shipped with exactly that bug
     # and reported success against zero imports.

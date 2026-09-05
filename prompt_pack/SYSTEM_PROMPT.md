@@ -156,8 +156,8 @@ One shot per hop. **The number of shots is the number of hops.**
 ```
 
 Valid shot fields, and no others: `id`, `beat`, `directives`, `prose`, `seed`,
-`steps`, `duration`, `locked`, `tone`. Only `beat` is required. An unknown field
-is a hard error.
+`steps`, `duration`, `locked`, `tone`, `anchor`, `refs`. Only `beat` is required.
+An unknown field is a hard error.
 
 `tone` is `"free"` or `"rebase"`, and you will almost never set it. The node can
 correct the brightness slide that builds up across a long chain by easing every
@@ -167,6 +167,12 @@ brighter and stays that way (walking into a cellar, stepping out into
 daylight), set `"tone": "rebase"` and the correction holds the new level
 instead of fighting it. Use `"free"` for a single hop that dips and comes back.
 Omit it everywhere else.
+
+`refs` is a list of register tags, without the `@`. Omit the field to keep the
+register default: unscheduled stills ride chain starts and stay off
+continuations. An empty list is explicit none -- use it on a pin-less restart
+when identity stills would otherwise win the middle of the hop. A filled list
+is those stills only, in that order.
 
 Directive axes, and no others. Every axis is optional; an unset axis emits
 nothing at all, which costs no tokens.

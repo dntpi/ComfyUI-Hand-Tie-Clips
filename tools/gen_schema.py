@@ -132,6 +132,15 @@ def build():
                                       "image, never on shot 1, and only on a "
                                       "chain long enough to need one (roughly "
                                       "every 4-6 hops)."},
+            "refs": {"type": "array", "items": {"type": "string"},
+                     "description": "Which register stills ride this hop, as "
+                                    "@tags without the @. Omit the field for "
+                                    "the register default (unscheduled stills "
+                                    "on chain starts, off continuations). An "
+                                    "empty list is explicit none -- how you "
+                                    "drop identity stills on a pin-less "
+                                    "restart. A filled list is those tags "
+                                    "only, in that order."},
         },
     }
     assert set(shot["properties"]) == set(p._SHOT_KEYS), (

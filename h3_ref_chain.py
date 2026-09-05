@@ -2566,6 +2566,12 @@ class HandTieClips:
                     )
         _validate_anchors(shots, start_image_file)
         _validate_last_frame_guide(last_frame_guide, start_image_file)
+        try:
+            _rp_for_refs = _refs.parse_ref_plan(ref_plan)
+        except Exception:
+            _rp_for_refs = None
+        if _rp_for_refs is not None:
+            _plan.validate_shot_refs(shots, _rp_for_refs.get("refs"))
         # Same rule, same reason: checked on the queue, by filename, before any
         # media is loaded. A chain that cannot reach its anchor should say so in
         # a second rather than nine hops later.
@@ -2958,27 +2964,41 @@ class HandTieClips:
             _push_preview(unique_id, f"hop {i + 1}/{n} sampling…", hop=i + 1, total=n,
                            frac=(write_pos / float(total_frames)) if total_frames else None)
 
-            # With a register, this hop's refs are only the ones active on it,
-            # re-packed in slot order. The image dict and the ordinals the prompt
-            # cites are built from the same list, so they cannot drift apart.
+            # With a register, this hop's refs are only the ones active on it.
+            # shot.refs, when present, is the whole rail for this hop --
+            # including the empty list, which is how you drop identity stills
+            # on a pin-less restart without changing the rest of the chain.
+            # Omitted keeps the register default: unscheduled stills ride
+            # chain starts and stay off continuations under hop_script=next.
             hop_active = []
             hop_subject_prose = ""
             if ref_plan_refs:
-                hop_active = _refs.active_refs(ref_plan_refs, i, set(slot_images))
-                # Continuation: omit shots[] = hop 1 only. Face/outfit plates
-                # of a different room (chain_00034) beat the pin as Pictures 1–3
-                # and hop 2 opened a new Ref2VA generate — commercial kitchen,
-                # apron gone. List hop numbers on a ref to ride later hops.
-                if not hop_is_start and str(hop_script) == "next":
-                    dropped = [r["tag"] for r in hop_active if r.get("shots") is None]
-                    hop_active = [r for r in hop_active if r.get("shots") is not None]
-                    if dropped:
-                        print(
-                            f"[{TAG}] hop {i + 1}: unscheduled stills stay off "
-                            f"this continue ({', '.join('@' + t for t in dropped)}); "
-                            f"pin carries wardrobe and room",
-                            flush=True,
-                        )
+                shot_refs = shot.get("refs")
+                if shot_refs is not None:
+                    hop_active = _refs.select_for_shot(
+                        ref_plan_refs, shot_refs, set(slot_images))
+                    print(
+                        f"[{TAG}] hop {i + 1}: shot.refs "
+                        + (", ".join("@" + t for t in shot_refs) or "(none)"),
+                        flush=True,
+                    )
+                else:
+                    hop_active = _refs.active_refs(
+                        ref_plan_refs, i, set(slot_images))
+                    # Continuation: omit shots[] = hop 1 only. Face/outfit plates
+                    # of a different room (chain_00034) beat the pin as Pictures 1–3
+                    # and hop 2 opened a new Ref2VA generate — commercial kitchen,
+                    # apron gone. List hop numbers on a ref to ride later hops.
+                    if not hop_is_start and str(hop_script) == "next":
+                        dropped = [r["tag"] for r in hop_active if r.get("shots") is None]
+                        hop_active = [r for r in hop_active if r.get("shots") is not None]
+                        if dropped:
+                            print(
+                                f"[{TAG}] hop {i + 1}: unscheduled stills stay off "
+                                f"this continue ({', '.join('@' + t for t in dropped)}); "
+                                f"pin carries wardrobe and room",
+                                flush=True,
+                            )
                 base_images = {
                     f"ref_image_{k + 1}": slot_images[r["slot"]]
                     for k, r in enumerate(hop_active)

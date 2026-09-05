@@ -3282,3 +3282,26 @@ continuation join). A hard concat might click; we did not hear it.
 GPU test 4 in `GROK_V2_GPU_TESTS.md` is the length check -- the log
 line names the frame count.
 
+## 59. Shot-level refs, a choice not a drop (2026-09-05)
+
+Identity stills on a pin-less hop can win the middle of it -- restart hop
+4 of the tester chain opened on the couch and visited the portrait
+anyway. Silently dropping those stills on restart hops was the old
+accident, and it is not obviously right: a restart that needs the face
+still needs the face.
+
+`shot.refs` is the choice. Omitted keeps the register default
+(unscheduled stills ride chain starts, stay off continuations under
+`hop_script=next`). `[]` is explicit none. A filled list is those tags
+only, in that order -- putting the room first is how you stop a portrait
+becoming Picture 1. Unknown tags fail on the queue. The editor
+round-trips both a filled list and the empty list; destroying the field
+on save is how it died the first time it existed.
+
+Default is current behaviour on purpose. Last-frame guide (DEVLOG
+"Last-frame guide, opt-in") is the other medicine, and it is also
+opt-in. Neither ships as a silent drop.
+
+Untested: whether `refs: []` on hop 4 actually keeps the couch. The
+diagnosis is from pictures, not from this code path. GPU test 3.
+

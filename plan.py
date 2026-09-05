@@ -21,6 +21,12 @@ Shot fields (all optional except `beat`):
                 chain-wide pull for this hop. "free" skips the pull once;
                 "rebase" also moves the anchor to this hop, for a scene that is
                 deliberately darker (or brighter) from here on.
+    refs        None | [] | [tag, ...] -- which register stills ride this hop.
+                None (omitted) keeps the register default: unscheduled stills
+                on chain starts, off continuations. [] is explicit none --
+                that is how you drop identity stills on a pin-less restart
+                without changing the rest of the chain. A list is those tags
+                only, in that order.
     id          stable identifier, generated if absent
 """
 
@@ -30,13 +36,12 @@ from . import directives as _d
 
 TAG = "HandTieClips"
 
-# No "refs" here. A shot never activated a reference: activation is the ref's
-# own `shots` list in refs.py. The field was parsed, normalised and printed but
-# read by nothing -- and the editor neither loads nor writes it, so a
-# hand-authored shot_plan lost it the first time anyone touched a card. Leaving
-# it out means _norm_shot's unknown-field error names it and points at `shots`.
+# `refs` is a choice, not a silent drop. Activation is still the ref's own
+# `shots` list when this field is omitted. When it is present it is the whole
+# rail for this hop, including the empty list. The editor round-trips it;
+# dropping it on save was how the field died the first time.
 _SHOT_KEYS = {"id", "beat", "directives", "prose",
-              "seed", "steps", "duration", "locked", "tone", "anchor"}
+              "seed", "steps", "duration", "locked", "tone", "anchor", "refs"}
 
 
 TONE_VALUES = ("", "free", "rebase")
@@ -86,6 +91,65 @@ def _anchor_field(v, where):
     return v
 
 
+def _refs_field(v, where):
+    """Validate a shot's `refs`. -> None | list of tags.
+
+    None means omitted: the register's own `shots` lists decide, plus the
+    hop_script=next rule that keeps unscheduled stills off continuations.
+    An empty list is explicit none -- that is the choice that drops
+    identity stills on a pin-less restart. A non-empty list is those
+    tags only, in that order (Picture 1 is the first tag).
+    """
+    if v is None or v is False:
+        return None
+    if isinstance(v, str):
+        v = v.strip()
+        if not v or v.lower() == "none":
+            return [] if v.lower() == "none" else None
+        v = [p for p in v.replace(",", " ").split() if p]
+    if not isinstance(v, (list, tuple)):
+        raise ValueError(
+            f"{TAG}: {where}refs must be a list of tags (or omitted), "
+            f"got {type(v).__name__}")
+    out = []
+    seen = set()
+    for item in v:
+        tag = str(item).strip().lstrip("@")
+        if not tag:
+            raise ValueError(f"{TAG}: {where}refs contains an empty tag")
+        if tag in seen:
+            continue
+        seen.add(tag)
+        out.append(tag)
+    return out
+
+
+def validate_shot_refs(shots, ref_plan_refs):
+    """Refuse shot.refs that name tags the register does not have.
+
+    A non-empty list with no register is the same class of error: there
+    is nothing to pick from. An empty list is a valid 'none' even without
+    a register -- it just agrees with the no-stills path.
+    """
+    known = {r["tag"] for r in (ref_plan_refs or [])}
+    for i, sh in enumerate(shots or []):
+        tags = (sh or {}).get("refs")
+        if tags is None:
+            continue
+        if tags and not known:
+            raise ValueError(
+                f"{TAG}: shot {i + 1} lists refs={tags} but there is no "
+                "reference register. Shot-level refs pick from the register; "
+                "without one there is nothing to pick. Add a ref_plan, or "
+                "omit the field.")
+        unknown = [t for t in tags if t not in known]
+        if unknown:
+            raise ValueError(
+                f"{TAG}: shot {i + 1} refs names unknown tag(s) "
+                f"{', '.join('@' + t for t in unknown)}. Declared: "
+                f"{', '.join('@' + t for t in sorted(known))}.")
+
+
 def _norm_shot(raw, i):
     where = f"shot {i + 1}: "
     if isinstance(raw, str):
@@ -132,6 +196,7 @@ def _norm_shot(raw, i):
         "locked": bool(raw.get("locked")),
         "tone": _tone_field(raw.get("tone"), where),
         "anchor": _anchor_field(raw.get("anchor"), where),
+        "refs": _refs_field(raw.get("refs"), where),
     }
 
 
@@ -475,6 +540,10 @@ def describe(shots):
             extra.append("locked")
         if s.get("tone"):
             extra.append(f"tone={s['tone']}")
+        if s.get("anchor"):
+            extra.append(f"anchor={s['anchor']}")
+        if s.get("refs") is not None:
+            extra.append("refs=" + (",".join("@" + t for t in s["refs"]) or "none"))
         beat = (s["beat"] or "").replace(chr(10), " ")
         if len(beat) > 60:
             beat = beat[:57] + "..."

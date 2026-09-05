@@ -332,6 +332,31 @@ def active_refs(refs, hop_index, wired_slots):
     return sorted(out, key=lambda r: r["slot"])
 
 
+def select_for_shot(refs, tags, wired_slots):
+    """The stills a shot.refs list named, in that list's order.
+
+    Order is the author's Picture 1, 2, 3 -- not rail order. Putting the
+    room first is how you stop identity stills winning the middle of a
+    pin-less hop. Tags the register does not have are the caller's
+    problem (`plan.validate_shot_refs` refuses them on the queue). A
+    tag whose file did not load is skipped, same as active_refs.
+    """
+    by_tag = {r["tag"]: r for r in refs}
+    out = []
+    seen = set()
+    for t in tags or []:
+        if t in seen:
+            continue
+        seen.add(t)
+        r = by_tag.get(t)
+        if r is None:
+            continue
+        if r["slot"] not in wired_slots:
+            continue
+        out.append(r)
+    return out
+
+
 def ordinals(active):
     """tag -> `<Picture N>` ordinal for this hop.
 

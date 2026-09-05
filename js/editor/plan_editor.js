@@ -59,6 +59,11 @@ export function parsePlan(text) {
         // shipped in 1.1 with that defect.
         tone: s.tone || "",
         anchor: s.anchor || "",
+        // Same class as tone/anchor: a Python-side field the editor used to
+        // destroy on any card edit. null = register default; [] = none.
+        refs: Array.isArray(s.refs)
+            ? s.refs.map((t) => String(t).replace(/^@/, "").trim()).filter(Boolean)
+            : null,
     }));
 }
 
@@ -76,6 +81,9 @@ export function planToJson(shots) {
         if (s.locked) o.locked = true;
         if (s.tone) o.tone = s.tone;
         if (s.anchor) o.anchor = s.anchor;
+        // Write [] as well as a filled list: omitting it would turn
+        // "explicit none" into "register default" on the next save.
+        if (Array.isArray(s.refs)) o.refs = s.refs;
         return o;
     });
     return JSON.stringify({ shots: out }, null, 2);
@@ -614,6 +622,30 @@ export function createPlanEditor(node, { onChange }) {
             anchorL.appendChild(anchorS);
             grid.appendChild(anchorL);
         }
+
+        const refsL = el("label", "h3e-field");
+        refsL.appendChild(el("span", null, "refs"));
+        const refsI = el("input", "h3e-input");
+        refsI.type = "text";
+        refsI.value = shot.refs == null
+            ? ""
+            : (shot.refs.length ? shot.refs.map((t) => "@" + t).join(" ") : "none");
+        refsI.placeholder = "register default";
+        refsI.title =
+            "Which stills ride this hop. Blank = register default "
+            + "(unscheduled stills on chain starts, off continuations). "
+            + "'none' = no stills -- the choice that drops identity photos "
+            + "on a pin-less restart. @tag @tag = these only, in that order.";
+        const parseRefsField = (raw) => {
+            const t = String(raw || "").trim();
+            if (!t) return null;
+            if (t.toLowerCase() === "none" || t === "-") return [];
+            return t.split(/[\s,]+/).map((x) => x.replace(/^@/, "").trim()).filter(Boolean);
+        };
+        refsI.addEventListener("input", () => { shot.refs = parseRefsField(refsI.value); writeWidget(); });
+        refsI.addEventListener("change", () => { shot.refs = parseRefsField(refsI.value); commit(); });
+        refsL.appendChild(refsI);
+        grid.appendChild(refsL);
 
         const idL = el("label", "h3e-field");
         idL.appendChild(el("span", null, "id"));

@@ -1309,9 +1309,13 @@ def _alloc_master(total_frames, height, width):
     except Exception as e:  # noqa: BLE001
         # Falling back is correct -- a chain that renders slowly beats one that
         # refuses to start because a temp directory is read-only.
+        # MASTER_DTYPE, not float32: `gb` was computed from
+        # MASTER_NP_DTYPE.itemsize, so a float32 buffer here would be twice
+        # what this line just told the user -- and it would land on the one
+        # machine that could not spare a spill file.
         print(f"[{TAG}] master spill unavailable ({e!r}); {gb:.1f} GB in RAM",
               flush=True)
-        return torch.empty(shape, dtype=torch.float32)
+        return torch.empty(shape, dtype=MASTER_DTYPE)
 
 
 def _dense_media(prefix, items):

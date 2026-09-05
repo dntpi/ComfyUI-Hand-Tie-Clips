@@ -3618,3 +3618,73 @@ The audit's own framing is worth keeping: **a fixture that does not resemble pro
 not a test**, and the resemblance decays silently every time a feature lands next to an
 older checker. Twenty-two green checks were true and four of them were not measuring what
 their names claimed.
+
+## 69. The caption was describing the person it replaced (2026-09-06)
+
+SWAP shipped in 2.0.0 as a standalone implant: a fifth tab that writes one hop from a
+reference clip and an identity still, and never touches `ref_plan`. Stages 1 to 3 passed
+their GPU gate and merged. This is what stage 4 -- the swap modes -- cost to get right, and
+none of it was in the code.
+
+**A `headswap` checkbox cannot work here.** The contributed fork had one, and unticking it
+only omitted a line from the instruct. That does nothing: sampling runs at cfg 1.0 with no
+negative branch, the identity photograph is in front of the encoder either way, and silence
+about identity lets it govern the whole subject. What is excluded has to be SAID.
+
+The taxonomy came from PromptMasterLD, whose edit laws separate a subject replace from a
+head swap -- *"THE BODY STAYS WITH THE PLATE"*, then build, hands, posture, every garment --
+and from a features-only face swap. Four named modes, each stating what STAYS. Technique,
+not code.
+
+**Then three renders that all looked like "head swap does not work", and were three
+different things.**
+
+The first was a description of a pose. SWAP was sent ONE frame, so a vision model looking at
+a still of somebody with their hands on a bed wrote exactly that, while the instruct told it
+"the action, place and motion follow the clip" -- asking it to describe something it had
+never been shown. Three frames now, evenly spaced across the trimmed window and captioned in
+time order. That is also what "video vision" is in practice: the VLMs advertising it sample
+frames and present them ordered. Saying the order out loud is what turns three pictures into
+a movement. The next caption read *"clenching their fists as white steam begins to rise...
+posture intensifies... vapor swirls more aggressively"*.
+
+The second was the beat naming the identity once, in a subordinate clause -- *"the person
+with the head of @ref_1"* -- against a clip carrying 192 frames of conditioning. One
+photograph, added rather than weighed. The mode rules now specify the construction: the
+pack's own idiom first, attached to the subject, then a second sentence saying what stays.
+
+**The third was the one that mattered, and the user found it, not me.** The failed run had a
+clip description and the successful one did not:
+
+    successful:  a reference clip is wired but has no description
+    failed:      <Video 1> is a reference clip: A man wearing an orange tank
+                 top stands in a dimly lit room...
+
+That caption reaches the encoder as what `<Video 1>` IS. "A man wearing an orange tank top"
+asserts the subject's sex, build and clothing, additively, against a beat asking for
+somebody else. Not a weak signal losing a contest -- a flat contradiction. And SWAP's own
+Describe button wrote it, because `_DESCRIBE_SYSTEM` asked for *"who is in it"*.
+
+The clip is a MOTION AND PLACE plate. Identity comes from the stills. The caption now
+describes the action, the movement, the setting and the light, and is told not to describe
+the person at all. Because that is an instruction to an LLM rather than a guarantee, the
+caption is screened for words that describe a person and the tab says which ones it found --
+a warning, never a rejection, since "a man" is a fine caption for a crowd.
+
+**And a fourth thing, which is not a bug and is worth more than the rest.** With all of that
+fixed the swap still only took hold four seconds into an eight second hop. Core truncates a
+reference clip to `frames[:frame_count]`, so reference frame N conditions output frame N --
+the clip is temporally aligned with the output, and wherever it shows a clear face it
+competes with the identity stills for that same face. Decode area sets token count, token
+count is how loud the clip is, and at MAX it wins until the clip's own face is obscured. The
+swap arrived exactly when the steam covered him.
+
+0.3 MP fixed it. `reference_video_size` was documented purely as a memory and detail budget,
+which is true and is not the half a user needs when an identity swap half works. It is an
+INFLUENCE dial and now says so.
+
+What this section is really about: four consecutive reports of "head swap does not work"
+that were a missing frame sequence, a weak citation, a self-inflicted contradiction and a
+conditioning imbalance. Nothing in the code was broken. Every one of them was legible from
+the log -- the caption line, the beat, the frame count -- and three of the four were found by
+reading it rather than by changing anything.

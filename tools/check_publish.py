@@ -51,6 +51,32 @@ PATTERNS = [
     (".bind(", "matched $socket4 on 1.0.2", ()),
     ("subprocess.Popen", "python_command_injection_risk on 0.4.1-0.4.3", ()),
     ("subprocess.run", "python_command_injection_risk on 1.0.0", ()),
+    # The BARE token as well as the two call forms. The scan reads prose the
+    # same way it reads code -- 1.0.2 was Flagged for a class name quoted in a
+    # markdown file while explaining why it had been Flagged -- and two shipped
+    # modules carried this word in comments describing why the thing it names
+    # was REMOVED. Describe the mechanism, never spell it. tools/ is
+    # comfyignored, so this file naming it is not in the scanned set.
+    ("subprocess", "the bare token; prose counts, see 1.0.2", ()),
+    # OS PROBING. Never flagged here, and checked because a scanner reading a
+    # pack that asks the machine who it is has every reason to look harder --
+    # host name, user name, MAC address and the environment are what
+    # fingerprinting looks like, whatever they were meant for. This pack has
+    # never needed any of it: paths come from folder_paths, media from
+    # media.resolve, and the one legitimate absolute path in the tree is
+    # sheet.py's Windows font fallback, which names no user and no machine.
+    #
+    # Listed as a class rather than waiting to be Flagged for one of them.
+    ("platform.system", "OS probing: not needed, reads as fingerprinting", ()),
+    ("platform.machine", "OS probing", ()),
+    ("platform.node", "OS probing: the host name", ()),
+    ("platform.uname", "OS probing", ()),
+    ("socket.gethostname", "OS probing: the host name", ()),
+    ("getpass.getuser", "OS probing: the user name", ()),
+    ("uuid.getnode", "OS probing: the MAC address", ()),
+    ("winreg", "registry access", ()),
+    ("os.environ", "reads the environment", ()),
+    ("os.getenv", "reads the environment", ()),
     ("importlib.import_module", "python_bytecode_manipulation on 1.0.0", ()),
     (_AIOHTTP, "matched $http5 on 1.0.1 and 1.0.2", ("llm.py",)),
 ]

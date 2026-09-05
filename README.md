@@ -73,9 +73,9 @@ of a second, separate generation. The pack exists so that you cannot tell which.
 > which ComfyUI already depends on. **The format is unchanged** (ffv1 /
 > `rgb48le` / level 3), verified bit-exact in both directions, so caches
 > written by the old path still read and a resumed chain still matches an
-> uninterrupted one. This also clears the Comfy registry's security scan,
-> which flags every `subprocess` call in a custom node regardless of how it is
-> invoked. Section 23 of the devlog.
+> uninterrupted one. This also clears the Comfy registry's security scan, which
+> flags any spawn of an external command from a custom node regardless of how
+> it is invoked. Section 23 of the devlog.
 
 > **1.0.0 — 2026-09-02.** First full release. The headline is **WRITE**: a plan
 > writer on the node itself, pointed at any OpenAI-compatible server, that fills

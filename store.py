@@ -57,10 +57,13 @@ LEGACY_LATENT_EXT = ".latent.pt"
 #      164 -- hard-failed with a RuntimeError for anyone who did not happen to
 #      have ffmpeg installed. ComfyUI itself never needs it on PATH, so that is
 #      most users, and the failure landed on the pack's fastest path.
-#   2. The Comfy registry's YARA scan flags every `subprocess` call in a custom
-#      node (`python_command_injection_risk`, "detects ALL os.system and
-#      subprocess usage") with no taint analysis, so a static argument list with
-#      shell=False still flagged all three published versions.
+#   2. The Comfy registry's YARA scan flags EVERY spawn of an external command
+#      from a custom node, whatever it spawns, with no taint analysis -- so a
+#      static argument list and no shell still flagged all three published
+#      versions. (The rule's own name and the call forms it matches are
+#      deliberately not written here: this file ships, and the scan reads a
+#      comment exactly as it reads code. 1.0.2 was Flagged for a class name
+#      quoted in a markdown file while explaining why it had been Flagged.)
 #
 # `av` is a hard dependency of ComfyUI itself -- SaveVideo and CreateVideo are
 # built on it -- so this trades an optional external binary for a library that
@@ -121,7 +124,7 @@ def _latent_to_flat(latent):
 
     The sidecar used to be `torch.save`, which means a pickle, which means the
     read had to pass `weights_only=False`. That is the single most obvious
-    thing a registry scanner reaches for after the subprocess work in
+    thing a registry scanner reaches for after the child-process work in
     0.4.1-0.4.3, and it is unnecessary here: `samples` is the only awkward
     member, and `latents.parts()` already decomposes it into plain tensors
     because the pin levers needed exactly that.

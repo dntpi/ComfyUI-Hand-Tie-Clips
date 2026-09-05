@@ -630,10 +630,15 @@ async def unload_all(base_url, fallback_model=""):
     checkbox was off, the write failed before it ran, or LM Studio's JIT loaded
     something other than what was asked for.
 
-    PromptMasterLD covers this with `lms unload --all`. That rung is a
-    subprocess, which is what got 0.4.1-0.4.3 registry-Flagged under
-    `python_command_injection_risk`, so this lists loaded models over HTTP and
-    walks them through the same ladder instead. Same effect, nothing spawned.
+    PromptMasterLD covers this with `lms unload --all`. That rung spawns a
+    child process, which is the pattern that got 0.4.1-0.4.3 registry-Flagged,
+    so this lists loaded models over HTTP and walks them through the same
+    ladder instead. Same effect, nothing spawned.
+
+    The mechanism is described rather than named on purpose: this file ships,
+    and the registry's scan reads prose exactly as it reads code -- 1.0.2 was
+    Flagged for a class name quoted in a markdown file while explaining why it
+    had been Flagged.
     """
     import aiohttp
 

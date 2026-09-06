@@ -33,10 +33,17 @@ git lfs push https://github.com/dntpi/ComfyUI-Hand-Tie-Clips.git main
 git push origin main
 ```
 
-Two further traps behind that one, both silent:
+**`git lfs push <url> <branch>` uploads only the objects reachable from that
+branch**, so a picture added on a feature branch is not covered by a `main`
+push until the merge has landed locally. Merge first, then push the objects,
+then push the branch. Getting that order wrong is how two images sat on `v2`
+for a release cycle while the `main` push reported success.
+
+Three further traps behind that one, all silent:
 
 - **`raw.githubusercontent.com` does not resolve an LFS pointer.** It serves the 131-byte pointer file as `200 OK` / `text/plain`, so every `<img>` breaks with no error anywhere. Use `media.githubusercontent.com/media/<owner>/<repo>/<ref>/<path>`, which is what the README and the `Icon`/`Banner` fields point at. `github.com/<o>/<r>/raw/` behaves like `raw.`, not like `media.`.
 - **HuggingFace refuses plain binaries regardless of size** -- it rejected PNGs of 262-545 KB, not just the >10 MB the old `.gitattributes` comment assumed. Anything binary under `docs/img/` must be LFS or the mirror push fails.
+- **A missing object is not visible from this machine.** The tree, the pointer and the working copy are all correct locally whether or not the upload happened; only a fetch tells you. `tools/check_lfs_urls.py` fetches every image the README and the `Icon`/`Banner` fields reference and asserts each comes back 200, not starting with a pointer header, and the same byte count as the file on disk -- which is what catches the `raw.` case, since that one is a successful response. It is the only checker that needs the network, so it is not in `check_all.py`: run it after the push and before `comfy node publish`.
 
 ## Architecture
 

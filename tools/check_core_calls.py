@@ -31,7 +31,20 @@ COMFY = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, COMFY)
 
 FAIL = []
-WATCHED = {"MiniMaxH3ReferenceToVideo", "MiniMaxH3AddGuide", "MiniMaxH3ImageToVideo"}
+# Every Core node this pack calls, and the module that defines it. The H3 three
+# are the ones whose order actually moved; the sampler five are the same failure
+# class waiting to happen, and cost nothing to watch.
+WATCHED = {
+    "MiniMaxH3ReferenceToVideo": "comfy_extras.nodes_minimax_h3",
+    "MiniMaxH3AddGuide": "comfy_extras.nodes_minimax_h3",
+    "MiniMaxH3ImageToVideo": "comfy_extras.nodes_minimax_h3",
+    "MiniMaxH3SigmaShift": "comfy_extras.nodes_minimax_h3",
+    "KSamplerSelect": "comfy_extras.nodes_custom_sampler",
+    "BasicScheduler": "comfy_extras.nodes_custom_sampler",
+    "BasicGuider": "comfy_extras.nodes_custom_sampler",
+    "RandomNoise": "comfy_extras.nodes_custom_sampler",
+    "SamplerCustomAdvanced": "comfy_extras.nodes_custom_sampler",
+}
 
 
 def ck(name, cond, detail=""):
@@ -41,7 +54,11 @@ def ck(name, cond, detail=""):
 
 
 def core_params(cls_name):
-    from comfy_extras import nodes_minimax_h3 as core
+    import importlib
+    try:
+        core = importlib.import_module(WATCHED[cls_name])
+    except (ImportError, KeyError):
+        return None
     cls = getattr(core, cls_name, None)
     if cls is None:
         return None

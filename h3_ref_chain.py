@@ -2879,9 +2879,17 @@ class HandTieClips:
         sampler = base_sigmas = None
         sigma_cache = {}
         if not dry:
-            model = _result(MiniMaxH3SigmaShift.execute(model, float(shift_video), float(shift_audio)))[0]
-            sampler = _result(KSamplerSelect.execute(sampler_name))[0]
-            base_sigmas = _result(BasicScheduler.execute(model, scheduler, int(steps), 1.0))[0]
+            model = _result(_core_call(
+                MiniMaxH3SigmaShift, "the sigma shift",
+                model=model, shift_video=float(shift_video),
+                shift_audio=float(shift_audio)))[0]
+            sampler = _result(_core_call(
+                KSamplerSelect, "the sampler",
+                sampler_name=sampler_name))[0]
+            base_sigmas = _result(_core_call(
+                BasicScheduler, "the sigma schedule",
+                model=model, scheduler=scheduler, steps=int(steps),
+                denoise=1.0))[0]
             sigma_cache = {int(steps): base_sigmas}
 
         print(
@@ -3587,23 +3595,30 @@ class HandTieClips:
 
                 _offload_text_encoder(clip, model)
 
-                guider = _result(BasicGuider.execute(model, cond))[0]
+                guider = _result(_core_call(
+                    BasicGuider, "the guider",
+                    model=model, conditioning=cond))[0]
                 if shot.get("seed") is not None:
                     shot_seed = int(shot["seed"])
                 else:
                     shot_seed = (int(seed) + i) if seed_per_shot else int(seed)
                 hop_steps = int(shot.get("steps") or steps)
                 if hop_steps not in sigma_cache:
-                    sigma_cache[hop_steps] = _result(
-                        BasicScheduler.execute(model, scheduler, hop_steps, 1.0))[0]
+                    sigma_cache[hop_steps] = _result(_core_call(
+                        BasicScheduler, "the sigma schedule",
+                        model=model, scheduler=scheduler, steps=hop_steps,
+                        denoise=1.0))[0]
                 hop_sigmas = sigma_cache[hop_steps]
                 if hop_steps != int(steps) or shot.get("seed") is not None:
                     print(f"[{TAG}] hop {i + 1} override: seed={shot_seed} "
                           f"steps={hop_steps}", flush=True)
-                noise = _result(RandomNoise.execute(shot_seed))[0]
-                sampled = _result(SamplerCustomAdvanced.execute(
-                    noise, guider, sampler, hop_sigmas, latent
-                ))[0]
+                noise = _result(_core_call(
+                    RandomNoise, "the noise source",
+                    noise_seed=shot_seed))[0]
+                sampled = _result(_core_call(
+                    SamplerCustomAdvanced, "the sampler",
+                    noise=noise, guider=guider, sampler=sampler,
+                    sigmas=hop_sigmas, latent_image=latent))[0]
 
                 imgs, audio = _decode_av(vae, audio_vae, sampled)
                 imgs = imgs.contiguous().cpu()

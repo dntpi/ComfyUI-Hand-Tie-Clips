@@ -71,7 +71,8 @@ def main():
 
     print("the node declares what core accepts")
     it = H3.HandTieClips.INPUT_TYPES()
-    allw = dict(it.get("required", {})); allw.update(it.get("optional", {}))
+    allw = dict(it.get("required", {}))
+    allw.update(it.get("optional", {}))
     vids = [w for w in allw if re.fullmatch(r"reference_video(_[23])?_file", w)]
     auds = [w for w in allw if re.fullmatch(r"voice(_[23])?_file", w)]
     ck("three reference video slots", len(vids) == 3, str(sorted(vids)))

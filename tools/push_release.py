@@ -24,6 +24,7 @@ handing off to check_lfs_urls.py, which fetches every published image.
 
     python tools/push_release.py            # current branch
     python tools/push_release.py main
+    python tools/push_release.py main --tag v2.0.0
     python tools/push_release.py main --dry-run
 
 Terminal prompting is disabled: a missing credential fails in a second instead
@@ -72,6 +73,9 @@ def remote_sha(remote, branch):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("branch", nargs="?", default=None)
+    ap.add_argument("--tag", default=None,
+                    help="also push this tag through origin, so both sites "
+                         "carry it -- a tag on one site only is drift too")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -99,6 +103,15 @@ def main():
                dry=a.dry_run):
         return 1
 
+    if a.tag:
+        if not a.dry_run and not git("rev-parse", a.tag).stdout.strip():
+            print()
+            print("no such tag: %s -- create it before pushing" % a.tag)
+            return 1
+        if not run("push tag", "push", "origin", "refs/tags/" + a.tag,
+                   dry=a.dry_run):
+            return 1
+
     if a.dry_run:
         print("\ndry run: nothing pushed, nothing verified")
         return 0
@@ -111,6 +124,24 @@ def main():
         bad = bad or not ok
         print("  %-4s %-8s %s" % ("ok" if ok else "FAIL", name,
                                   got[:10] if got else "no such branch"))
+    # A tag on one site and not the other is drift too, and the registry
+    # listing points at a tag that has to exist wherever somebody looks.
+    if a.tag:
+        want = git("rev-parse", a.tag + "^{commit}").stdout.strip()
+        for name, remote in (("github", "origin"), ("hf", "hf")):
+            # An annotated tag lists as its own object, so prefer the ^{}
+            # line when the site reports one.
+            got = None
+            for ref in ("refs/tags/%s^{}" % a.tag, "refs/tags/" + a.tag):
+                out = git("ls-remote", remote, ref).stdout.strip()
+                if out:
+                    got = out.splitlines()[0].split()[0]
+                    break
+            ok = got == want
+            bad = bad or not ok
+            print("  %-4s %-8s %-10s %s" % ("ok" if ok else "FAIL", name,
+                                            a.tag, got[:10] if got else "absent"))
+
     if bad:
         print("\nthe sites disagree -- do not publish")
         return 1

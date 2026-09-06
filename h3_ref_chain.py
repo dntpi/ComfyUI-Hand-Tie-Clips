@@ -60,8 +60,9 @@ except ImportError as _exc:  # pragma: no cover - depends on the host build
     # refuses to load -- it just says why.
     raise ImportError(
         "Hand Tie Clips needs MiniMax H3 support in ComfyUI itself "
-        "(comfy_extras/nodes_minimax_h3.py, ComfyUI PR #15439). Update ComfyUI "
-        "to a build that ships it, then restart. Original error: %s" % _exc
+        "(comfy_extras/nodes_minimax_h3.py, ComfyUI PR #15439), v0.34.0 or "
+        "newer -- MiniMaxH3AddGuide does not exist before that. Update "
+        "ComfyUI, then restart. Original error: %s" % _exc
     ) from _exc
 from nodes import VAEDecode
 

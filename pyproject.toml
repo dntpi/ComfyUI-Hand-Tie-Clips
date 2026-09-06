@@ -24,6 +24,17 @@ Documentation = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/PROMP
 # and immutable -- it is in the registry URL -- so it is not a field to tidy.
 # Neither it nor Repository is needed to install the pack by hand or from a zip.
 [tool.comfy]
+# The registry reads this as supported_comfyui_version. 0.34.0 is a HARD floor,
+# not a preference: h3_ref_chain.py imports MiniMaxH3AddGuide at module load and
+# refuses to start without it, and that node first appears in v0.34.0. The other
+# two Core nodes this pack calls go back to v0.30.0, where H3 support landed, but
+# AddGuide is the binding one.
+#
+# No upper bound. Core's parameter ORDER is not a contract and has already moved
+# once -- master reorders MiniMaxH3ReferenceToVideo so vae/audio_vae come last
+# and optional -- but every call here is by NAME, and the names have been stable
+# from v0.30.0 through master. tools/check_core_calls.py is what keeps that true.
+requires-comfyui = ">=0.34.0"
 PublisherId = "sandpies"
 DisplayName = "Hand Tie Clips"
 # Square, 400x400. The specifications page requires square and <=400x400; the

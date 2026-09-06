@@ -771,10 +771,16 @@ The turbo stack in the shipped workflows is
 ## Docs
 
 [`CHANGELOG.md`](CHANGELOG.md) is what 2.0.0 contains, written for users.
-[`PROMPTING.md`](PROMPTING.md) is the authoring guide. [`CLAUDE.md`](CLAUDE.md)
-is the current map of the pack if you are changing it, and `docs/DEVLOG.md` is
-the engineering log. `docs/HANDOVER_*.md`, root `HANDOVER.md` and `BETA_NOTES.md`
-are historical session notes — do not take them as the state of this release.
+[`PROMPTING.md`](PROMPTING.md) is the authoring guide. Both ship with the pack.
+
+The rest are in the repository only — the published package excludes them, so
+they are not in your `custom_nodes` folder and these links leave for GitHub.
+[`CLAUDE.md`](https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/CLAUDE.md)
+is the current map of the pack if you are changing it, and
+[`docs/DEVLOG.md`](https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/docs/DEVLOG.md)
+is the engineering log. `docs/HANDOVER_*.md`, root `HANDOVER.md` and
+`BETA_NOTES.md` are historical session notes — do not take them as the state of
+this release.
 
 ---
 

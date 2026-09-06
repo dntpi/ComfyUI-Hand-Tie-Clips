@@ -1,8 +1,10 @@
 # Changelog
 
-User-facing. Engineering detail lives in `docs/DEVLOG.md`. `CLAUDE.md` is the
-current map of the pack; `docs/HANDOVER_*.md` and `BETA_NOTES.md` are
-historical and should not be read as the state of this release.
+User-facing. The files named here are in the repository, not in the installed
+pack — the published package excludes them. Engineering detail lives in
+`docs/DEVLOG.md`. `CLAUDE.md` is the current map of the pack;
+`docs/HANDOVER_*.md` and `BETA_NOTES.md` are historical and should not be read
+as the state of this release.
 
 ## 2.0.0 — 2026-09-05
 

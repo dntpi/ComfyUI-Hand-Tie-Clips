@@ -788,7 +788,7 @@ this release.
 
 Full notes in [`CHANGELOG.md`](CHANGELOG.md).
 
-**2.0.0** — 2026-09-05. Full release. `master_audio_file`, one continuous take
+**2.0.0** — 2026-09-06. Full release. `master_audio_file`, one continuous take
 every hop lip-syncs to. `last_frame_guide` (`before_restart` recommended).
 `anchor: "restart"` as a real chain start, now writing its full length. `refs`
 on a shot. The **SWAP** tab. Three reference-clip and three voice slots. A Lab

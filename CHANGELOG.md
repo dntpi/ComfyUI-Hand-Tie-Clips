@@ -6,7 +6,7 @@ pack — the published package excludes them. Engineering detail lives in
 `docs/HANDOVER_*.md` and `BETA_NOTES.md` are historical and should not be read
 as the state of this release.
 
-## 2.0.0 — 2026-09-05
+## 2.0.0 — 2026-09-06
 
 A full release, not a beta. The hop cache, the pin, the media slots and the
 tone tools that accumulated on side branches since 1.1 are in this tree, plus

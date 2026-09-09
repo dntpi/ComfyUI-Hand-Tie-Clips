@@ -76,6 +76,7 @@ from . import sheet as _sheet
 from . import music as _music
 from . import latents as _latents
 from . import audio_lock as _alock
+from . import planner as _planner
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -1132,6 +1133,38 @@ def _last_frame_guide_key_field(mode, hop_index, shots):
     if not _guides_last_frame(mode, hop_index, shots):
         return None
     return str(mode)
+
+
+def _voice_rides_hop(mode, block):
+    """Whether the timbre clip stays cited as <Audio N> on a continuation.
+
+    `off` is the shipped behaviour -- hop 1 only. The reason is in the gate
+    below: a second <Audio 1> with no line to attach to put a 1.35 s male
+    take into the last second of chain_00038 while the written line still
+    followed the woman's face. That failure needs a QUIET hop, because what
+    the clip fills is frames nothing else was assigned. So `speaking` rides
+    every hop whose beat actually has a spoken line and skips the ones that
+    do not, which is the whole failure class the restriction was protecting
+    against -- and it is the setting to recommend. `on` rides every hop
+    unconditionally, for a chain where every hop talks and the author would
+    rather own that risk than annotate it.
+
+    Two dialogue forms count, because both are authored in the wild: the
+    single-quoted line the example plans and the writer use ("she says,
+    'You are early.'"), and the official `<d>[English] ...</d>` tag from the
+    H3 contract. The quoted-line test is `planner.spoken_spans`, not a
+    second regex -- the delimiter rule (an apostrophe between two
+    alphanumerics is not a quote) already lives there and a copy would
+    drift. Checking only one form would silently strand half the users on
+    hop-1-only while the widget said otherwise.
+    """
+    m = str(mode or "off")
+    if m == "on":
+        return True
+    if m != "speaking":
+        return False
+    text = str(block or "")
+    return bool("<d>" in text or _planner.spoken_spans(text))
 
 
 def _last_pixel_guide_idx():
@@ -2424,6 +2457,29 @@ class HandTieClips:
                         "which this is not."
                     ),
                 }),
+                # APPENDED 2026-09-09, LAST for the same reason as everything
+                # else down here: widgets_values is positional and a saved
+                # workflow reads it by index.
+                "voice_every_hop": (["off", "speaking", "on"], {
+                    "default": "off",
+                    "tooltip": (
+                        "Whether voice 1-3 stay cited as <Audio 1..3> after "
+                        "hop 1. off = shipped behaviour, hop 1 only: later "
+                        "hops inherit the timbre through the audio pin, "
+                        "which drifts over a long chain. speaking = ride "
+                        "every hop whose beat has a spoken line, skip the "
+                        "quiet ones -- RECOMMENDED, and the setting that "
+                        "keeps one voice across a whole chain. on = ride "
+                        "every hop regardless. What off is protecting "
+                        "against: an uncited timbre clip on a hop with no "
+                        "line fills the leftover frames with that "
+                        "recording, which once put a 1.35 s male take into "
+                        "the last second of a hop whose written line "
+                        "followed a woman's face. That needs a QUIET hop, "
+                        "so speaking cannot reach it. Moves the cache key "
+                        "of every hop it changes."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2505,6 +2561,7 @@ class HandTieClips:
             voice_3_file="", voice_3_start_s=0.0, voice_3_end_s=0.0,
             master_audio_file="",
             last_frame_guide="off",
+            voice_every_hop="off",
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -3317,12 +3374,26 @@ class HandTieClips:
             # second <Audio 1> with no line to attach to is what put a
             # 1.35 s male take into the last second of chain_00038 while
             # the written line still followed the woman's face.
+            # `voice_every_hop` lifts it deliberately; `_voice_rides_hop`
+            # holds the reasoning and why `speaking` is not the same risk
+            # as `on`.
+            _voice_lift = _voice_rides_hop(voice_every_hop, block)
             hop_voice = voice is not None and (
-                hop_is_start or str(hop_script) != "next")
+                hop_is_start or str(hop_script) != "next" or _voice_lift)
             if not hop_is_start and voice is not None and not hop_voice:
+                _why = ("no spoken line in this beat"
+                        if str(voice_every_hop) == "speaking"
+                        else "pin carries the spoken audio; "
+                             "voice_every_hop=speaking rides it")
                 print(
                     f"[{TAG}] hop {i + 1}: voice ref stays off this continue "
-                    "(pin carries the spoken audio)",
+                    f"({_why})",
+                    flush=True,
+                )
+            elif not hop_is_start and voice is not None and _voice_lift:
+                print(
+                    f"[{TAG}] hop {i + 1}: voice ref rides this continue "
+                    f"(voice_every_hop={voice_every_hop})",
                     flush=True,
                 )
             if hop_voice and "<Audio 1>" not in block:

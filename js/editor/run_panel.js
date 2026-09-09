@@ -46,7 +46,12 @@ const GROUPS = [
                     // display only, and INPUT_TYPES appends it last so saved
                     // workflows keep their widget indices.
                     "pin_mech",
-                    "audio_pin_frames", "pin_renorm", "pin_noise",
+                    "audio_pin_frames",
+                    // Sits with the pin dials because that is what it is
+                    // about: whether the timbre reference keeps riding, or
+                    // the hop inherits the voice through the audio pin alone.
+                    "voice_every_hop",
+                    "pin_renorm", "pin_noise",
                     // tone_anchor sits next to the mode it modifies: it is
                     // read only when tone_compensate is `anchor`, and split
                     // across groups nothing says so. Deliberately NOT

@@ -586,7 +586,7 @@ audios. Pictures go through REFS; the clips and voices are in **MEDIA**.
 | slot | cited as | notes |
 |---|---|---|
 | `reference clip` 1–3 | `<Video 1..3>` | motion/look plates the whole chain reads |
-| `voice` 1–3 | `<Audio 1..3>` | timbre references for hop 1 |
+| `voice` 1–3 | `<Audio 1..3>` | timbre references. Hop 1 only unless `voice_every_hop` (RUN) says otherwise |
 
 **Numbering is dense.** Fill slots 1 and 3 and you get `<Video 1>` and
 `<Video 2>` — there is no gap, so **clearing a slot renumbers the ones after
@@ -690,6 +690,7 @@ way to find the hop that broke.
 | pin_mech | `auto` |
 | last_frame_guide | `off`. Recommended `before_restart` when the plan has a restart |
 | master_audio_file | empty (generated voice) |
+| voice_every_hop | `off` (voice 1–3 ride hop 1 only). **Recommended `speaking`** when one voice has to hold across the chain |
 | quality | final |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master.

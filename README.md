@@ -31,6 +31,19 @@ says which one each hop took.
 
 ---
 
+## What's new in 2.1.0 — 2026-09-16
+
+A second sampler pass per hop (`hop_refine`, ships **off**), an **H3 Cache**
+node that makes the non-turbo base fast enough to recommend, and a prompt-pack
+trust boundary so scene material cannot change hop count or rules. Shipped
+workflows now use **10 steps** (node default stays 14). Every new widget was
+appended — a 2.0 graph loads and renders identically.
+
+Full notes stay at the bottom under [Changelog](#changelog). Detail lives in
+[`CHANGELOG.md`](CHANGELOG.md).
+
+---
+
 ## What it gives you
 
 | | |
@@ -77,8 +90,8 @@ common reason the node mounts with no UI on a fresh install.
 It is installed correctly when all three are true:
 
 - the startup log carries a line beginning `[HandTieClips]`
-- the browser console says `[HandTieClips] editor ui v2.0.0 loaded`
-- node search shows a **Hand Tie Clips** category with five nodes, each once
+- the browser console says `[HandTieClips] editor ui v2.1.0 loaded`
+- node search shows a **Hand Tie Clips** category with six nodes, each once
 
 Workflows saved before the 2026-08-29 rename keep loading — the old ids are
 registered as deprecated aliases. Nothing needs migrating.
@@ -98,7 +111,8 @@ with, because an example without it is not the graph anyone uses:
 
 ```
 UNETLoader -> LoRA Loader Stack -> H3 AdaLN LoRA Fix -> MiniMax H3 Low VRAM
-           -> H3 SLA Attention -> Model Preview Override -> Hand Tie Clips
+           -> H3 SLA Attention -> Model Preview Override -> H3 Cache
+           -> Hand Tie Clips
 ```
 
 | pack | nodes |
@@ -106,12 +120,15 @@ UNETLoader -> LoRA Loader Stack -> H3 AdaLN LoRA Fix -> MiniMax H3 Low VRAM
 | [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) | LoRA Loader Stack, H3 AdaLN LoRA Fix, H3 SLA Attention |
 | [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) | MiniMax H3 Low VRAM Attention (experimental), Model Preview Override |
 
+**H3 Cache** is this pack's own and needs no install; it is last on the wire so
+the clone the sampler sees is the one every other patch has been applied to.
+
 **CLIP reaches the node from the LoRA loader, not from the encoder** — that is
 what makes the text half of every LoRA land. Do not rewire it back.
 
 None of it is required by the node itself. Missing a pack, its nodes load as
 red boxes: delete them, wire the loader straight into `model` and the encoder
-into `clip`, and raise `steps` from 7 to around 20.
+into `clip`, and raise `steps` from 10 to around 20.
 
 Both shipped workflows are saved pointing at the exact quantised files they
 were rendered with. These are **not** the only builds that work — any ref2va or
@@ -720,6 +737,18 @@ join, says whether each is invisible / marginal / visible, and totals the
 chain's cumulative drift. A single reading includes whatever the scene did
 across the cut, so treat one number as an upper bound.
 
+**H3 Cache** — `MODEL` in, `MODEL` out. Drop it on the model wire before the
+chain node. It reuses MiniMax-H3's whole-block-stack residual on steps whose
+features have barely moved, which is what makes the **non-turbo** base fast
+enough to be the recommended setting rather than a purist's option. Patches a
+clone, so it composes with SLA attention and the LoRA stack in any order. The
+defaults are deliberately conservative — cache error here feeds the next hop's
+guide and compounds, so it is not a per-hop cost. Implementation by
+**silveroxides**, redistributed with permission; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). If you already run
+PlagueKind's cache node, use one or the other: two on one wire corrupt each
+other, and this one refuses rather than let that happen silently.
+
 **H3 Continuity State** — `continuity_state` (STRING) out. **Setting only**:
 `setting_locked` / `setting_context` / `setting_mutable`. Characters belong in
 `ref_plan`.
@@ -761,7 +790,14 @@ From the **Sulphur** Discord:
   SWAP's four modes. Technique, not code — the distinctions and the discipline
   of stating an exclusion affirmatively, with the prose written fresh here.
 
-Also: the tone estimator is ported from
+Also: the **H3 Cache** node is
+[silveroxides](https://github.com/silveroxides)' MiniMax-H3 block cache from
+[ComfyUI-UtilsCollection](https://github.com/silveroxides/ComfyUI-UtilsCollection)
+(AGPL-3.0), taken by way of PlagueKind's port and redistributed here with
+silveroxides' permission — the full chain, including the part of it that
+descends from GPL-3.0 ComfyUI Core and that nobody was in a position to
+relicense, is written out in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+The tone estimator is ported from
 [rkfg/ComfyUI-MiniMaxH3-ToneCompensate](https://github.com/rkfg/ComfyUI-MiniMaxH3-ToneCompensate)
 (MIT, as is this pack), and the latent join comes from
 [ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context).
@@ -771,13 +807,11 @@ The turbo stack in the shipped workflows is
 
 ## Docs
 
-[`CHANGELOG.md`](CHANGELOG.md) is what 2.0.0 contains, written for users.
+[`CHANGELOG.md`](CHANGELOG.md) is what 2.1.0 contains, written for users.
 [`PROMPTING.md`](PROMPTING.md) is the authoring guide. Both ship with the pack.
 
 The rest are in the repository only — the published package excludes them, so
 they are not in your `custom_nodes` folder and these links leave for GitHub.
-[`CLAUDE.md`](https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/CLAUDE.md)
-is the current map of the pack if you are changing it, and
 [`docs/DEVLOG.md`](https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/docs/DEVLOG.md)
 is the engineering log. `docs/HANDOVER_*.md`, root `HANDOVER.md` and
 `BETA_NOTES.md` are historical session notes — do not take them as the state of
@@ -788,6 +822,23 @@ this release.
 ## Changelog
 
 Full notes in [`CHANGELOG.md`](CHANGELOG.md).
+
+**2.1.0** — 2026-09-16. A refine pass. `hop_refine` runs a second, short,
+deliberately under-converged sampler pass over each hop and blends it back into
+the raw latent on a per-frame ramp, so the pin the next hop inherits is the
+blended one. It ships **off**, along with `refine_denoise`, `refine_steps`,
+`refine_sampler`, `refine_scheduler`, `refine_cond`, `refine_model`,
+`refine_audio`, `refine_blend`, `refine_blend_interp`, `refine_head` and
+`speed_mode`. `refine_audio=freeze` is the default and it means audio leaves a
+refined chain bit-identical to an unrefined one. A new **H3 Cache** node makes
+the non-turbo base fast enough to recommend; it is silveroxides' implementation,
+redistributed with permission, and `THIRD_PARTY_NOTICES.md` records the whole
+chain of provenance. The prompt pack gained a trust boundary: scene material now
+arrives in labelled blocks that cannot change the hop count or any rule. Every
+widget was appended, so a 2.0 graph loads and renders identically. Three 9-hop chains held identity flat at this refine block, each with a
+second DiT on `refine_model`, which is why these values are frozen; the
+controlled `off`-vs-`full` pair has **not** been run, so attribution stays
+open and the CHANGELOG says so.
 
 **2.0.0** — 2026-09-06. Full release. `master_audio_file`, one continuous take
 every hop lip-syncs to. `last_frame_guide` (`before_restart` recommended).

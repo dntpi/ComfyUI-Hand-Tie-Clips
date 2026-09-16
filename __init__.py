@@ -12,6 +12,10 @@ from .seam import (
     NODE_CLASS_MAPPINGS as _SEAM_NODES,
     NODE_DISPLAY_NAME_MAPPINGS as _SEAM_NAMES,
 )
+from .h3_cache_node import (
+    NODE_CLASS_MAPPINGS as _CACHE_NODES,
+    NODE_DISPLAY_NAME_MAPPINGS as _CACHE_NAMES,
+)
 
 NODE_CLASS_MAPPINGS.update(_PREVIEW_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_PREVIEW_NAMES)
@@ -19,6 +23,8 @@ NODE_CLASS_MAPPINGS.update(_TONE_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_TONE_NAMES)
 NODE_CLASS_MAPPINGS.update(_SEAM_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_SEAM_NAMES)
+NODE_CLASS_MAPPINGS.update(_CACHE_NODES)
+NODE_DISPLAY_NAME_MAPPINGS.update(_CACHE_NAMES)
 
 # The editor's dropdowns are served from directives.VOCAB rather than copied
 # into JS. A failure here costs the dropdowns their tooltips, not the node, so

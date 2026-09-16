@@ -1,8 +1,8 @@
 {
   "id": "h3-ref2va-chain",
   "revision": 1,
-  "last_node_id": 39,
-  "last_link_id": 22,
+  "last_node_id": 40,
+  "last_link_id": 31,
   "nodes": [
     {
       "id": 2,
@@ -45,7 +45,7 @@
           "type": "MODEL",
           "slot_index": 0,
           "links": [
-            11
+            23
           ]
         }
       ],
@@ -111,7 +111,7 @@
           "type": "CLIP",
           "slot_index": 0,
           "links": [
-            12
+            24
           ]
         }
       ],
@@ -238,13 +238,13 @@
           "localized_name": "model",
           "name": "model",
           "type": "MODEL",
-          "link": 17
+          "link": 30
         },
         {
           "localized_name": "clip",
           "name": "clip",
           "type": "CLIP",
-          "link": 18
+          "link": 31
         },
         {
           "localized_name": "vae",
@@ -576,7 +576,7 @@
         427058607873049,
         "fixed",
         true,
-        7,
+        10,
         "res_multistep",
         "simple",
         12,
@@ -631,7 +631,18 @@
         0,
         "",
         "off",
-        "off"
+        "off",
+        "off",
+        0.5,
+        2,
+        "same",
+        "simple",
+        "base",
+        "freeze",
+        "0:0, 22:0, 44:1",
+        "linear",
+        "refine",
+        "regular"
       ],
       "title": "H3 Ref2VA Chain - starter"
     },
@@ -860,236 +871,6 @@
       ]
     },
     {
-      "id": 30,
-      "type": "LTX_lora_loader",
-      "pos": [
-        520,
-        -40
-      ],
-      "size": [
-        420,
-        240
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 11
-        },
-        {
-          "name": "clip",
-          "type": "CLIP",
-          "link": 12
-        }
-      ],
-      "outputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "links": [
-            13
-          ]
-        },
-        {
-          "name": "clip",
-          "type": "CLIP",
-          "links": [
-            18
-          ]
-        }
-      ],
-      "title": "LoRA Loader Stack (turbo)",
-      "properties": {
-        "htc_speed": "lora",
-        "Node name for S&R": "LTX_lora_loader"
-      },
-      "widgets_values": [
-        "minimax",
-        "[{\"on\":true,\"lora\":\"minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors\",\"str\":1,\"v\":1,\"a\":1,\"t\":1}]",
-        ""
-      ]
-    },
-    {
-      "id": 31,
-      "type": "H3AdaLNLoRAFix",
-      "pos": [
-        520,
-        240
-      ],
-      "size": [
-        340,
-        150
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 13
-        }
-      ],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            14
-          ]
-        }
-      ],
-      "title": "H3 AdaLN LoRA Fix",
-      "properties": {
-        "htc_speed": "adaln",
-        "Node name for S&R": "H3AdaLNLoRAFix"
-      },
-      "widgets_values": [
-        "port"
-      ]
-    },
-    {
-      "id": 32,
-      "type": "MiniMaxLowVRAMAttention",
-      "pos": [
-        520,
-        430
-      ],
-      "size": [
-        330,
-        58
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 14
-        }
-      ],
-      "outputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "links": [
-            15
-          ]
-        }
-      ],
-      "title": "MiniMax H3 Low VRAM Attention",
-      "properties": {
-        "htc_speed": "lowvram",
-        "Node name for S&R": "MiniMaxLowVRAMAttention"
-      },
-      "widgets_values": [
-        4
-      ]
-    },
-    {
-      "id": 33,
-      "type": "H3SLAAttention",
-      "pos": [
-        520,
-        530
-      ],
-      "size": [
-        340,
-        322
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 15
-        }
-      ],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            16
-          ]
-        }
-      ],
-      "title": "H3 SLA Attention",
-      "properties": {
-        "htc_speed": "sla",
-        "Node name for S&R": "H3SLAAttention"
-      },
-      "widgets_values": [
-        0.9,
-        "64",
-        8192,
-        0,
-        true,
-        true,
-        "0",
-        "comfy_kitchen",
-        true,
-        true,
-        "Light"
-      ]
-    },
-    {
-      "id": 34,
-      "type": "ModelPreviewOverrideKJ",
-      "pos": [
-        520,
-        900
-      ],
-      "size": [
-        360,
-        480
-      ],
-      "flags": {},
-      "order": 0,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 16
-        },
-        {
-          "name": "vae",
-          "type": "VAE",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            17
-          ]
-        }
-      ],
-      "title": "Model Preview Override",
-      "properties": {
-        "htc_speed": "preview",
-        "Node name for S&R": "ModelPreviewOverrideKJ"
-      },
-      "widgets_values": [
-        512,
-        80,
-        true,
-        100,
-        8,
-        "taeh3.safetensors",
-        ""
-      ]
-    },
-    {
       "id": 35,
       "type": "PreviewImage",
       "pos": [
@@ -1252,7 +1033,7 @@
         "htc_card": "start"
       },
       "widgets_values": [
-        "## Start here\n\nTwo hops of 5 s, joined into one 10 s clip.\n\n### Requires\n\nThe MODEL wire is a turbo stack, not a bare loader:\n\n```\nUNETLoader\n  -> LoRA Loader Stack          (turbo LoRA)\n  -> H3 AdaLN LoRA Fix\n  -> MiniMax H3 Low VRAM Attention\n  -> H3 SLA Attention\n  -> Model Preview Override\n  -> this node\n```\n\n| pack | nodes |\n|---|---|\n| **ComfyUI-PlagueKind-Nodes** | LoRA Loader Stack, AdaLN Fix, SLA Attention |\n| **ComfyUI-KJNodes** | Low VRAM Attention (experimental), Model Preview Override |\n\nAlso on disk: the **turbo LoRA** named in the loader, and `taeh3.safetensors`\nfor the live preview (or set `tiny_vae` to `none`).\n\n**CLIP goes to this node from the LoRA loader, not from the encoder.** That is\nwhat makes the text half of every LoRA land. Do not rewire it back.\n\n`steps` is **7**, which only works with the turbo LoRA. Missing a pack? Its\nnodes load as red boxes -- delete them, wire the loader straight into `model`\nand the encoder into `clip`, and raise `steps` to 20 or so.\n\n1. Point the four **loaders** at your H3 files.\n2. Queue.\n3. Read the **SHOTS** cards on the node.\n\n**Shot 1 is the whole opening. Every later shot is only the new beat.** The node\nwrites the identity lock, the live-frame citation and the join itself -- so\nre-describing the face, the clothes or the room after shot 1 competes with the\nframe pin instead of reinforcing it.\n\nThis plan ships with **no references on purpose**, so it runs before you have\nsupplied any pictures.\n\n### Adding pictures\n\n- Open **REFERENCES**, add a row, drop a photo on its thumbnail. Files land in\n  `ComfyUI/input/h3_refs`. There is no Load Image node to wire.\n- Give the row a `@tag`, and group photos of the same person under one subject.\n- Write the tag into the beat: `@hero_face stands at the counter in @kitchen`.\n\nThe long-form guide is `PROMPTING.md` in the pack folder."
+        "## Start here\n\nTwo hops of 5 s, joined into one 10 s clip.\n\n### Requires\n\nThe MODEL wire is a turbo stack, not a bare loader:\n\n```\nUNETLoader\n  -> LoRA Loader Stack          (turbo LoRA)\n  -> H3 AdaLN LoRA Fix\n  -> MiniMax H3 Low VRAM Attention\n  -> H3 SLA Attention\n  -> Model Preview Override\n  -> H3 Cache                    (this pack)\n  -> this node\n```\n\n| pack | nodes |\n|---|---|\n| **ComfyUI-PlagueKind-Nodes** | LoRA Loader Stack, AdaLN Fix, SLA Attention |\n| **ComfyUI-KJNodes** | Low VRAM Attention (experimental), Model Preview Override |\n\nAlso on disk: the **turbo LoRA** named in the loader, and `taeh3.safetensors`\nfor the live preview (or set `tiny_vae` to `none`).\n\n**CLIP goes to this node from the LoRA loader, not from the encoder.** That is\nwhat makes the text half of every LoRA land. Do not rewire it back.\n\n`steps` is **7**, which only works with the turbo LoRA. Missing a pack? Its\nnodes load as red boxes -- delete them, wire the loader straight into `model`\nand the encoder into `clip`, and raise `steps` to 20 or so.\n\n1. Point the four **loaders** at your H3 files.\n2. Queue.\n3. Read the **SHOTS** cards on the node.\n\n**Shot 1 is the whole opening. Every later shot is only the new beat.** The node\nwrites the identity lock, the live-frame citation and the join itself -- so\nre-describing the face, the clothes or the room after shot 1 competes with the\nframe pin instead of reinforcing it.\n\nThis plan ships with **no references on purpose**, so it runs before you have\nsupplied any pictures.\n\n### Adding pictures\n\n- Open **REFERENCES**, add a row, drop a photo on its thumbnail. Files land in\n  `ComfyUI/input/h3_refs`. There is no Load Image node to wire.\n- Give the row a `@tag`, and group photos of the same person under one subject.\n- Write the tag into the beat: `@hero_face stands at the counter in @kitchen`.\n\nThe long-form guide is `PROMPTING.md` in the pack folder."
       ],
       "color": "#232",
       "bgcolor": "#353"
@@ -1304,7 +1085,7 @@
         "htc_card": "refs"
       },
       "widgets_values": [
-        "## References and @tags\n\nA picture in the register does not make the model use it. **The beat is what\ndrives the frame** -- write the tag into the action line.\n\nPhrase a place as a place that is *depicted*, not as a container to be placed\ninside: \"at the counter in `@kitchen`\", not \"steps into `@kitchen`\".\n\n### Fields\n\n| field | what it does |\n|---|---|\n| `tag` | what you write in beats as `@tag` |\n| `file` | a bare filename in `input/h3_refs` |\n| `subject` | groups pictures **of the same person** |\n| `retention` | `fully_preserved` / `partially_copy` / `reference` |\n| `shots` | the 1-based hops this picture rides |\n\n**One subject number per person.** Two different people under one number makes\nthe model render the average of their faces.\n\n### `shots` is the part that decides continuity\n\n**A reference with no `shots` list rides hop 1 only.** Right for a **place**\nplate: a room still riding a hop set somewhere else beats the frame pin, and the\nmodel follows the still. **List every hop a picture belongs on.**\n\n**A face plate is the opposite — put it on every hop.** A hop scheduled with no\nface reference came back a different person, and no later hop recovered.\nIdentity drift does not self-correct.\n\n- Every **face** ref gets every hop: `\"shots\": [1, 2, 3, 4, 5, 6]`.\n- Keep a **place** ref on the hops set in that place, and off the rest.\n\n### Or decide it from the shot instead\n\nA shot can name its own stills, which overrides every `shots` list for that\none hop:\n\n```json\n{\"beat\": \"...\", \"refs\": [\"hero_face\", \"kitchen\"]}\n```\n\nOmit the field for the register's own scheduling. `[]` is **no stills at\nall** -- which is what a `restart` hop usually wants, so the photograph\nsupplies the room rather than putting a portrait back in front of it.\nUnknown tags fail on the queue, not mid-render.\n\n### `locked` and `context`\n\nPer-subject prose that rides **every hop**, with no picture citation, so it\ncarries identity across a hop where the photograph is absent. Give every subject\na `locked`, and a `name` -- from hop 2 on, `@tag` for a person resolves to that\nname.\n\n**Name a colour or it drifts.** A noun with no adjective is unanchored: each hop\nis an independent encode, so \"the bowl\" on hop 4 came back stainless steel. Put\nproperties in `context` -- \"the bowl is white porcelain\" -- never locations, and\nrepeat the adjective in every beat."
+        "## References and @tags\n\nA picture in the register does not make the model use it. **The beat is what\ndrives the frame** -- write the tag into the action line.\n\nPhrase a place as a place that is *depicted*, not as a container to be placed\ninside: \"at the counter in `@kitchen`\", not \"steps into `@kitchen`\".\n\n### Fields\n\n| field | what it does |\n|---|---|\n| `tag` | what you write in beats as `@tag` |\n| `file` | a bare filename in `input/h3_refs` |\n| `subject` | groups pictures **of the same person** |\n| `retention` | `fully_preserved` / `partially_copy` / `reference` |\n| `shots` | the 1-based hops this picture rides |\n\n**One subject number per person.** Two different people under one number makes\nthe model render the average of their faces.\n\n### `shots` is the part that decides continuity\n\n**A reference with no `shots` list rides hop 1 only.** Right for a **place**\nplate: a room still riding a hop set somewhere else beats the frame pin, and the\nmodel follows the still. **List every hop a picture belongs on.**\n\n**A face plate is the opposite \u2014 put it on every hop.** A hop scheduled with no\nface reference came back a different person, and no later hop recovered.\nIdentity drift does not self-correct.\n\n- Every **face** ref gets every hop: `\"shots\": [1, 2, 3, 4, 5, 6]`.\n- Keep a **place** ref on the hops set in that place, and off the rest.\n\n### Or decide it from the shot instead\n\nA shot can name its own stills, which overrides every `shots` list for that\none hop:\n\n```json\n{\"beat\": \"...\", \"refs\": [\"hero_face\", \"kitchen\"]}\n```\n\nOmit the field for the register's own scheduling. `[]` is **no stills at\nall** -- which is what a `restart` hop usually wants, so the photograph\nsupplies the room rather than putting a portrait back in front of it.\nUnknown tags fail on the queue, not mid-render.\n\n### `locked` and `context`\n\nPer-subject prose that rides **every hop**, with no picture citation, so it\ncarries identity across a hop where the photograph is absent. Give every subject\na `locked`, and a `name` -- from hop 2 on, `@tag` for a person resolves to that\nname.\n\n**Name a colour or it drifts.** A noun with no adjective is unanchored: each hop\nis an independent encode, so \"the bowl\" on hop 4 came back stainless steel. Put\nproperties in `context` -- \"the bowl is white porcelain\" -- never locations, and\nrepeat the adjective in every beat."
       ],
       "color": "#432",
       "bgcolor": "#653"
@@ -1429,14 +1210,288 @@
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "New in 2.0",
+      "title": "New in 2.1",
       "properties": {
         "htc_card": "whats_new"
       },
       "color": "#432",
       "bgcolor": "#653",
       "widgets_values": [
-        "## New in 2.0\n\n### One take the whole chain lip-syncs to\n\n**MEDIA > master audio.** Set a file and every hop is locked to its own\nwindow of it on the same clock as the picture; the delivered audio is a\npassthrough of your recording, not a re-encode. Empty is off, and off is\nexactly what 1.1 did. The beat still needs the words in `<d>[English]\n...</d>` -- the lock supplies the timing, not the script. A take shorter\nthan the chain is refused on the queue rather than discovered as a mute\nfinal hop.\n\n### A cut you meant to make\n\n`\"anchor\": \"restart\"` on a shot makes that hop a chain start: the start\nimage is frame 0 and nothing is relayed. It is the one thing measured to\nstop a long chain converging -- and it **is** a cut, so put it where a cut\nis motivated. Pair it with `join: hard_cut`, name the room in the beat, and\nnever put it on shot 1.\n\nThen set **`last_frame_guide` to `before_restart`** in RUN. It plants the\nstart image at the last frame of the hop *before* the restart, so both\nsides of the cut meet on the same photograph and it reads as a match cut.\n`still` does it on every hop and will fight any shot that authors a\n`framing` -- leave it alone unless none of them do.\n\n### Hold the photograph, not hop 1\n\n`tone_compensate=anchor` pulls each hop back toward a target.\n**`tone_anchor_ref=still`** makes that target the start image. A ten-run\noutside study measured hop 1 as already short of the still before any relay\nhas happened -- chroma 30 against 33.6 -- so anchoring on hop 1 converges on\na target that already fell short. Needs a start image.\n\n### SWAP\n\nA one-hop identity swap from a reference clip: the clip brings the motion\nand the scene, a still from the rail brings the person. Four modes that each\nsay what **stays**, because at cfg 1.0 omitting the swap line does not keep\nthe clip's person.\n\nTwo things to get right: **do not describe the clip on MEDIA first** -- that\ncaption reaches the encoder and asks for the person you are replacing -- and\n**drop the clip to about 0.3 MP**, because a clip's decode area is its token\ncount and its token count is its influence.\n\n### Also\n\nThree reference-clip slots and three voice slots. `pin_mech` to force the\njoin mechanism instead of letting `auto` pick. The seam report reads the\nchain's `info` output, so it finds the real joins on a chain whose hops are\nno longer all the same length.\n"
+        "## New in 2.1\n\n### A second pass per hop\n\n**RUN > hop_refine.** `off` (default), `full`, or `pin_only`. A short,\nunder-converged second sampler pass over each hop's latent before decode and\nbefore the next hop's pin. It has its own seed, schedule, and optionally its\nown model.\n\nDefaults are frozen: `refine_denoise 0.50`, `refine_steps 2`,\n`refine_cond base`. `refine_blend` ramps raw to refined on a per-frame keyframe\nstring (`0:0, 22:0, 44:1` linear by default); empty disables the blend.\n`refine_audio=freeze` keeps audio bit-identical to an unrefined chain.\n`refine_model` is optional — unwired means the base model.\n\nEverything ships **off**. A 2.0 graph loads and renders identically; the new\nwidgets were appended, nothing was inserted.\n\n### H3 Cache\n\nA new **H3 Cache** node on the MODEL wire. It reuses MiniMax-H3's whole-block\nresidual across steps whose features barely moved, which is what makes the\nnon-turbo base fast enough to recommend. Both shipped workflows have it wired.\nDo not stack it with PlagueKind's cache on the same wire.\n\nProvenance is in `THIRD_PARTY_NOTICES.md` (silveroxides / AGPL-3.0, ComfyUI\nCore forward pass / GPL-3.0).\n\n### Steps in the shipped graphs\n\nStarter and Showcase now use **10 steps** (was 7). The node's own default\nstays **14** — 7–20 is the testing grounds. Voice quality mostly lands by 10;\nchain drift cost of raising steps further is unmeasured.\n"
+      ]
+    },
+    {
+      "id": 30,
+      "type": "LTX_lora_loader",
+      "pos": [
+        520,
+        -40
+      ],
+      "size": [
+        420,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 23
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 24
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            25
+          ]
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "links": [
+            31
+          ]
+        }
+      ],
+      "title": "LoRA Loader Stack (turbo)",
+      "properties": {
+        "htc_speed": "lora",
+        "Node name for S&R": "LTX_lora_loader"
+      },
+      "widgets_values": [
+        "minimax",
+        "[{\"on\":true,\"lora\":\"minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors\",\"str\":1,\"v\":1,\"a\":1,\"t\":1}]",
+        ""
+      ]
+    },
+    {
+      "id": 31,
+      "type": "H3AdaLNLoRAFix",
+      "pos": [
+        520,
+        240
+      ],
+      "size": [
+        340,
+        150
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 25
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            26
+          ]
+        }
+      ],
+      "title": "H3 AdaLN LoRA Fix",
+      "properties": {
+        "htc_speed": "adaln",
+        "Node name for S&R": "H3AdaLNLoRAFix"
+      },
+      "widgets_values": [
+        "port"
+      ]
+    },
+    {
+      "id": 32,
+      "type": "MiniMaxLowVRAMAttention",
+      "pos": [
+        520,
+        430
+      ],
+      "size": [
+        330,
+        58
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 26
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            27
+          ]
+        }
+      ],
+      "title": "MiniMax H3 Low VRAM Attention",
+      "properties": {
+        "htc_speed": "lowvram",
+        "Node name for S&R": "MiniMaxLowVRAMAttention"
+      },
+      "widgets_values": [
+        4
+      ]
+    },
+    {
+      "id": 33,
+      "type": "H3SLAAttention",
+      "pos": [
+        520,
+        530
+      ],
+      "size": [
+        340,
+        322
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 27
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            28
+          ]
+        }
+      ],
+      "title": "H3 SLA Attention",
+      "properties": {
+        "htc_speed": "sla",
+        "Node name for S&R": "H3SLAAttention"
+      },
+      "widgets_values": [
+        0.9,
+        "64",
+        8192,
+        0,
+        true,
+        true,
+        "0",
+        "comfy_kitchen",
+        true,
+        true,
+        "Light"
+      ]
+    },
+    {
+      "id": 34,
+      "type": "ModelPreviewOverrideKJ",
+      "pos": [
+        520,
+        900
+      ],
+      "size": [
+        360,
+        480
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 28
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            29
+          ]
+        }
+      ],
+      "title": "Model Preview Override",
+      "properties": {
+        "htc_speed": "preview",
+        "Node name for S&R": "ModelPreviewOverrideKJ"
+      },
+      "widgets_values": [
+        512,
+        80,
+        true,
+        100,
+        8,
+        "taeh3.safetensors",
+        ""
+      ]
+    },
+    {
+      "id": 40,
+      "type": "HTCH3Cache",
+      "pos": [
+        520,
+        1420
+      ],
+      "size": [
+        340,
+        200
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 29
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            30
+          ]
+        }
+      ],
+      "title": "H3 Cache",
+      "properties": {
+        "htc_speed": "cache",
+        "Node name for S&R": "HTCH3Cache"
+      },
+      "widgets_values": [
+        0.05,
+        0.2,
+        0.8,
+        1,
+        "auto",
+        false
       ]
     }
   ],
@@ -1506,70 +1561,6 @@
       "VIDEO"
     ],
     [
-      11,
-      2,
-      0,
-      30,
-      0,
-      "MODEL"
-    ],
-    [
-      12,
-      3,
-      0,
-      30,
-      1,
-      "CLIP"
-    ],
-    [
-      13,
-      30,
-      0,
-      31,
-      0,
-      "MODEL"
-    ],
-    [
-      14,
-      31,
-      0,
-      32,
-      0,
-      "MODEL"
-    ],
-    [
-      15,
-      32,
-      0,
-      33,
-      0,
-      "MODEL"
-    ],
-    [
-      16,
-      33,
-      0,
-      34,
-      0,
-      "MODEL"
-    ],
-    [
-      17,
-      34,
-      0,
-      7,
-      0,
-      "MODEL"
-    ],
-    [
-      18,
-      30,
-      1,
-      7,
-      1,
-      "CLIP"
-    ],
-    [
       19,
       7,
       3,
@@ -1600,6 +1591,78 @@
       38,
       0,
       "IMAGE"
+    ],
+    [
+      23,
+      2,
+      0,
+      30,
+      0,
+      "MODEL"
+    ],
+    [
+      24,
+      3,
+      0,
+      30,
+      1,
+      "CLIP"
+    ],
+    [
+      25,
+      30,
+      0,
+      31,
+      0,
+      "MODEL"
+    ],
+    [
+      26,
+      31,
+      0,
+      32,
+      0,
+      "MODEL"
+    ],
+    [
+      27,
+      32,
+      0,
+      33,
+      0,
+      "MODEL"
+    ],
+    [
+      28,
+      33,
+      0,
+      34,
+      0,
+      "MODEL"
+    ],
+    [
+      29,
+      34,
+      0,
+      40,
+      0,
+      "MODEL"
+    ],
+    [
+      30,
+      40,
+      0,
+      7,
+      0,
+      "MODEL"
+    ],
+    [
+      31,
+      30,
+      1,
+      7,
+      1,
+      "CLIP"
     ]
   ],
   "groups": [

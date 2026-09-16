@@ -2,9 +2,170 @@
 
 User-facing. The files named here are in the repository, not in the installed
 pack — the published package excludes them. Engineering detail lives in
-`docs/DEVLOG.md`. `CLAUDE.md` is the current map of the pack;
-`docs/HANDOVER_*.md` and `BETA_NOTES.md` are historical and should not be read
-as the state of this release.
+`docs/DEVLOG.md`. `docs/HANDOVER_*.md` and `BETA_NOTES.md` are historical
+and should not be read as the state of this release.
+
+## 2.1.0 — 2026-09-16
+
+A second sampler pass per hop, a cache that makes the non-turbo base usable,
+and a prompt pack that now has a trust boundary. **Every render behaviour here
+ships off.** A workflow saved on 2.0.0 loads and renders identically — the new
+widgets are appended at positions 71-82 and nothing is inserted or reordered.
+
+### New
+
+- **`hop_refine`** (RUN) — `off` (default), `full` or `pin_only`. A second
+  sampler pass over each hop's latent before it is decoded and before it is
+  handed forward as the next hop's pin. The pass has its own seed, its own
+  sigma schedule and optionally its own model, so it is a genuinely separate
+  render and not a continuation of the base one.
+
+  It exists because the thing that holds a chain together is not per-hop
+  quality. Drift compounds through what each hop hands the next, and a short
+  under-converged second pass over the *joint* latent is the one mechanism
+  measured to move the seam without also moving the face.
+
+  The defaults are a confirmed external configuration, not this pack's guesses:
+  `refine_denoise 0.50`, `refine_steps 2`, `refine_cond base`. At H3's
+  `shift=12.0` that resolves to a schedule of `[0.9231, 0.8000, 0]` — one
+  `res_multistep` step from 0.8 to 0, deliberately under-converged. Note what
+  `refine_denoise` actually is: `BasicScheduler` computes `int(steps/denoise)`,
+  so it sets the *step size*, not a noise amount. 2 steps at 0.50 means a
+  4-step schedule truncated to its last two. Raising the denoise shortens the
+  schedule; it does not add noise.
+
+- **`refine_blend`** and **`refine_blend_interp`** — a per-frame keyframed lerp
+  between the raw and the refined latent, default `0:0, 22:0, 44:1` linear.
+  Frame 0 ships raw, the ramp is over latent steps 7-13, the tail ships fully
+  refined. The blended result is what is delivered *and* what propagates, so
+  the pin the next hop inherits is the blended one. Empty string disables the
+  blend and ships the refined latent whole.
+
+  The ramp's frame ratio is computed from the latent itself. The upstream node
+  this follows derives it from a `duration` widget, and when that widget
+  disagrees with the real render length the keyframes land in the wrong place
+  with no error at all. There is no duration input here and no way to desync.
+
+- **`refine_audio`** — `freeze` (default) or `refine`. On `freeze` the audio
+  stream is masked out of the refine sampler, so audio leaves a refined chain
+  bit-identical to an unrefined one. This is not the upstream default and the
+  difference is not cosmetic: taking audio wholly from the refined latent was
+  measured as making the voice strained across three runs. Mask polarity is
+  **1 = denoise, 0 = freeze**, pinned by `audio_lock.assert_mask_polarity`; an
+  inverted mask reads as "lip-sync died." With `master_audio_file` set the take
+  still wins — refine never touches a locked audio path.
+
+- **`refine_head`** — `refine` (default) or `freeze`. The other seam mechanism,
+  kept as a widget rather than a choice because it is a trade and not a
+  winner. `freeze` holds the hop's first frames out of the refine pass; it
+  removes the seam flash and wins on the face (seam error 1.9x/1.7x against
+  3.5x/7.3x) at a grain cost that is real and is invisible on bokeh.
+
+- **`refine_model`** (optional MODEL socket) — run the refine pass on a
+  different model from the base. Unwired means the base model. It is included
+  in the hop cache key by fingerprint, so swapping it re-renders rather than
+  serving a stale hop.
+
+- **`refine_sampler`** / **`refine_scheduler`** — `same` follows the base.
+  `res_multistep` + `simple` over an `lcm` base is the best combination tried
+  so far.
+
+- **`speed_mode`** — `regular` (default) or `turbo`. A named preset table, one
+  place, mapping mode to refine defaults. Most of the turbo row is unmeasured
+  and the tooltip says so. What *is* measured, on matched runs at a pinned
+  seed, is that a turbo base is the degrader: junction MAE 8.40-10.85 and
+  climbing hop over hop, against 2.07-4.02 flat for a plain hybrid over 9-10
+  hops. Putting the turbo checkpoint in the base loader only did not save it,
+  so it compounds through the conditioning path rather than the latent. The
+  preset makes no claim to fix that, prints the cost once per run, and never
+  silently corrects a widget.
+
+- **H3 Cache**, a new node. It reuses MiniMax-H3's whole-block-stack residual
+  across steps whose features have barely moved, which is what makes the
+  non-turbo base fast enough to recommend at all. Drop it anywhere on the MODEL
+  wire before the sampler; it patches a cloned patcher only, so it composes
+  with SLA attention and with LoRA loaders in either order. Feed `refine_model`
+  too if you run a separate refine model — the refine pass is its own sampler
+  call and is not cached otherwise.
+
+  Defaults are `0.05` reuse / `0.20` start / `0.80` end / `1` max skip, which
+  are the settings actually being run in production rather than the wider
+  window the original widgets invite. Both shipped workflows have it wired.
+
+  **The implementation is silveroxides' work** (`ComfyUI-UtilsCollection`,
+  AGPL-3.0), taken by way of PlagueKind's port and redistributed with
+  permission given 2026-09-16. It descends further back than that: its forward
+  pass is a reimplementation of ComfyUI Core's `MiniMaxH3Model._forward`, and
+  Core is GPL-3.0. `THIRD_PARTY_NOTICES.md` records all of it, including the
+  parts nobody was in a position to relicense. If you redistribute this pack,
+  read that file.
+
+### The prompt pack now has a trust boundary
+
+The rewrite was strong on craft and had no notion of untrusted input anywhere.
+A brief reading "Write exactly 1 hop" was indistinguishable from the node's own
+instructions, because the brief went into the turn first with machine
+instructions concatenated after it.
+
+- Every untrusted channel is now delimited — the brief, the SWAP brief,
+  filenames read off disk, rail values — and `AUTHORING_PROMPT.md` carries a
+  precedence paragraph stating that delimited text is scene material which can
+  never change hop count, field lists, or the rules above it.
+- The unbounded "unless the user message says otherwise" override in
+  `SWAP_PROMPT.md` is gone.
+- Validator feedback is labelled as node output. It was being appended as
+  `role: "user"`, so model-authored text came back wearing your authority.
+- `mp` and `locked` are documented with "do not author". `locked` is a boolean
+  meaning "serve the cached render", and the pack uses the word as prose
+  elsewhere — `bool("some text")` is `True`, which silently serves a stale hop.
+- The two contradictory accounts of the 9-reference limit now agree with the
+  code: it is a per-hop ceiling.
+- `EXAMPLE_6_HOP.md` is regenerated from a compliant workflow. The only
+  few-shot in the pack was breaking three of the prompt's own rules, including
+  the unplated location the prompt itself calls the most common mistake.
+- The prompt pack README's token count was off by about 3,000 and its `sed`
+  example had a literal `\n` in it.
+
+### Checks
+
+Six new offline checkers, all in `tools/check_all.py`: `check_refine_blend.py`
+(ramp arithmetic, CPU-only, including the ratio-from-latent fix),
+`check_refine_audio.py` (mask polarity and master-lock precedence),
+`check_refine_keys.py` (every refine widget changes the hop key),
+`check_speed_mode.py`, `check_widget_order.py` (the positional-widget
+guarantee), and `check_h3_cache.py`. That last one earns its place: the
+vendored cache duplicates Core forward logic rather than calling into it, so a
+Core change desyncs it *silently* — wrong output, not an exception. It has
+already happened once in the wild.
+
+`check_workflows.py` also now asserts node ids are unique, after a duplicate id
+in a shipped workflow silently reattached another node's wires.
+
+29 checks, all passing, including `check_audio_lock.py` and
+`check_restart_trim.py` which were failing before this work.
+
+### What has been verified, and what has not
+
+The refine path has run: three 9-hop chains at `refine=full`, 6-step plain
+hybrid base, no turbo, each with a second DiT on `refine_model` rather than
+the unwired default. Junction MAE 2.21-4.62 and **flat**, texture -14.9%, and
+face scale -1.4% from hop 1 to hop 9 -- the zoom creep did not happen. Audio at
+hop 1 is sample-exact under `refine_audio=freeze`. These defaults are frozen on
+the strength of that.
+
+Two limits travel with that result, and neither is hidden here:
+
+- **Attribution is open.** Only the `full` arm has run. The honest claim is
+  "this configuration holds a 9-hop chain", not "the refine pass is why". The
+  controlled `off`-vs-`full` pair at a pinned seed has not been rendered.
+- **It was measured on a flat white wall, fixed close-up, near-zero motion.**
+  The same model at the same step count comes apart on a wide moving shot. "6
+  steps is fine" is a statement about that footage, not about H3.
+
+Also unmeasured: the chain cost of base step count -- voice quality lands mostly
+by 10 steps, but what a raised step count does to drift *over* a chain is not
+known -- and VRAM for the refine pass, where the "one model is enough" answer is
+read off the code rather than off a profiler.
 
 ## 2.0.0 — 2026-09-06
 

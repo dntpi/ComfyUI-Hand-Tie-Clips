@@ -1,8 +1,8 @@
 {
   "id": "h3-ref2va-chain",
   "revision": 1,
-  "last_node_id": 34,
-  "last_link_id": 18,
+  "last_node_id": 35,
+  "last_link_id": 19,
   "nodes": [
     {
       "id": 2,
@@ -238,13 +238,13 @@
           "localized_name": "model",
           "name": "model",
           "type": "MODEL",
-          "link": 17
+          "link": 18
         },
         {
           "localized_name": "clip",
           "name": "clip",
           "type": "CLIP",
-          "link": 18
+          "link": 19
         },
         {
           "localized_name": "vae",
@@ -555,7 +555,7 @@
           "name": "contact_sheet",
           "type": "IMAGE",
           "slot_index": 3,
-          "links": null
+          "links": []
         }
       ],
       "properties": {
@@ -573,7 +573,7 @@
         427058607873049,
         "fixed",
         true,
-        7,
+        10,
         "res_multistep",
         "simple",
         12,
@@ -581,8 +581,8 @@
         "match",
         "next",
         "last frame",
-        "{\n  \"shots\": [\n    {\n      \"id\": \"s1\",\n      \"beat\": \"@hero_face stands at the counter in @kitchen, a grey apron over a grey t-shirt. She looks up from the chopping board and says, 'You are early. I have barely started.' She turns back to the board and goes on slicing, the knife tapping steadily against the wood.\",\n      \"directives\": {\n        \"camera\": \"hold\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s2\",\n      \"beat\": \"She sets the knife down and walks the length of the counter to the window of @kitchen, looking out at the street. Her steps are soft on the tiles and the refrigerator hums behind her.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"pan_follow\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s3\",\n      \"beat\": \"She turns from the window, crosses @kitchen and pushes through the doorway into the hallway beyond, the room falling away behind her. Her footsteps carry on the tiles.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"pan_follow\",\n        \"framing\": \"wide\",\n        \"pace\": \"brisk\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s4\",\n      \"beat\": \"@hero_face walks down a narrow hallway hung with coats, one hand trailing along the wall, her footsteps muffled on the runner. The hallway walls stand close on either side of her and the coats brush past her shoulder.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"handheld\",\n        \"framing\": \"medium\",\n        \"pace\": \"steady\",\n        \"tail\": \"ongoing\"\n      }\n    },\n    {\n      \"id\": \"s5\",\n      \"beat\": \"She reaches the window at the end of the hall and rests one hand on the frame, then half turns back over her shoulder and says, 'It is still raining. We will have to do it inside.' She looks back out at the glass with her lips closed, and the rain taps steadily on the pane.\",\n      \"directives\": {\n        \"join\": \"continuous\",\n        \"camera\": \"push_in\",\n        \"framing\": \"close\",\n        \"pace\": \"slow\",\n        \"tail\": \"settle\"\n      }\n    },\n    {\n      \"id\": \"s6\",\n      \"beat\": \"She walks back along the hallway and through the doorway to the counter in @kitchen, picking the knife up again. The refrigerator hums and the knife starts on the board.\",\n      \"directives\": {\n        \"join\": \"match_cut\",\n        \"camera\": \"pull_back\",\n        \"framing\": \"wide\",\n        \"pace\": \"steady\",\n        \"tail\": \"hold\"\n      }\n    }\n  ]\n}",
-        "{\n  \"refs\": [\n    {\n      \"tag\": \"hero_face\",\n      \"file\": \"ref_face.jpg\",\n      \"subject\": 1,\n      \"retention\": \"fully_preserved\",\n      \"shots\": [\n        1,\n        2,\n        3,\n        4,\n        5,\n        6\n      ],\n      \"desc\": \"head-and-shoulders photograph of the cook, even light\"\n    },\n    {\n      \"tag\": \"hero_outfit\",\n      \"file\": \"ref_outfit.jpg\",\n      \"subject\": 1,\n      \"retention\": \"partially_copy\",\n      \"shots\": [\n        1\n      ],\n      \"desc\": \"full-length photograph of the same cook, grey apron over a grey t-shirt\"\n    },\n    {\n      \"tag\": \"kitchen\",\n      \"file\": \"ref_room.jpg\",\n      \"retention\": \"reference\",\n      \"shots\": [\n        1,\n        2,\n        3,\n        6\n      ],\n      \"desc\": \"the kitchen: counter, window, and the light coming through it\"\n    }\n  ],\n  \"subjects\": {\n    \"1\": {\n      \"name\": \"the cook\",\n      \"locked\": \"the same face, the same short dark hair, the same silver stud earrings\",\n      \"context\": \"the grey apron stays tied over the grey t-shirt\"\n    }\n  }\n}",
+        "{\"shots\":[{\"id\":\"s1\",\"beat\":\"@hero_face stands at the counter in @kitchen, a grey apron over a grey t-shirt. She looks up from the chopping board and says, 'You are early. I have barely started.' She turns back to the board and goes on slicing, the knife tapping steadily against the wood.\",\"directives\":{\"camera\":\"hold\",\"framing\":\"medium\",\"pace\":\"steady\",\"tail\":\"ongoing\"}},{\"id\":\"s2\",\"beat\":\"She sets the knife down and walks the length of the counter to the window of @kitchen, looking out at the street. Her steps are soft on the tiles and the refrigerator hums behind her.\",\"directives\":{\"join\":\"continuous\",\"camera\":\"pan_follow\",\"framing\":\"medium\",\"pace\":\"steady\",\"tail\":\"ongoing\"}},{\"id\":\"s3\",\"beat\":\"She turns from the window, crosses @kitchen and pushes through the doorway into the hallway of @hallway beyond, the room falling away behind her. Her footsteps carry off the tiles and onto the soft runner as she keeps walking.\",\"directives\":{\"join\":\"match_cut\",\"camera\":\"pan_follow\",\"framing\":\"wide\",\"pace\":\"brisk\",\"tail\":\"ongoing\"}},{\"id\":\"s4\",\"beat\":\"@hero_face walks down the narrow hallway of @hallway, hung with coats, one hand trailing along the wall, her footsteps muffled on the runner. The hallway walls stand close on either side of her and the coats brush past her shoulder.\",\"directives\":{\"join\":\"continuous\",\"camera\":\"handheld\",\"framing\":\"medium\",\"pace\":\"steady\",\"tail\":\"ongoing\"}},{\"id\":\"s5\",\"beat\":\"She reaches the window at the end of @hallway and rests one hand on the frame, then half turns back over her shoulder and says, 'It is still raining. We will have to do it inside.' She pushes off the frame and starts back down the hall.\",\"directives\":{\"join\":\"continuous\",\"camera\":\"push_in\",\"framing\":\"medium\",\"pace\":\"slow\",\"tail\":\"ongoing\"}},{\"id\":\"s6\",\"beat\":\"She walks back along @hallway and through the doorway to the counter in @kitchen, picking the knife up again and settling back into the rhythm of it. The refrigerator hums and the knife starts on the board.\",\"directives\":{\"join\":\"match_cut\",\"camera\":\"pull_back\",\"framing\":\"wide\",\"pace\":\"steady\",\"tail\":\"hold\"}}]}",
+        "{\"refs\":[{\"tag\":\"hero_face\",\"file\":\"ref_face.jpg\",\"subject\":1,\"retention\":\"fully_preserved\",\"shots\":[1,2,3,4,5,6],\"desc\":\"head-and-shoulders photograph of the cook, even light\"},{\"tag\":\"hero_outfit\",\"file\":\"ref_outfit.jpg\",\"subject\":1,\"retention\":\"partially_copy\",\"shots\":[1],\"desc\":\"full-length photograph of the same cook, grey apron over a grey t-shirt\"},{\"tag\":\"kitchen\",\"file\":\"ref_room.jpg\",\"retention\":\"reference\",\"shots\":[1,2,3,6],\"desc\":\"the kitchen: counter, window, and the light coming through it\"},{\"tag\":\"hallway\",\"file\":\"ref_hall.jpg\",\"retention\":\"reference\",\"shots\":[3,4,5,6],\"desc\":\"the hallway: coats along one wall, a runner underfoot, a window at the far end\"}],\"subjects\":{\"1\":{\"name\":\"the cook\",\"locked\":\"the same face, the same short dark hair, the same silver stud earrings\",\"context\":\"the grey apron stays tied over the grey t-shirt\"}}}",
         "on",
         19,
         24,
@@ -628,7 +628,18 @@
         0,
         "",
         "off",
-        "off"
+        "off",
+        "off",
+        0.5,
+        2,
+        "same",
+        "simple",
+        "base",
+        "freeze",
+        "0:0, 22:0, 44:1",
+        "linear",
+        "refine",
+        "regular"
       ],
       "title": "H3 Ref2VA Chain - showcase 6x7s"
     },
@@ -875,7 +886,7 @@
       "title": "H3 Ref2VA Chain",
       "properties": {},
       "widgets_values": [
-        "Hand Tie Clips -- SHOWCASE (6 hops x 7 s = 39.2 s)\n\nA continuity stress test, and the honest demonstration of what the reference\nregister buys you.\n\nREQUIRES a turbo stack on the MODEL wire, which is how this node is actually\nrun here:\n\n    UNETLoader -> LoRA Loader Stack (turbo LoRA) -> H3 AdaLN LoRA Fix\n               -> MiniMax H3 Low VRAM Attention -> H3 SLA Attention\n               -> Model Preview Override -> this node\n\n    ComfyUI-PlagueKind-Nodes  ->  LoRA Loader Stack, AdaLN Fix, SLA Attention\n    ComfyUI-KJNodes           ->  Low VRAM Attention (experimental),\n                                  Model Preview Override\n\nOn disk as well: the turbo LoRA named in the loader, and taeh3.safetensors for\nthe live preview (or set tiny_vae to none).\n\nCLIP reaches this node FROM THE LORA LOADER, not from the encoder. That is what\nmakes the text half of every LoRA land. Do not rewire it back.\n\n`steps` is 7, which only works with the turbo LoRA. Missing a pack? Its nodes\nload as red boxes -- delete them, wire the loader straight into `model` and the\nencoder into `clip`, and raise `steps` to 20 or so.\n\nBEFORE YOU RUN IT, supply three pictures. Open REFERENCES on the node and drop\nyour own onto each thumbnail, or put files in ComfyUI/input/h3_refs named:\n\n    ref_face.jpg     head-and-shoulders, even light   -> @hero_face\n    ref_outfit.jpg   full length, same person         -> @hero_outfit\n    ref_room.jpg     the room, wide                   -> @kitchen\n\nWithout them the run stops and names the reference it could not find. Nothing\nguesses.\n\nWhat each hop is testing:\n\n  1  kitchen, dialogue           all three references active\n  2  lateral move to the window  kitchen only\n  3  exits through the doorway   kitchen only\n  4  hallway - UNSEEN space      face re-asserted; no room reference exists\n  5  dialogue, ZERO references   identity, wardrobe and voice ride on the frame\n                                 pin plus subjects.1.locked/context alone\n  6  returns to the kitchen      on a MATCH CUT, not a continuous join -- one\n                                 unbroken take across two rooms makes the model\n                                 morph one into the other mid-movement\n\nHop 5 is the point of the whole thing. If the cook is still the same person in\nthe same apron with the same voice, with no picture in front of the encoder,\nthe register is doing its job.\n\n`shots` on each reference is what schedules this. On a continuation chain,\nomitting `shots` means HOP 1 ONLY. Right for a place plate, wrong for a face:\nput every face reference on every hop, or the identity drifts and stays\ndrifted. List every hop a still should appear on.\n\nSettings that are deliberate, not defaults:\n  control_after_generate = fixed   or no two runs are comparable\n  tone_compensate = frame_shift    counters the drift that accumulates over six\n                                   hops. Set it to `off` and re-queue for a\n                                   same-seed A/B: tone mode is not in the hop\n                                   key, so every hop replays from cache in\n                                   seconds instead of re-rendering.\n  cache_hops = on                  edit shot 4 and only shots 4-6 re-render\n\nWorth trying on this plan, all new in 2.0:\n\n  refs on a shot        Hop 5's zero-reference case is scheduled here through\n                        each ref's own `shots` list. A shot can also say it\n                        directly -- `\"refs\": []` is no stills at all, and\n                        `\"refs\": [\"hero_face\"]` is that one and nothing else,\n                        whatever the register says.\n\n  tone_anchor_ref       Set tone_compensate to `anchor` and this to `still`\n                        and the chain holds the PHOTOGRAPH rather than hop 1.\n                        A ten-run outside study measured hop 1 as already\n                        short of the still before any relay has happened, so\n                        anchoring on it converges on a target that already\n                        fell short. Needs a start image.\n\n  anchor: restart       Put `\"anchor\": \"restart\"` on shot 6 with\n                        `join: hard_cut` and the return to the kitchen is a\n                        real cut off the start image rather than a relay --\n                        the only thing measured to stop a long chain\n                        converging. Then set last_frame_guide to\n                        `before_restart` in RUN, so hop 5 ENDS on the same\n                        photograph hop 6 opens on and the cut reads as a\n                        match cut.\n"
+        "Hand Tie Clips -- SHOWCASE (6 hops x 7 s = 39.2 s)\n\nA continuity stress test, and the honest demonstration of what the reference\nregister buys you.\n\nREQUIRES a turbo stack on the MODEL wire, which is how this node is actually\nrun here:\n\n    UNETLoader -> LoRA Loader Stack (turbo LoRA) -> H3 AdaLN LoRA Fix\n               -> MiniMax H3 Low VRAM Attention -> H3 SLA Attention\n               -> Model Preview Override -> H3 Cache (this pack)\n               -> this node\n\n    ComfyUI-PlagueKind-Nodes  ->  LoRA Loader Stack, AdaLN Fix, SLA Attention\n    ComfyUI-KJNodes           ->  Low VRAM Attention (experimental),\n                                  Model Preview Override\n\nOn disk as well: the turbo LoRA named in the loader, and taeh3.safetensors for\nthe live preview (or set tiny_vae to none).\n\nCLIP reaches this node FROM THE LORA LOADER, not from the encoder. That is what\nmakes the text half of every LoRA land. Do not rewire it back.\n\n`steps` is 7, which only works with the turbo LoRA. Missing a pack? Its nodes\nload as red boxes -- delete them, wire the loader straight into `model` and the\nencoder into `clip`, and raise `steps` to 20 or so.\n\nBEFORE YOU RUN IT, supply three pictures. Open REFERENCES on the node and drop\nyour own onto each thumbnail, or put files in ComfyUI/input/h3_refs named:\n\n    ref_face.jpg     head-and-shoulders, even light   -> @hero_face\n    ref_outfit.jpg   full length, same person         -> @hero_outfit\n    ref_room.jpg     the room, wide                   -> @kitchen\n\nWithout them the run stops and names the reference it could not find. Nothing\nguesses.\n\nWhat each hop is testing:\n\n  1  kitchen, dialogue           all three references active\n  2  lateral move to the window  kitchen only\n  3  exits through the doorway   kitchen only\n  4  hallway - UNSEEN space      face re-asserted; no room reference exists\n  5  dialogue, ZERO references   identity, wardrobe and voice ride on the frame\n                                 pin plus subjects.1.locked/context alone\n  6  returns to the kitchen      on a MATCH CUT, not a continuous join -- one\n                                 unbroken take across two rooms makes the model\n                                 morph one into the other mid-movement\n\nHop 5 is the point of the whole thing. If the cook is still the same person in\nthe same apron with the same voice, with no picture in front of the encoder,\nthe register is doing its job.\n\n`shots` on each reference is what schedules this. On a continuation chain,\nomitting `shots` means HOP 1 ONLY. Right for a place plate, wrong for a face:\nput every face reference on every hop, or the identity drifts and stays\ndrifted. List every hop a still should appear on.\n\nSettings that are deliberate, not defaults:\n  control_after_generate = fixed   or no two runs are comparable\n  tone_compensate = frame_shift    counters the drift that accumulates over six\n                                   hops. Set it to `off` and re-queue for a\n                                   same-seed A/B: tone mode is not in the hop\n                                   key, so every hop replays from cache in\n                                   seconds instead of re-rendering.\n  cache_hops = on                  edit shot 4 and only shots 4-6 re-render\n\nWorth trying on this plan, all new in 2.0:\n\n  refs on a shot        Hop 5's zero-reference case is scheduled here through\n                        each ref's own `shots` list. A shot can also say it\n                        directly -- `\"refs\": []` is no stills at all, and\n                        `\"refs\": [\"hero_face\"]` is that one and nothing else,\n                        whatever the register says.\n\n  tone_anchor_ref       Set tone_compensate to `anchor` and this to `still`\n                        and the chain holds the PHOTOGRAPH rather than hop 1.\n                        A ten-run outside study measured hop 1 as already\n                        short of the still before any relay has happened, so\n                        anchoring on it converges on a target that already\n                        fell short. Needs a start image.\n\n  anchor: restart       Put `\"anchor\": \"restart\"` on shot 6 with\n                        `join: hard_cut` and the return to the kitchen is a\n                        real cut off the start image rather than a relay --\n                        the only thing measured to stop a long chain\n                        converging. Then set last_frame_guide to\n                        `before_restart` in RUN, so hop 5 ENDS on the same\n                        photograph hop 6 opens on and the cut reads as a\n                        match cut.\n"
       ],
       "color": "#432",
       "bgcolor": "#653"
@@ -918,7 +929,7 @@
           "name": "clip",
           "type": "CLIP",
           "links": [
-            18
+            19
           ]
         }
       ],
@@ -1109,6 +1120,50 @@
         "taeh3.safetensors",
         ""
       ]
+    },
+    {
+      "id": 35,
+      "type": "HTCH3Cache",
+      "pos": [
+        520,
+        1420
+      ],
+      "size": [
+        340,
+        200
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 17
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            18
+          ]
+        }
+      ],
+      "title": "H3 Cache",
+      "properties": {
+        "htc_speed": "cache",
+        "Node name for S&R": "HTCH3Cache"
+      },
+      "widgets_values": [
+        0.05,
+        0.2,
+        0.8,
+        1,
+        "auto",
+        false
+      ]
     }
   ],
   "links": [
@@ -1228,12 +1283,20 @@
       17,
       34,
       0,
-      7,
+      35,
       0,
       "MODEL"
     ],
     [
       18,
+      35,
+      0,
+      7,
+      0,
+      "MODEL"
+    ],
+    [
+      19,
       30,
       1,
       7,

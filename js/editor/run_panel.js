@@ -60,6 +60,18 @@ const GROUPS = [
                     // as a raw native widget, which is worse than an inert one.
                     "tone_compensate", "tone_anchor",
                     "last_frame_guide"]],
+    // The second sampler pass. Its own group rather than folded into
+    // `sampling`, because these do not describe how a hop is rendered -- they
+    // describe what happens to it afterwards, and `hop_refine=off` makes every
+    // other dial here inert. refine_model is a MODEL socket, so it is a wire on
+    // the node and never appears in this list.
+    ["refine", ["hop_refine", "refine_denoise", "refine_steps",
+                "refine_sampler", "refine_scheduler", "refine_cond",
+                "refine_audio",
+                // The blend and the head freeze are two answers to one
+                // question -- which frames keep the stock sample at the join --
+                // so they sit together and below the pass that produces them.
+                "refine_blend", "refine_blend_interp", "refine_head"]],
     ["cache", ["cache_hops", "cache_budget_gb"]],
     // Added 2026-08-30. 0.4.0 shipped these five on the Python side and never
     // touched js/, so all five fell through to native dials -- the documented

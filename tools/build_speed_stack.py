@@ -3,12 +3,18 @@
     UNETLoader ->  LoRA Loader Stack  ->  H3 AdaLN LoRA Fix
                ->  MiniMax H3 Low VRAM Attention
                ->  H3 SLA Attention
-               ->  Model Preview Override (KJ)  ->  Hand Tie Clips
+               ->  Model Preview Override (KJ)
+               ->  H3 Cache  ->  Hand Tie Clips
 
 and, off the same LoRA loader, **CLIP goes to the chain from the loader, not
 from the encoder** -- that is what makes the text half of every LoRA land.
 
-None of these five nodes belong to this pack. They are here because this is the
+H3 Cache is the one node in that column this pack owns, and it sits last on
+purpose: the cache clone should be the thing the sampler sees, after every other
+patch has been applied. It is in this generator rather than placed by hand so
+the MODEL wire keeps one source of truth.
+
+None of the other five nodes belong to this pack. They are here because this is the
 graph the node is actually run with: `steps` is 7, which only works with a turbo
 LoRA, and the AdaLN fix exists because the LoRA needs it. Shipping the examples
 without them ships a graph nobody uses. Every dependency is named on the START
@@ -54,7 +60,19 @@ STACK = [
      [0.9, "64", 8192, 0, True, True, "0", "comfy_kitchen", True, True, "Light"]),
     ("preview", "ModelPreviewOverrideKJ", "Model Preview Override",
      [520, 900], [360, 480], [512, 80, True, 100, 8, "taeh3.safetensors", ""]),
+    # reuse_threshold, start_percent, end_percent, max_steps, device, verbose.
+    # These are PlagueKind's own running values, not his node's declared
+    # defaults -- see h3_cache_node.py. They match HTCH3Cache's defaults, so a
+    # user who drags a fresh one out gets the same graph as the shipped example.
+    ("cache", "HTCH3Cache", "H3 Cache",
+     [520, 1420], [340, 200], [0.05, 0.2, 0.8, 1, "auto", False]),
 ]
+# Where the stack's node ids start. NOT a fixed block: the Starter already owns
+# 35-39, so a sixth stack entry claiming 35 by arithmetic collided with its
+# contact-sheet preview -- two nodes with one id, and the removal pass then
+# stripped that preview's links as if they were the old stack's. Ids are
+# allocated below by skipping whatever is taken, which is also what keeps the
+# re-run idempotent as the stack grows.
 FIRST_ID = 30
 
 MODEL_PATH = ["UNETLoader"] + [t for _, t, _, _, _, _ in STACK] + ["HandTieClips"]
@@ -91,11 +109,20 @@ def main():
         clip_link = [lid, clipl["id"], 0, chain["id"], 1, "CLIP"]
         wf["links"] += [model_link, clip_link]
 
+        taken = {n["id"] for n in wf["nodes"]}
+
+        def next_id():
+            i = FIRST_ID
+            while i in taken:
+                i += 1
+            taken.add(i)
+            return i
+
         ids = {}
-        for i, (key, ntype, title, pos, size, widgets) in enumerate(STACK):
-            ids[key] = FIRST_ID + i
+        for key, ntype, title, pos, size, widgets in STACK:
+            ids[key] = nid = next_id()
             wf["nodes"].append({
-                "id": FIRST_ID + i, "type": ntype,
+                "id": nid, "type": ntype,
                 "pos": list(pos), "size": list(size),
                 "flags": {}, "order": 0, "mode": 0,
                 "inputs": [], "outputs": [],
@@ -116,7 +143,7 @@ def main():
         model_link[3], model_link[4] = ids["lora"], 0
         chain_model = model_link[0]
         prev = ids["lora"]
-        for key in ("adaln", "lowvram", "sla", "preview"):
+        for key in ("adaln", "lowvram", "sla", "preview", "cache"):
             chain_model = link(prev, 0, ids[key], 0, "MODEL")
             prev = ids[key]
         chain_model = link(prev, 0, chain["id"], 0, "MODEL")
@@ -130,7 +157,7 @@ def main():
             {"name": "model", "type": "MODEL", "link": model_link[0]},
             {"name": "clip", "type": "CLIP", "link": clip_link[0]},
         ]
-        for key in ("adaln", "lowvram", "sla", "preview"):
+        for key in ("adaln", "lowvram", "sla", "preview", "cache"):
             byid[ids[key]]["inputs"] = [
                 {"name": "model", "type": "MODEL", "link": None}]
         byid[ids["preview"]]["inputs"].append(
@@ -140,7 +167,8 @@ def main():
                 "adaln": [("MODEL", "MODEL")],
                 "lowvram": [("model", "MODEL")],
                 "sla": [("MODEL", "MODEL")],
-                "preview": [("MODEL", "MODEL")]}
+                "preview": [("MODEL", "MODEL")],
+                "cache": [("MODEL", "MODEL")]}
         for key, spec in outs.items():
             byid[ids[key]]["outputs"] = [
                 {"name": nm, "type": ty, "links": []} for nm, ty in spec]
@@ -155,7 +183,7 @@ def main():
             byid[dst]["inputs"][dslot]["link"] = l[0]
 
         wf["last_link_id"] = lid
-        wf["last_node_id"] = max(wf["last_node_id"], FIRST_ID + len(STACK) - 1)
+        wf["last_node_id"] = max(wf["last_node_id"], max(taken))
 
         io.open(p, "w", encoding="utf-8", newline="\n").write(
             json.dumps(wf, indent=2) + "\n")

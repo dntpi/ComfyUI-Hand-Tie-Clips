@@ -54,3 +54,6 @@ docs/GROK_V2_HANDBACK.md
 docs/GROK_V2_GPU_TESTS.md
 docs/POST_V2.md
 BETA_NOTES.md
+
+# Lever-sweep working notes. Engineering, not installer material.
+docs/LEVER_AUDIT.md

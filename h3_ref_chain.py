@@ -77,6 +77,7 @@ from . import music as _music
 from . import latents as _latents
 from . import audio_lock as _alock
 from . import planner as _planner
+from . import refine_blend as _rblend
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -1791,6 +1792,270 @@ def _splice_locked_audio(latent, z_audio):
     return out
 
 
+# How many of the frozen head's last steps ramp back up to full denoise under
+# refine_head=freeze. Two: enough that the held region does not end on a hard
+# edge, short enough that it stays INSIDE the head and never reaches a frame
+# anyone sees. It is not a lever and does not want to be one -- the lever for
+# where the refine starts is `refine_blend`, which works on delivered frames.
+REFINE_HEAD_RAMP = 2
+
+
+# The speed preset. One table, one place: "make turbo actually work" later means
+# editing a row here, not unpicking branches through the refine block.
+#
+# NOTHING AUTO-DETECTS. A ModelPatcher carries no name -- `_model_fingerprint`
+# returns a content hash of the patched weight keys and the attention scalars,
+# which can tell two checkpoints apart but cannot tell you either one is
+# distilled. So the mode is DECLARED by the person on the rail, and the log
+# prints the fingerprint beside it so a run can be attributed afterwards.
+#
+# `regular` is empty by construction -- the widgets, untouched -- so a graph
+# built before this widget existed renders byte-identically.
+#
+# `turbo` is a distilled few-step base, and the honest state of that row is that
+# MOST OF IT IS UNMEASURED. What is measured, on matched runs at a pinned seed,
+# is that a turbo base is the degrader: junction MAE 8.40-10.85 and climbing hop
+# over hop, against 2.07-4.02 flat for the plain hybrid over 9-10 hops. The
+# turbo checkpoint went into the BASE loader only and the chain still collapsed,
+# so it compounds through the conditioning path and not through the latent, and
+# there is no corner of this loop where turbo is free. The preset does not claim
+# to fix that.
+#
+# The one row entry that IS evidence-backed is refine_head=freeze: turbo fails
+# at the seam first, and freeze is the only refine lever measured to move a seam
+# (1.9x/1.7x against 3.5x/7.3x), at a grain cost that is real and is invisible
+# on bokeh. Every field a row leaves out passes the widget straight through.
+SPEED_MODES = {
+    "regular": {},
+    "turbo": {"refine_head": "freeze"},
+}
+
+# Stated with the mode, once per run, so the console carries the cost of the
+# choice next to the choice. There is no silent correction anywhere in this
+# path: every field the table moves is named in the log with the value the
+# widget read.
+SPEED_MODE_NOTES = {
+    "turbo": ("a turbo base measured ~2.5x the seam error of a plain hybrid "
+              "and climbing (junction MAE 8.40-10.85 vs 2.07-4.02 over 9-10 "
+              "hops); the refine pass reduces that, it does not undo it"),
+}
+
+
+def _apply_speed_mode(mode, values):
+    """(effective_values, [(field, widget_value, preset_value)]) for one mode.
+
+    A new dict rather than a mutation, and the report lists only what actually
+    MOVED -- so `regular`, and a turbo row whose value the widget already
+    carries, both print nothing and both key identically to a run without the
+    preset. An unknown mode falls back to the widgets rather than raising: the
+    preset is an accelerator, and a typo in it is not worth losing a queue over.
+    """
+    table = SPEED_MODES.get(str(mode)) or {}
+    out = dict(values)
+    moved = []
+    for field in sorted(table):
+        if field in out and out[field] != table[field]:
+            moved.append((field, out[field], table[field]))
+            out[field] = table[field]
+    return out, moved
+
+
+def _stream_5d(t):
+    """Video latent as [B,C,T,H,W]."""
+    if t.ndim == 4:
+        t = t.unsqueeze(0)
+    if t.ndim != 5:
+        raise RuntimeError(
+            f"{TAG}: expected video latent [B,C,T,H,W], got {tuple(t.shape)}")
+    return t
+
+
+def _stream_audio(t):
+    """Audio latent as [B,C,2,T40]."""
+    if t.ndim == 3:
+        t = t.unsqueeze(0)
+    if t.ndim != 4:
+        raise RuntimeError(
+            f"{TAG}: expected audio latent [B,C,2,T], got {tuple(t.shape)}")
+    return t
+
+
+def _refine_head_freeze(latent, overlap_n, freeze_head=True, freeze_audio=True):
+    """Hold the pinned overlap head, the audio stream, or both, out of the
+    refine.
+
+    Measured, not assumed. On an 8x8-pooled (geometry-only) frame difference a
+    stock chain's joins are indistinguishable from ordinary motion -- 1.00x
+    against its own neighbourhood. Every refine mode puts them at 2.4-2.8x, and
+    the size does NOT track refine_denoise: 0.20 measures 2.75x and 0.50
+    measures 2.41x. Texture moves far less (0.94x -> 1.4-1.6x), so what the
+    refine breaks at the join is position, not grain. What is constant across
+    those runs is that the head goes through an extra, independently-noised pass
+    that the tail it has to continue never saw.
+
+    THE RAMP LIVES INSIDE THE HEAD. The head is exactly the region the writer
+    discards -- `incoming = imgs[drop_n:]` -- so latent step `v_steps` is the
+    FIRST DELIVERED frame. Ramping forward from there puts a partial denoise on
+    the first delivered frames of every hop, which is a texture dent precisely
+    at the seam. The ramp climbs across the last steps OF the head instead, so
+    the mask is already 1.0 by the time it reaches a frame anyone sees. Ramping
+    on the delivered side is `refine_blend`'s job, and it does it on finished
+    samples where it cannot dent anything.
+
+    AUDIO IS HELD WHOLE, AND ON EVERY HOP. Leaving audio live while the video
+    head was frozen produced a strained voice at the end of each hop; mirroring
+    the video mask into the audio head made it worse. The defect is not WHICH
+    audio is refined, it is that the audio stream acquires a BOUNDARY at all --
+    at 40 Hz a latent step is 25 ms, and a magnitude jump between a held region
+    and a refined one is audible as a warble. Holding it only on hops 2+ fixes
+    nothing audible either: hop 1's voice is what every later hop's context pin
+    continues, so the damage is applied once and then carried. Hence the audio
+    hold is gated separately from the head hold and applies to hop 1 too.
+
+    noise_mask polarity is 1 = denoise, 0 = freeze. ANDs with whatever mask is
+    already there -- under master_audio_file that is the audio lock, and
+    replacing it would hand the refine a live audio stream to re-cook.
+
+    Returns (latent, v_steps, audio_held). v_steps is 0 when no head was frozen,
+    which is not an error: hop 1 has no pinned head and an off-grid overlap has
+    no whole number of latent steps. Audio can still be held in both of those
+    cases, so callers must test both halves of the result.
+    """
+    import comfy.nested_tensor as nt  # noqa: PLC0415
+    parts = _latents.from_dict(latent)
+    if parts is None or len(parts) < 2:
+        return latent, 0, False
+    video = _stream_5d(parts[0])
+    audio = _stream_audio(parts[1])
+    t_total = int(video.shape[2])
+
+    # A head that is off-grid, or long enough to swallow the hop, is no head.
+    # That does not stop the audio hold, which needs neither.
+    v_steps = (int(_rblend.whole_steps_for_frames(overlap_n) or 0)
+               if freeze_head else 0)
+    if v_steps and t_total <= v_steps + 1:
+        v_steps = 0
+    if not v_steps and not freeze_audio:
+        return latent, 0, False
+
+    vmask = torch.ones((1, 1) + tuple(int(d) for d in video.shape[2:]),
+                       device=video.device, dtype=torch.float32)
+    if v_steps:
+        vmask[:, :, :v_steps] = 0.0
+        # Ramp across the LAST steps of the head, never past its end. At least
+        # one step stays fully frozen, or there is no held head left to hold.
+        v_ramp = max(0, min(int(REFINE_HEAD_RAMP), v_steps - 1))
+        for k in range(v_ramp):
+            # Step (v_steps - v_ramp + k) climbs toward 1.0; step v_steps, the
+            # first delivered one, is already 1.0 and stays that way.
+            vmask[:, :, v_steps - v_ramp + k] = float(k + 1) / float(v_ramp + 1)
+
+    ashape = (1, 1) + tuple(int(d) for d in audio.shape[2:])
+    amask = (torch.zeros(ashape, device=audio.device, dtype=torch.float32)
+             if freeze_audio
+             else torch.ones(ashape, device=audio.device, dtype=torch.float32))
+
+    prev = latent.get("noise_mask")
+    if prev is not None:
+        try:
+            pv, pa = list(prev.unbind())[:2]
+            vmask = vmask * pv.to(device=vmask.device, dtype=vmask.dtype)
+            amask = amask * pa.to(device=amask.device, dtype=amask.dtype)
+        except Exception as e:
+            raise RuntimeError(
+                f"{TAG}: the refine could not AND its hold with the existing "
+                f"noise mask ({e}). Refusing to drop it -- that would let the "
+                "refine re-cook locked audio.") from e
+    out = dict(latent)
+    out["noise_mask"] = nt.NestedTensor((vmask, amask))
+    return out, v_steps, bool(freeze_audio)
+
+
+def _refine_sampled(sampled, *, model, guider, sampler, scheduler,
+                    steps, denoise, seed, sigma_cache, hop_no,
+                    sampler_label="same", cond_label="base",
+                    own_model=False):
+    """Second low-denoise sample of a FINISHED hop latent.
+
+    Every ratchet lever before this one acts at the join and acts by arithmetic:
+    `pin_renorm` rescales a statistic, `pin_mech=reset` blends bands of a warped
+    photograph. The measured failure was always the same -- the statistics held
+    while the CONTENT walked -- and arithmetic cannot put content back.
+    Re-sampling can, because it runs the model. That is the whole reason this
+    exists and the reason it sits here rather than at the join.
+
+    The schedule is cached under a ("refine", steps, denoise, scheduler) tuple.
+    The hop schedules are cached under a bare int, so the two can never collide
+    -- which matters more than it looks: a collision would hand the refine pass
+    the hop's full-denoise schedule and quietly re-render the hop from noise.
+    `scheduler` is in the key because refine_scheduler can differ from the hop's:
+    without it, flipping simple/sgm_uniform mid-chain would be served the first
+    one's sigmas and the widget would do nothing.
+    """
+    key = ("refine", int(steps), round(float(denoise), 4), str(scheduler))
+    if key not in sigma_cache:
+        sigma_cache[key] = _result(_core_call(
+            BasicScheduler, "the refine sigma schedule",
+            model=model, scheduler=str(scheduler), steps=int(steps),
+            denoise=float(denoise)))[0]
+    r_sigmas = sigma_cache[key]
+    # An independent seed. Re-noising on the hop's own seed would push along the
+    # direction the hop already travelled, which is a weaker perturbation than a
+    # fresh draw -- it would read as "refine barely did anything" and be
+    # indistinguishable from the lever not working.
+    r_noise = _result(_core_call(
+        RandomNoise, "the refine noise source",
+        noise_seed=(int(seed) ^ 0x5EF1) & 0x7FFFFFFF))[0]
+    print(f"[{TAG}] hop {hop_no}: refine {int(r_sigmas.shape[-1]) - 1} steps "
+          f"denoise={float(denoise):.2f} "
+          f"sigma={float(r_sigmas[0]):.4f}->0 "
+          f"[{sampler_label}/{scheduler}, cond={cond_label}"
+          + (", refine_model" if own_model else "") + "]", flush=True)
+    return _result(_core_call(
+        SamplerCustomAdvanced, "the refine sampler",
+        noise=r_noise, guider=guider, sampler=sampler,
+        sigmas=r_sigmas, latent_image=sampled))[0]
+
+
+def _refine_blend_latent(raw, refined, keys, interp="linear", hop_no=0):
+    """Lerp the refined video back toward the raw sample over the pinned head.
+
+    The refine taken whole is what ships and what the next hop continues, and
+    the head of the hop is exactly the region that has to continue the PREVIOUS
+    hop -- which was never put through a second sampler. `0:0, 22:0, 44:1` keeps
+    the raw sample across the overlap and crosses to fully refined 22 frames
+    later, so the join is stock and the picture is refined.
+
+    VIDEO ONLY, on purpose. xyzdist's node takes audio wholly from the refined
+    latent with no ramp; that is what `refine_audio=freeze` exists to avoid, and
+    a ramp on audio would install exactly the magnitude boundary that made the
+    voice warble. Whatever branch `refine_audio` selected passes through here
+    untouched.
+
+    A lerp and not a mask: both inputs are finished samples, so there is no
+    sampler left to hand a mask to. The arithmetic lives in `refine_blend.py`
+    and is checked on the CPU by `tools/check_refine_blend.py`.
+    """
+    if not keys:
+        return refined
+    r_parts = _latents.from_dict(raw)
+    f_parts = _latents.from_dict(refined)
+    if not r_parts or not f_parts or len(r_parts) != len(f_parts):
+        print(f"[{TAG}] hop {hop_no}: refine_blend skipped (the refine did not "
+              "return a matching latent); the refine ships whole", flush=True)
+        return refined
+    v_raw = _stream_5d(r_parts[0])
+    v_ref = _stream_5d(f_parts[0])
+    weights = _rblend.step_weights(int(v_ref.shape[2]), keys, interp)
+    mixed = _rblend.blend_video(v_raw, v_ref, weights)
+    f_parts[0] = mixed.reshape(f_parts[0].shape)
+    out = dict(refined)
+    out["samples"] = _latents.rebuild(refined["samples"], f_parts)
+    print(f"[{TAG}] hop {hop_no}: refine blend "
+          + _rblend.describe(weights, keys, interp), flush=True)
+    return out
+
+
 def _slice_take_audio(prepared, t0, t1, sr):
     """The take window, resampled to `sr`, as an AUDIO dict. For the pin."""
     start, end = _alock.sample_range(t0, t1, prepared["sr"])
@@ -1860,7 +2125,16 @@ class HandTieClips:
                     "label_on": "vary per hop",
                     "label_off": "same seed every hop",
                 }),
-                "steps": ("INT", {"default": 14, "min": 1, "max": 50}),
+                "steps": ("INT", {"default": 14, "min": 1, "max": 50, "tooltip":
+                    "Video tolerates a low count; GENERATED AUDIO DOES NOT. "
+                    "Measured single-hop at 576p, seed pinned: 6 -> 10 steps "
+                    "cut the voice's spectral flatness 15% (less noise, more "
+                    "harmonic) and raised voiced share 83 -> 87%, while "
+                    "laplacian texture did not move. Most of it lands by 10. "
+                    "Audio gets no second pass -- refine_audio=freeze keeps "
+                    "the refine off the audio stream -- so this widget alone "
+                    "sets voice quality. Put `steps` on the speaking shots in "
+                    "the plan to pay for voice only where there is a voice."}),
                 "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "res_multistep"}),
                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "beta"}),
                 "shift_video": ("FLOAT", {"default": 12.0, "min": 0.01, "max": 100.0, "step": 0.01}),
@@ -2480,6 +2754,168 @@ class HandTieClips:
                         "of every hop it changes."
                     ),
                 }),
+                # APPENDED 2026-09-14 (the refine pass). Same rule again:
+                # widgets_values is positional, so these go LAST and nothing
+                # above them moves. Everything here ships inert -- hop_refine
+                # defaults off and the hop key only carries these fields when
+                # it is on, so a workflow saved before today keys byte-identical.
+                "hop_refine": (["off", "full", "pin_only"], {
+                    "default": "off",
+                    "tooltip": (
+                        "Re-sample each finished hop a second time at low "
+                        "denoise, to put back the texture the chain loses. "
+                        "off = shipped behaviour, one sampler pass. "
+                        "full = the refined latent is what ships AND what the "
+                        "next hop continues. pin_only = the refine is handed "
+                        "forward as the next hop's teacher but not one "
+                        "delivered pixel of THIS hop moves, so the cost lands "
+                        "on the chain and not on the picture; skipped on the "
+                        "last hop, which teaches nobody. Targets same-frame "
+                        "consistency -- limits over a long chain are still "
+                        "being characterised. Moves every hop's cache key, "
+                        "including hop 1's, because the refine runs after "
+                        "every sampler."
+                    ),
+                }),
+                "refine_denoise": ("FLOAT", {
+                    "default": 0.50, "min": 0.05, "max": 1.0, "step": 0.05,
+                    "tooltip": (
+                        "How far back toward noise the second pass starts. "
+                        "0.50 is the published value. At H3's shift=12.0 this "
+                        "is coarser than it reads: 0.7, 0.8 and 0.9 all "
+                        "collapse to the same two-sigma schedule, so the dial "
+                        "does its real work below ~0.6. Measured across three "
+                        "runs the seam cost does NOT track this number -- 0.20 "
+                        "and 0.50 both land at 2.4-2.8x -- so do not reach "
+                        "here first when a join looks wrong; reach for "
+                        "refine_blend."
+                    ),
+                }),
+                "refine_steps": ("INT", {
+                    "default": 2, "min": 0, "max": 40,
+                    "tooltip": (
+                        "Steps in the second pass. 0 = the same count the hop "
+                        "sampled at. 2 is the published value and it is the "
+                        "lever that actually separates the good runs from the "
+                        "bad ones: at shift 12 / denoise 0.50 the schedule is "
+                        "[0.9231, 0.8000, 0] and the pass is deliberately "
+                        "under-converged -- it perturbs the texture without "
+                        "re-deciding the picture. 3 already looks like a "
+                        "different shot."
+                    ),
+                }),
+                "refine_sampler": (["same"] + comfy.samplers.KSampler.SAMPLERS, {
+                    "default": "same",
+                    "tooltip": (
+                        "Sampler for the second pass. same = whatever the hop "
+                        "used. The best pairing measured so far is a plain "
+                        "base sampler with res_multistep here."
+                    ),
+                }),
+                "refine_scheduler": (["same"] + comfy.samplers.KSampler.SCHEDULERS, {
+                    "default": "simple",
+                    "tooltip": (
+                        "Scheduler for the second pass. It is in the sigma "
+                        "cache key, so flipping it really does rebuild the "
+                        "schedule rather than re-serving the first one."
+                    ),
+                }),
+                "refine_cond": (["base", "hop"], {
+                    "default": "base",
+                    "tooltip": (
+                        "What the second pass is pulled toward. base = the "
+                        "conditioning as Ref2VA built it, before any pin or "
+                        "guide -- the references and the text, nothing about "
+                        "the join. hop = the same pinned conditioning the hop "
+                        "sampled under, which re-asserts the pin on a picture "
+                        "that has already left it."
+                    ),
+                }),
+                "refine_model": ("MODEL", {
+                    "tooltip": (
+                        "Optional. A DIFFERENT model for the second pass, e.g. "
+                        "an undistilled base when the chain itself runs turbo. "
+                        "Unwired = refine on the same model the hop sampled "
+                        "with. Gets its own guider, since the hop's is bound "
+                        "to the hop's model. Fingerprinted into the hop key."
+                    ),
+                }),
+                "refine_audio": (["freeze", "refine"], {
+                    "default": "freeze",
+                    "tooltip": (
+                        "freeze = the audio stream is masked out of the second "
+                        "pass, so audio leaves a refine chain bit-identical to "
+                        "a no-refine one. RECOMMENDED and measured: the refine "
+                        "has nothing to gain on audio (it exists to fix "
+                        "texture, which is a picture property) and re-cooking "
+                        "it made the voice strained across three runs. Held on "
+                        "EVERY hop including hop 1, because hop 1's voice is "
+                        "what every later hop's pin continues. refine = let "
+                        "the second pass touch audio too; kept for the A/B."
+                    ),
+                }),
+                "refine_blend": ("STRING", {
+                    "default": _rblend.DEFAULT_RAMP, "multiline": False,
+                    "tooltip": (
+                        "frame:weight keyframes deciding which frames ship the "
+                        "raw sample (0) and which ship the refined one (1). "
+                        "The default '0:0, 22:0, 44:1' keeps the pinned "
+                        "overlap stock and crosses to fully refined over the "
+                        "22 frames after it -- so the join continues a hop "
+                        "that was sampled the same way it was, which is the "
+                        "measured seam cost of refining. Frames are mapped "
+                        "onto the latent grid through H3's real (1,4,4,4,4) "
+                        "token cycle and read off this render's own length, "
+                        "not off a duration widget. Empty = no blend, the "
+                        "refine ships whole."
+                    ),
+                }),
+                "refine_blend_interp": (["linear", "smooth", "step"], {
+                    "default": "linear",
+                    "tooltip": (
+                        "How the blend moves between keyframes. linear is what "
+                        "the published run used. smooth eases both ends; step "
+                        "holds each key until the next one, which is a hard "
+                        "switch and mostly a diagnostic."
+                    ),
+                }),
+                "refine_head": (["refine", "freeze"], {
+                    "default": "refine",
+                    "tooltip": (
+                        "The OTHER way to keep the join stock, kept for the "
+                        "A/B against refine_blend. freeze masks the pinned "
+                        "head out of the second pass instead of lerping it "
+                        "back afterwards, with a 2-step ramp that stays inside "
+                        "the head so no delivered frame gets a partial "
+                        "denoise. It kills the seam flash and wins on the "
+                        "face; the grain cost is real and is invisible on "
+                        "bokeh. Only hops 2+ have a head. Off-grid overlaps "
+                        "have no whole number of latent steps to freeze and "
+                        "say so in the log."
+                    ),
+                }),
+                # APPENDED 2026-09-15 (the speed preset). Last slot again, for
+                # the same positional reason: nothing above it moves.
+                "speed_mode": (["regular", "turbo"], {
+                    "default": "regular",
+                    "tooltip": (
+                        "Which base is on the wire -- DECLARED, because nothing "
+                        "here can detect it. A ModelPatcher carries no name. "
+                        "regular = the refine widgets are used exactly as they "
+                        "read. turbo = a distilled few-step base, and the "
+                        "refine block takes the preset's values instead, with "
+                        "every override named in the log beside the value the "
+                        "widget read. It makes no parity claim: on matched runs "
+                        "at a pinned seed a turbo base measured junction MAE "
+                        "8.40-10.85 and CLIMBING against 2.07-4.02 flat for a "
+                        "plain hybrid over 9-10 hops, with the turbo "
+                        "checkpoint in the base loader only -- so it compounds "
+                        "through the conditioning path, and the preset reduces "
+                        "that rather than undoing it. It reaches the hop key "
+                        "only through the refine fields it moves, so with "
+                        "hop_refine=off it is inert."
+                    ),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2562,6 +2998,11 @@ class HandTieClips:
             master_audio_file="",
             last_frame_guide="off",
             voice_every_hop="off",
+            hop_refine="off", refine_denoise=0.50, refine_steps=2,
+            refine_sampler="same", refine_scheduler="simple",
+            refine_cond="base", refine_model=None, refine_audio="freeze",
+            refine_blend=_rblend.DEFAULT_RAMP, refine_blend_interp="linear",
+            refine_head="refine", speed_mode="regular",
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -2932,8 +3373,66 @@ class HandTieClips:
         # Skipped on a dry run: it only feeds the hop cache key, and a dry run
         # writes no cache. Hashing patched weights is not free.
         model_fp = None if dry else _model_fingerprint(model)
+        # Same reasoning as model_fp: a hop refined under a different model is a
+        # different hop, and serving it from cache is the silent-wrong-output
+        # failure the fingerprint exists to stop.
+        refine_model_fp = (None if (dry or refine_model is None)
+                           else _model_fingerprint(refine_model))
+
+        # The speed preset, folded in BEFORE anything reads a refine field:
+        # before the ramp is parsed, before the refine sampler object is built,
+        # and before the hop key is assembled. The key therefore moves because
+        # the EFFECTIVE values moved, which is exactly why `speed_mode` itself
+        # is deliberately absent from the hop payload -- there is no second copy
+        # of the truth to desync, and flipping the preset under hop_refine=off
+        # correctly keys the same, because it changed nothing.
+        _speed = str(speed_mode) if str(speed_mode) in SPEED_MODES else "regular"
+        if _speed != "regular":
+            _fp = (model_fp or "")[:12] or "dry-run"
+            _note = SPEED_MODE_NOTES.get(_speed)
+            print(f"[{TAG}] speed_mode={_speed} on model {_fp}"
+                  + (f" -- {_note}" if _note else ""), flush=True)
+            if str(hop_refine) == "off":
+                print(f"[{TAG}]   hop_refine=off, so the {_speed} row moves "
+                      f"nothing this run", flush=True)
+            else:
+                _sv, _smoved = _apply_speed_mode(_speed, {
+                    "refine_denoise": float(refine_denoise),
+                    "refine_steps": int(refine_steps),
+                    "refine_sampler": str(refine_sampler),
+                    "refine_scheduler": str(refine_scheduler),
+                    "refine_cond": str(refine_cond),
+                    "refine_audio": str(refine_audio),
+                    "refine_blend": str(refine_blend),
+                    "refine_blend_interp": str(refine_blend_interp),
+                    "refine_head": str(refine_head),
+                })
+                refine_denoise = _sv["refine_denoise"]
+                refine_steps = _sv["refine_steps"]
+                refine_sampler = _sv["refine_sampler"]
+                refine_scheduler = _sv["refine_scheduler"]
+                refine_cond = _sv["refine_cond"]
+                refine_audio = _sv["refine_audio"]
+                refine_blend = _sv["refine_blend"]
+                refine_blend_interp = _sv["refine_blend_interp"]
+                refine_head = _sv["refine_head"]
+                for _f, _was, _now in _smoved:
+                    print(f"[{TAG}]   {_speed} sets {_f}={_now} "
+                          f"(widget read {_was})", flush=True)
+                if not _smoved:
+                    print(f"[{TAG}]   the widgets already match the {_speed} "
+                          f"row", flush=True)
+
+        # Parsed up front so a malformed ramp fails on the queue rather than
+        # two minutes into hop 1, and so a dry run catches it too.
+        try:
+            refine_keys = (_rblend.parse(refine_blend)
+                           if str(hop_refine) != "off" else [])
+        except ValueError as e:
+            raise RuntimeError(f"{TAG}: {e}") from e
 
         sampler = base_sigmas = None
+        refine_sampler_obj = refine_sched = None
         sigma_cache = {}
         if not dry:
             model = _result(_core_call(
@@ -2943,6 +3442,16 @@ class HandTieClips:
             sampler = _result(_core_call(
                 KSamplerSelect, "the sampler",
                 sampler_name=sampler_name))[0]
+            # Built once, beside the hop sampler, for the same reason that one
+            # is: KSamplerSelect is pure, and rebuilding it per hop would be one
+            # more core call per hop for an identical object.
+            refine_sampler_obj = sampler
+            if str(hop_refine) != "off" and str(refine_sampler) != "same":
+                refine_sampler_obj = _result(_core_call(
+                    KSamplerSelect, "the refine sampler choice",
+                    sampler_name=str(refine_sampler)))[0]
+            refine_sched = (str(scheduler) if str(refine_scheduler) == "same"
+                            else str(refine_scheduler))
             base_sigmas = _result(_core_call(
                 BasicScheduler, "the sigma schedule",
                 model=model, scheduler=scheduler, steps=int(steps),
@@ -3522,6 +4031,21 @@ class HandTieClips:
                 _lfg = _last_frame_guide_key_field(last_frame_guide, i, shots)
                 if _lfg is not None:
                     hop_payload["last_frame_guide"] = _lfg
+                # The refine reaches EVERY hop, hop 1 included -- it runs after
+                # every sampler, and under `full` it rewrites hop 1's delivered
+                # pixels while under `pin_only` it rewrites the latent hop 1
+                # hands forward. So a refine run must never be served a hop
+                # cached by an `off` run; that is the whole A/B, silently void.
+                # Present only when on, for the same reason last_frame_guide is:
+                # adding "off" would move every existing cache key.
+                if str(hop_refine) != "off":
+                    hop_payload["refine"] = [
+                        str(hop_refine), round(float(refine_denoise), 4),
+                        int(refine_steps), str(refine_sampler),
+                        str(refine_scheduler), str(refine_cond),
+                        str(refine_head), str(refine_audio),
+                        str(refine_blend).strip(), str(refine_blend_interp),
+                        refine_model_fp]
                 hop_key = _store.hop_key(
                     None if hop_restart else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
@@ -3592,6 +4116,12 @@ class HandTieClips:
                     ref_audios=(ref_audios if hop_voice else None),
                 )
                 cond, latent = _result(packed)[0], _result(packed)[1]
+                # The conditioning as Ref2VA built it, before any pin or guide
+                # is added to it. `refine_cond=base` pulls the second pass
+                # toward this -- the references and the text, nothing about the
+                # join. Captured here rather than reconstructed later because
+                # every branch below rebinds `cond`.
+                base_cond = cond
 
                 if (i == 0 or hop_restart) and start_image is not None:
                     # A restart hop is a chain start. It gets the photograph as
@@ -3691,6 +4221,102 @@ class HandTieClips:
                     noise=noise, guider=guider, sampler=sampler,
                     sigmas=hop_sigmas, latent_image=latent))[0]
 
+                # Refine, before the decode so `full` reaches the delivered
+                # pixels. After the sampler, so pin_mech / the guides / the
+                # audio lock are all already spent and none of them can see it.
+                refined_for_pin = None
+                if str(hop_refine) != "off":
+                    if str(hop_refine) == "pin_only" and i >= n - 1:
+                        # Nothing downstream would ever read it.
+                        print(f"[{TAG}] hop {i + 1}: refine skipped "
+                              "(pin_only, last hop teaches nobody)", flush=True)
+                    else:
+                        _rguider = guider
+                        _rmodel = model
+                        if refine_model is not None:
+                            # Its own model, so its own guider: the hop's guider
+                            # is bound to the hop's model and would ignore this
+                            # input entirely. Conditioning still follows
+                            # refine_cond -- the model changes, not what the
+                            # refine is being pulled toward.
+                            _rmodel = refine_model
+                            _rguider = _result(_core_call(
+                                BasicGuider, "the refine guider (refine_model)",
+                                model=refine_model,
+                                conditioning=(base_cond
+                                              if str(refine_cond) == "base"
+                                              else cond)))[0]
+                        elif str(refine_cond) == "base":
+                            _rguider = _result(_core_call(
+                                BasicGuider, "the refine guider (base cond)",
+                                model=model, conditioning=base_cond))[0]
+                        # Hold the pinned head out of the refine, and the audio
+                        # out of it separately. Only hops 2+ have a head -- hop
+                        # 1's first frames continue nothing, so freezing them
+                        # would just leave the opening grainier than the rest of
+                        # the chain. Audio has no such exemption: hop 1's voice
+                        # is what every later hop's pin continues, so gating the
+                        # two together left the whole chain sounding re-cooked.
+                        _rin, _rfrozen, _rafrz = sampled, 0, False
+                        _do_head = (str(refine_head) == "freeze"
+                                    and not hop_is_start)
+                        _do_aud = (str(refine_audio) == "freeze")
+                        if _do_head or _do_aud:
+                            _rin, _rfrozen, _rafrz = _refine_head_freeze(
+                                sampled, overlap_n, freeze_head=_do_head,
+                                freeze_audio=_do_aud)
+                            if _do_head and not _rfrozen:
+                                print(f"[{TAG}] hop {i + 1}: refine_head="
+                                      "freeze had nothing to freeze "
+                                      f"(overlap {overlap_n}f is off the "
+                                      "latent grid)", flush=True)
+                            if _rfrozen or _rafrz:
+                                _held = []
+                                if _rfrozen:
+                                    _held.append(
+                                        f"head ({overlap_n}f pin = {_rfrozen} "
+                                        f"video steps, ramp "
+                                        f"{REFINE_HEAD_RAMP})")
+                                if _rafrz:
+                                    _held.append("audio whole")
+                                print(f"[{TAG}] hop {i + 1}: refine holds "
+                                      + " + ".join(_held), flush=True)
+                        _ref = _refine_sampled(
+                            _rin, model=_rmodel, guider=_rguider,
+                            sampler=refine_sampler_obj,
+                            scheduler=refine_sched,
+                            steps=(int(refine_steps) or int(hop_steps)),
+                            denoise=float(refine_denoise), seed=shot_seed,
+                            sigma_cache=sigma_cache, hop_no=i + 1,
+                            sampler_label=(sampler_name
+                                           if str(refine_sampler) == "same"
+                                           else str(refine_sampler)),
+                            cond_label=str(refine_cond),
+                            own_model=(refine_model is not None))
+                        # SamplerCustomAdvanced copies the input dict, so the
+                        # freeze mask would ride out on the result and into
+                        # prev_sampled. Put back whatever the hop itself left
+                        # there -- usually nothing, the audio lock when a master
+                        # track is loaded.
+                        if _rfrozen or _rafrz:
+                            _ref = dict(_ref)
+                            if sampled.get("noise_mask") is None:
+                                _ref.pop("noise_mask", None)
+                            else:
+                                _ref["noise_mask"] = sampled["noise_mask"]
+                        _ref = _refine_blend_latent(
+                            sampled, _ref, refine_keys,
+                            str(refine_blend_interp), hop_no=i + 1)
+                        if str(hop_refine) == "full":
+                            # Delivered pixels AND the next teacher.
+                            sampled = _ref
+                        else:
+                            # pin_only: the teacher only. The decode below still
+                            # runs on the first pass, so not one delivered pixel
+                            # of this hop moves.
+                            refined_for_pin = _latent_cpu(_ref)
+                        del _ref
+
                 imgs, audio = _decode_av(vae, audio_vae, sampled)
                 imgs = imgs.contiguous().cpu()
                 wav = audio["waveform"].contiguous().cpu()
@@ -3706,9 +4332,13 @@ class HandTieClips:
                     audio = _slice_take_audio(locked, _t0, _t1, sr)
                     wav = _batch_wav(audio["waveform"].contiguous().cpu())
                     audio = {"waveform": wav, "sample_rate": sr}
-                this_sampled = _latent_cpu(sampled)
+                this_sampled = (refined_for_pin if refined_for_pin is not None
+                                else _latent_cpu(sampled))
 
-                del sampled, latent, cond, guider, noise
+                # base_cond is deleted with cond because it is usually the
+                # same object: keeping the name alive would hold one hop's
+                # conditioning resident until the next hop overwrites it.
+                del sampled, latent, cond, base_cond, guider, noise
                 mm.soft_empty_cache()
 
                 if (hop_store is not None and hop_key is not None

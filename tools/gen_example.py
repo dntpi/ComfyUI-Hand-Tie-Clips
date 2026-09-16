@@ -32,15 +32,14 @@ for i, s in enumerate(shot["shots"], start=1):
     rows.append("| %d | %s | %s |" % (
         i, s["id"], ", ".join("@" + t for t in active) or "**none**"))
 
-body = """# Worked example: six hops, three pictures
+body = """# Worked example: six hops, four pictures
 
-This is the plan inside `workflows/HandTieClips_Showcase.json`, reproduced here so
-it can be shown to a model as an example of the shape and the reasoning. It is
-generated from that workflow, so the two cannot drift apart.
+This is the plan inside `workflows/HandTieClips_Showcase.json`, reproduced here
+so it can be shown to a model as an example of the shape and the reasoning. It
+is generated from that workflow, so the two cannot drift apart.
 
 The scene: a cook in a kitchen speaks a line, crosses the room, leaves through a
-doorway into a hallway the register has no picture of, speaks again there, and
-comes back.
+doorway into a hallway, speaks again there, and comes back.
 
 ## What each hop is for
 
@@ -48,19 +47,26 @@ comes back.
 |---|---|---|
 %s
 
-Three things in that table are the whole point:
+Four things in that table are the whole point:
 
-- **Hop 3** carries the kitchen while she is leaving it, and hop 4 does not.
-  The hallway is a space no reference describes, so the model must invent it —
-  and a kitchen plate riding hop 4 would drag her back into the kitchen.
-- **Hop 4** re-asserts the face. Entering an unseen space is where identity
-  drift starts, and re-asserting there is cheaper than recovering on 5 and 6.
-- **Hop 5 has no references at all.** Identity, wardrobe and voice ride on the
-  frame pin plus `subjects.1.locked` and `.context` alone. If she is still the
-  same person in the same apron with the same voice, the register works.
+- **The face plate rides every hop.** It is the one reference that is never
+  tightened. Identity drift does not self-correct, and only a plate rebuilds a
+  face that has already gone.
+- **The hallway has its own plate.** Narrowing the kitchen plate to the hops set
+  in the kitchen does not mean the second location goes without one. Leaving it
+  unplated is the most common mistake on this rule, and it would have left three
+  of six hops held by beat text alone.
+- **Hops 3 and 6 carry both place plates**, because those are the two hops that
+  travel: each opens in one room and ends in the other, so each is plated for
+  both. Every other hop carries exactly the room it is in.
+- **The outfit plate rides hop 1 only.** From hop 2 on, the wardrobe is held by
+  `subjects.1.context` alone -- which is why that field names the colours rather
+  than pointing back at the picture.
 
-Note also that the dialogue lands on hops 1 and 5 — the establishing shot and
-the one with no pictures — and that both use single quotes.
+Note also that every hop before the last carries `tail: ongoing` and ends on
+something still underway, that the two location changes join on `match_cut`
+rather than `continuous`, and that the dialogue on hops 1 and 5 uses single
+quotes inside the JSON string.
 
 ## shot_plan
 

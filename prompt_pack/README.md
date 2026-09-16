@@ -13,7 +13,7 @@ Everything needed to have a language model write plans for this node.
 ## Using it in LM Studio (or any local chat app)
 
 1. Load a model and set its **context length to 16384 or more** — and to
-   **32768 if the model reasons**. The system prompt is ~4,700 tokens and the
+   **32768 if the model reasons**. The system prompt is ~8,000 tokens and the
    reply is another 1,000-2,000; a small window truncates the rules and you get
    invented directive names. A reasoning model adds far more than that on top:
    gemma4-26b measured 8,010 tokens of thinking before 858 tokens of JSON, and
@@ -97,7 +97,8 @@ written:
 python tools/gen_schema.py           # regenerate the schema from the node
 python tools/gen_schema.py --check   # exit 1 if it is out of date
 python tools/gen_example.py          # regenerate the example from the workflow
-sed -n '14,$p' prompt_pack/AUTHORING_PROMPT.md \n    > prompt_pack/SYSTEM_PROMPT.md   # re-strip the preamble
+# re-strip the preamble:
+tail -n +14 prompt_pack/AUTHORING_PROMPT.md > prompt_pack/SYSTEM_PROMPT.md
 ```
 
 Both read the installed node and the shipped workflow, so they cannot describe a

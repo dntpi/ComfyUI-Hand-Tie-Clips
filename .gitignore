@@ -21,3 +21,7 @@ htc_llm.json
 # The root HANDOVER.md was already ignored; these are the same thing, dated.
 docs/HANDOVER_*.md
 .core_matrix_cache/
+
+# Agent working files -- never ships
+CLAUDE.md
+.claude/

@@ -26,7 +26,7 @@ from h3p import h3_ref_chain as H3   # noqa: E402
 
 CORE = {"UNETLoader", "CLIPLoader", "VAELoader", "CreateVideo", "SaveVideo",
         "SaveImage", "Note", "MarkdownNote", "PreviewAny", "PreviewImage"}
-OURS = {"HandTieClips", "HTCChainPreview", "HTCSeamReport"}
+OURS = {"HandTieClips", "HTCChainPreview", "HTCSeamReport", "HTCH3Cache"}
 # Declared dependencies, not accidents: the turbo stack this node is actually
 # run with. Anything outside these three sets is a pack the reader never asked
 # for and must not appear in a shipped example.
@@ -36,9 +36,11 @@ DEPS = {"LTX_lora_loader": "ComfyUI-PlagueKind-Nodes",
         "MiniMaxLowVRAMAttention": "ComfyUI-KJNodes (experimental)",
         "ModelPreviewOverrideKJ": "ComfyUI-KJNodes"}
 # The MODEL wire, in order, from the loader to the chain.
+# H3 Cache is last before the chain: the clone the sampler sees should be the
+# one every other patch has already been applied to.
 MODEL_PATH = ["UNETLoader", "LTX_lora_loader", "H3AdaLNLoRAFix",
               "MiniMaxLowVRAMAttention", "H3SLAAttention",
-              "ModelPreviewOverrideKJ", "HandTieClips"]
+              "ModelPreviewOverrideKJ", "HTCH3Cache", "HandTieClips"]
 # CLIP must reach the chain THROUGH the LoRA loader, or the text half of every
 # LoRA is silently dropped -- a wire that looks fine and costs you the LoRA.
 CLIP_PATH = ["CLIPLoader", "LTX_lora_loader", "HandTieClips"]
@@ -143,6 +145,16 @@ def main():
                     used.add(i["link"])
             for o in n.get("outputs", []):
                 used.update(o.get("links") or [])
+        # Litegraph keys everything off node id, so a duplicate is not a
+        # cosmetic problem: the second node wins every lookup and the first
+        # one's wires quietly attach to it. `build_speed_stack.py` produced
+        # exactly that once, by allocating a fixed id block that ran into the
+        # Starter's contact-sheet preview.
+        nids = [n["id"] for n in nodes]
+        dupes = sorted({i for i in nids if nids.count(i) > 1})
+        ck("node ids are unique", not dupes, "duplicated: %s" % dupes if dupes else
+           "%d nodes" % len(nids))
+
         ck("link table consistent", lids == used,
            "table=%s used=%s" % (sorted(lids), sorted(used)))
         ck("every link endpoint exists",

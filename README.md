@@ -793,10 +793,13 @@ From the **Sulphur** Discord:
 Also: the **H3 Cache** node is
 [silveroxides](https://github.com/silveroxides)' MiniMax-H3 block cache from
 [ComfyUI-UtilsCollection](https://github.com/silveroxides/ComfyUI-UtilsCollection)
-(AGPL-3.0), taken by way of PlagueKind's port and redistributed here with
-silveroxides' permission — the full chain, including the part of it that
-descends from GPL-3.0 ComfyUI Core and that nobody was in a position to
-relicense, is written out in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+(AGPL-3.0), improved and ported by
+[PlagueKind](https://github.com/PlagueKind) (`ComfyUI-H3-MiniMax-Cache` — his
+v1.5.1 reference protection and the production defaults this pack ships), then
+redistributed here with silveroxides' permission — the full chain, including
+the part of it that descends from GPL-3.0 ComfyUI Core and that nobody was in a
+position to relicense, is written out in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 The tone estimator is ported from
 [rkfg/ComfyUI-MiniMaxH3-ToneCompensate](https://github.com/rkfg/ComfyUI-MiniMaxH3-ToneCompensate)
 (MIT, as is this pack), and the latent join comes from
@@ -831,8 +834,8 @@ blended one. It ships **off**, along with `refine_denoise`, `refine_steps`,
 `refine_audio`, `refine_blend`, `refine_blend_interp`, `refine_head` and
 `speed_mode`. `refine_audio=freeze` is the default and it means audio leaves a
 refined chain bit-identical to an unrefined one. A new **H3 Cache** node makes
-the non-turbo base fast enough to recommend; it is silveroxides' implementation,
-redistributed with permission, and `THIRD_PARTY_NOTICES.md` records the whole
+the non-turbo base fast enough to recommend; it is silveroxides' implementation, improved and ported by
+PlagueKind, redistributed with permission, and `THIRD_PARTY_NOTICES.md` records the whole
 chain of provenance. The prompt pack gained a trust boundary: scene material now
 arrives in labelled blocks that cannot change the hop count or any rule. Every
 widget was appended, so a 2.0 graph loads and renders identically. Three 9-hop chains held identity flat at this refine block, each with a

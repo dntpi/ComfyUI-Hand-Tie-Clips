@@ -9,9 +9,10 @@ here so nobody has to reverse-engineer that from the code:
     ``minimax_h3_block_patch_forward`` and ``patch_minimax_h3_cache_model``.
     That repository is **AGPL-3.0**.
   * Hand Tie Clips took it by way of **PlagueKind**'s
-    ``ComfyUI-H3-MiniMax-Cache``, which is a rename-level port of the above
-    (239-line functions, 218 lines byte-identical), plus his v1.5.1 reference
-    protection.
+    ``ComfyUI-H3-MiniMax-Cache`` -- not rename-only: his v1.5.1 reference
+    protection and the production defaults this pack ships, on top of a
+    close port of silveroxides' originals (239-line functions, 218 lines
+    byte-identical).
   * ``h3_cache_forward`` below is a reimplementation of ComfyUI Core's
     ``MiniMaxH3Model._forward`` (``comfy/ldm/minimax/model.py``), which is
     **GPL-3.0**. See THIRD_PARTY_NOTICES.md -- that inheritance is the one part

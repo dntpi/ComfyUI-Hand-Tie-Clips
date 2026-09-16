@@ -93,7 +93,7 @@ widgets are appended at positions 71-82 and nothing is inserted or reordered.
   window the original widgets invite. Both shipped workflows have it wired.
 
   **The implementation is silveroxides' work** (`ComfyUI-UtilsCollection`,
-  AGPL-3.0), taken by way of PlagueKind's port and redistributed with
+  AGPL-3.0), improved and ported by PlagueKind and redistributed with
   permission given 2026-09-16. It descends further back than that: its forward
   pass is a reimplementation of ComfyUI Core's `MiniMaxH3Model._forward`, and
   Core is GPL-3.0. `THIRD_PARTY_NOTICES.md` records all of it, including the

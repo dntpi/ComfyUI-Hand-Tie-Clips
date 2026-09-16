@@ -105,8 +105,8 @@ class HTCH3Cache:
         "transformer stack on steps whose features have barely moved. Patches a "
         "cloned model only. This is what makes the non-turbo base fast enough "
         "to recommend. Implementation by silveroxides (ComfyUI-UtilsCollection), "
-        "by way of PlagueKind's port, redistributed with permission -- see "
-        "THIRD_PARTY_NOTICES.md."
+        "improved and ported by PlagueKind, redistributed with permission -- "
+        "see THIRD_PARTY_NOTICES.md."
     )
 
     def run(self, model, reuse_threshold, start_percent, end_percent,

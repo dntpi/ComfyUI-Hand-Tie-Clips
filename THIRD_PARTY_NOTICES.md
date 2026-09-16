@@ -14,9 +14,11 @@ The cache is silveroxides' work from
 `patch_minimax_h3_cache_model`. That repository is **AGPL-3.0**.
 
 Hand Tie Clips took its copy by way of
-[PlagueKind](https://github.com/PlagueKind)'s `ComfyUI-H3-MiniMax-Cache`, a
-port of the above (rename-level: the two central functions are 239 lines each
-with 218 byte-identical) plus his v1.5.1 reference protection.
+[PlagueKind](https://github.com/PlagueKind)'s `ComfyUI-H3-MiniMax-Cache`.
+That is not a rename-only fork: PlagueKind added reference protection in
+v1.5.1 and the narrower production defaults this node ships (`0.05` /
+`0.20` / `0.80` / `1`). The two central functions remain close to
+silveroxides' originals (239 lines each, 218 byte-identical).
 
 **Redistributed with permission from silveroxides, given 2026-09-16.**
 PlagueKind was informed and agreed. Attribution is the condition of that

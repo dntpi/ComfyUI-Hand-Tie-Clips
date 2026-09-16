@@ -1,8 +1,9 @@
 """The H3 Cache node.
 
 Hand Tie Clips' own wrapper (MIT) around the vendored cache in ``h3_cache.py``.
-The implementation there is silveroxides' work, redistributed with permission;
-read that file's header before touching either.
+The implementation there is silveroxides' work, improved and ported by
+PlagueKind, redistributed with permission; read that file's header before
+touching either.
 
 WHY THIS IS IN THE PACK AT ALL. The non-turbo base is the configuration this
 pack recommends -- two 9x8s chains held identity end to end, where the turbo

@@ -42,9 +42,12 @@ from comfy_extras.nodes_audio import vae_decode_audio
 from comfy_extras.nodes_custom_sampler import (
     BasicGuider,
     BasicScheduler,
+    DisableNoise,
+    ExtendIntermediateSigmas,
     KSamplerSelect,
     RandomNoise,
     SamplerCustomAdvanced,
+    SplitSigmas,
 )
 try:
     from comfy_extras.nodes_minimax_h3 import (
@@ -2123,6 +2126,141 @@ def _refine_sampled(sampled, *, model, guider, sampler, scheduler,
         sigmas=r_sigmas, latent_image=sampled))[0]
 
 
+# Realism boost: The AI Brief's Singularity dual-sampling recipe, run inside the
+# hop sampler instead of after it. Not a refine -- the hop is sampled ONCE, on a
+# schedule that changes model after its first base step.
+#
+#   BasicScheduler(steps) -> ExtendIntermediateSigmas(2) -> SplitSigmas(2)
+#
+# Extend(2) puts one midpoint in every gap (`linspace(0, 1, 3)[1:-1]`), so the
+# schedule doubles: base 6 is 12 steps, split 2 + 10. Stage 1 is therefore the
+# first base step, halved -- at shift 12 / simple, sigma 1.0 -> 0.984. The boost
+# model then paints the other 10 steps from a latent that is ~98% noise. The
+# original's reference point is base 6; do not re-validate it at 8.
+BOOST_EXTEND = 2
+BOOST_SPLIT = 2
+# (file, strength) per slot, from the original's Final stack: LMS 0.5 under
+# People 1.0. A default only lands when the file is actually installed.
+BOOST_LORA_DEFAULTS = (
+    ("minimax_h3_lms_v1.0_r64.safetensors", 0.5),
+    ("h3-realism-people-t2v-i2v-r2v.safetensors", 1.0),
+)
+# One Core loader per slot, kept for the process, so a re-queue re-uses the
+# LoRA it already read instead of going back to disk. Core caches per instance.
+_BOOST_LOADERS = {}
+
+
+def _boost_lora_choices():
+    try:
+        import folder_paths
+        return ["None"] + list(folder_paths.get_filename_list("loras"))
+    except Exception:  # noqa: BLE001 -- INPUT_TYPES must never raise
+        return ["None"]
+
+
+def _boost_lora_default(slot, choices):
+    name = BOOST_LORA_DEFAULTS[slot][0]
+    return name if name in choices else "None"
+
+
+def _boost_model(model, loras):
+    """The hop's own model with the boost LoRAs on top.
+
+    Built from the model AFTER the sigma shift, so both stages sample the same
+    noise curve -- the stage-2 hand-off only cancels if they do. The LoRAs
+    land after the drawn speed stack, as the original's Final stack does: turbo
+    stays under them. Then the AdaLN port, when PlagueKind's node is installed,
+    because a dense LoRA on a pruned base otherwise drops its 51 AdaLN keys
+    with an error line each; the fix is measured at ~0.02% of the modulation
+    signal, so its absence is logged, not refused.
+    """
+    import nodes as nodes_mod
+    out = model
+    for slot, (name, strength) in enumerate(loras):
+        if name == "None" or float(strength) == 0.0:
+            continue
+        loader = _BOOST_LOADERS.get(slot)
+        if loader is None:
+            loader = _BOOST_LOADERS[slot] = nodes_mod.LoraLoaderModelOnly()
+        out = loader.load_lora_model_only(out, name, float(strength))[0]
+    fix = getattr(nodes_mod, "NODE_CLASS_MAPPINGS", {}).get("H3AdaLNLoRAFix")
+    if fix is None:
+        print(f"[{TAG}] realism boost: H3AdaLNLoRAFix not installed, boost "
+              "LoRAs apply unported", flush=True)
+    else:
+        out = _result(_core_call(fix, "the boost AdaLN port",
+                                 model=out, mode="port"))[0]
+    return out
+
+
+def _boost_sigmas(hop_sigmas, sigma_cache, hop_steps):
+    """(stage-1 sigmas, stage-3 sigmas), sharing the hand-off sigma."""
+    key = ("boost", int(hop_steps))
+    if key not in sigma_cache:
+        ext = _result(_core_call(
+            ExtendIntermediateSigmas, "the boost schedule",
+            sigmas=hop_sigmas, steps=BOOST_EXTEND, start_at_sigma=1.0,
+            end_at_sigma=0.0, spacing="linear"))[0]
+        hi, lo = _result(_core_call(
+            SplitSigmas, "the boost split", sigmas=ext, step=BOOST_SPLIT))[:2]
+        sigma_cache[key] = (hi, lo)
+    return sigma_cache[key]
+
+
+def _boost_sampled(latent, *, model, guider, boost_guider, sampler,
+                   hop_sigmas, sigma_cache, hop_steps, seed, hop_no, label):
+    """One hop, sampled on the realism-boost spine. -> the sampler output dict.
+
+    Stage 2 is the original's "Second Sampling Pass": a SamplerCustomAdvanced on
+    a single sigma, which makes no model call and only scales -- in with
+    `noise_scaling` (sigma*noise + (1-sigma)*x0), out with
+    `inverse_noise_scaling` (/(1-sigma)). Done here with the same two
+    model_sampling methods on the same RandomNoise draw, which is that node's
+    whole effect without loading the model for zero steps. Stage 3's
+    DisableNoise then multiplies by (1-sigma) on the way in and the pair
+    cancels to a correctly noised latent. That is why stage 2 must NOT use
+    DisableNoise (it leaves 1.6% of x0 and no noise -- the orange frames) and
+    why both stages must share the hand-off sigma exactly.
+
+    Video re-noises from stage 1's DENOISED estimate; audio passes on from its
+    OUTPUT, which is already noised at the hand-off sigma. Same wiring as the
+    original.
+    """
+    hi, lo = _boost_sigmas(hop_sigmas, sigma_cache, hop_steps)
+    n1 = int(hi.shape[-1]) - 1
+    n3 = int(lo.shape[-1]) - 1
+    if n3 < 1:
+        raise RuntimeError(
+            f"{TAG}: hop {hop_no}: realism boost needs steps >= 2 -- at "
+            f"{hop_steps} the split leaves the boost model nothing to sample.")
+    s = lo[0]
+    print(f"[{TAG}] hop {hop_no}: realism boost {n1} + {n3} steps, {label}, "
+          f"hand-off sigma {float(s):.4f}", flush=True)
+    noise = _result(_core_call(RandomNoise, "the boost noise source",
+                               noise_seed=int(seed)))[0]
+    out, den = _result(_core_call(
+        SamplerCustomAdvanced, "the boost stage-1 sampler",
+        noise=noise, guider=guider, sampler=sampler,
+        sigmas=hi, latent_image=latent))[:2]
+    out_parts = _latents.from_dict(out)
+    den_parts = _latents.from_dict(den)
+    if not out_parts or not den_parts:
+        raise RuntimeError(f"{TAG}: hop {hop_no}: realism boost could not "
+                           "read the stage-1 latent.")
+    x0 = den_parts[0]
+    n = noise.generate_noise({"samples": x0}).to(x0.device, x0.dtype)
+    ms = model.get_model_object("model_sampling")
+    v = ms.inverse_noise_scaling(s, ms.noise_scaling(s, n, x0))
+    mid = dict(out)
+    mid["samples"] = _latents.rebuild(out["samples"], [v] + out_parts[1:])
+    del den, den_parts, n, x0
+    return _result(_core_call(
+        SamplerCustomAdvanced, "the boost stage-3 sampler",
+        noise=_result(_core_call(DisableNoise, "the boost stage-3 noise"))[0],
+        guider=boost_guider, sampler=sampler, sigmas=lo,
+        latent_image=mid))[0]
+
+
 def _refine_blend_latent(raw, refined, keys, interp="linear", hop_no=0):
     """Lerp the refined video back toward the raw sample over the pinned head.
 
@@ -3081,6 +3219,45 @@ class HandTieClips:
                         "ignored under hop_tail."
                     ),
                 }),
+                # APPENDED 2026-09-23, LAST, same positional reason.
+                "realism_boost": (["off", "on"], {
+                    "default": "off",
+                    "tooltip": (
+                        "The Singularity dual-sampling recipe, per hop. The "
+                        "schedule is doubled (base 6 = 12 steps) and split "
+                        "after its first base step: 2 steps on the model wire "
+                        "set the composition, then the latent is re-noised at "
+                        "the hand-off sigma (~0.984) and the boost model -- "
+                        "this model plus the two boost LoRAs -- paints the "
+                        "other 10 with no fresh noise. The recipe is steps=6, "
+                        "not 8. Follows sampler_name / scheduler. Not with "
+                        "hop_refine or master_audio_file. Moves every hop's "
+                        "cache key, hop 1 included."
+                    ),
+                }),
+                "boost_lora_1": (_boost_lora_choices(), {
+                    "default": _boost_lora_default(0, _boost_lora_choices()),
+                    "tooltip": (
+                        "First boost LoRA, applied on top of the model wire "
+                        "for the boost stage only. The original ran "
+                        "minimax_h3_lms_v1.0_r64 at 0.5. None = skip."
+                    ),
+                }),
+                "boost_lora_1_strength": ("FLOAT", {
+                    "default": BOOST_LORA_DEFAULTS[0][1],
+                    "min": -4.0, "max": 4.0, "step": 0.05,
+                }),
+                "boost_lora_2": (_boost_lora_choices(), {
+                    "default": _boost_lora_default(1, _boost_lora_choices()),
+                    "tooltip": (
+                        "Second boost LoRA, on top of the first. The original "
+                        "ran h3-realism-people-t2v-i2v-r2v at 1.0. None = skip."
+                    ),
+                }),
+                "boost_lora_2_strength": ("FLOAT", {
+                    "default": BOOST_LORA_DEFAULTS[1][1],
+                    "min": -4.0, "max": 4.0, "step": 0.05,
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -3180,6 +3357,9 @@ class HandTieClips:
             refine_cond="base", refine_model=None, refine_audio="freeze",
             refine_blend=_rblend.AUTO, refine_blend_interp="linear",
             refine_head="refine", speed_mode="regular",
+            realism_boost="off", boost_lora_1="None",
+            boost_lora_1_strength=0.5, boost_lora_2="None",
+            boost_lora_2_strength=1.0,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -3705,7 +3885,29 @@ class HandTieClips:
         except ValueError as e:
             raise RuntimeError(f"{TAG}: {e}") from e
 
+        # Realism boost. Refused, not reconciled, beside the two things it
+        # cannot be judged or run against: a refine stacked on a regeneration
+        # compares with neither alone, and the audio lock's frozen stream would
+        # reach stage 3 un-noised under DisableNoise.
+        boost_on = str(realism_boost) == "on"
+        boost_loras = [(str(boost_lora_1), float(boost_lora_1_strength)),
+                       (str(boost_lora_2), float(boost_lora_2_strength))]
+        if boost_on:
+            if str(hop_refine) != "off":
+                raise RuntimeError(
+                    f"{TAG}: realism_boost and hop_refine are both on. Boost "
+                    "already re-samples the whole hop; turn one off.")
+            if str(master_audio_file or "").strip():
+                raise RuntimeError(
+                    f"{TAG}: realism_boost does not run with master_audio_file: "
+                    "the locked audio would enter the boost stage un-noised.")
+            if all(nm == "None" or s == 0.0 for nm, s in boost_loras):
+                raise RuntimeError(
+                    f"{TAG}: realism_boost is on with no boost LoRA set -- "
+                    "pick boost_lora_1 and/or boost_lora_2.")
+
         sampler = base_sigmas = None
+        boost_model = None
         refine_sampler_obj = refine_sched = None
         sigma_cache = {}
         if not dry:
@@ -3731,6 +3933,11 @@ class HandTieClips:
                 model=model, scheduler=scheduler, steps=int(steps),
                 denoise=1.0))[0]
             sigma_cache = {int(steps): base_sigmas}
+            if boost_on:
+                boost_model = _boost_model(model, boost_loras)
+                print(f"[{TAG}] realism boost: "
+                      + ", ".join(f"{nm} {s:g}" for nm, s in boost_loras
+                                  if nm != "None" and s != 0.0), flush=True)
 
         print(
             f"[{TAG}] {n} hop(s), {length}f ({length / FPS:.1f}s) @ {width}x{height} "
@@ -4490,6 +4697,15 @@ class HandTieClips:
                     # because it really does sample different sigmas.
                     if str(refine_align) != "denoise":
                         hop_payload["refine"].append(str(refine_align))
+                # Every hop, hop 1 included, and present only when on -- same
+                # byte-identical-when-off rule as the refine above. The LoRA
+                # names and strengths stand in for a fingerprint: the boost
+                # model is derived from `model`, whose fingerprint is already
+                # in chain_salt.
+                if boost_on:
+                    hop_payload["boost"] = [
+                        [[nm, round(s, 4)] for nm, s in boost_loras],
+                        BOOST_EXTEND, BOOST_SPLIT]
                 hop_key = _store.hop_key(
                     None if hop_restart else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
@@ -4668,10 +4884,26 @@ class HandTieClips:
                 noise = _result(_core_call(
                     RandomNoise, "the noise source",
                     noise_seed=shot_seed))[0]
-                sampled = _result(_core_call(
-                    SamplerCustomAdvanced, "the sampler",
-                    noise=noise, guider=guider, sampler=sampler,
-                    sigmas=hop_sigmas, latent_image=latent))[0]
+                if boost_model is not None:
+                    # Same conditioning on both guiders, so the pin and the
+                    # guides reach the boost stage too. The latent that comes
+                    # out is an ordinary hop latent on the hop canvas: the
+                    # decode, the next hop's pin and the cache take it as is.
+                    boost_guider = _result(_core_call(
+                        BasicGuider, "the boost guider",
+                        model=boost_model, conditioning=cond))[0]
+                    sampled = _boost_sampled(
+                        latent, model=model, guider=guider,
+                        boost_guider=boost_guider, sampler=sampler,
+                        hop_sigmas=hop_sigmas, sigma_cache=sigma_cache,
+                        hop_steps=hop_steps, seed=shot_seed, hop_no=i + 1,
+                        label=f"{sampler_name}/{scheduler}")
+                    del boost_guider
+                else:
+                    sampled = _result(_core_call(
+                        SamplerCustomAdvanced, "the sampler",
+                        noise=noise, guider=guider, sampler=sampler,
+                        sigmas=hop_sigmas, latent_image=latent))[0]
 
                 # Refine, before the decode so `full` reaches the delivered
                 # pixels. After the sampler, so pin_mech / the guides / the

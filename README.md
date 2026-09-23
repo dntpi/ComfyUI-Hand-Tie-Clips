@@ -491,6 +491,30 @@ out."* Frame-by-frame from that run, hop 3, `framing: close`:
 
 Safe when no shot authors a framing; visibly wrong when they do.
 
+### Realism boost — one or two hops
+
+`realism_boost=on` runs The AI Brief's Singularity dual-sampling recipe inside
+each hop's sampler, with no extra nodes on the graph. The hop's schedule is
+doubled and then split after its first base step. At `steps=6` that means
+2 steps on the MODEL wire set the composition, and the boost model then paints
+the remaining 10 with no fresh noise. The boost model is the same model with
+`boost_lora_1` / `boost_lora_2` applied.
+
+The picture is re-noised from the first stage's denoised estimate, and the
+audio carries on from the first stage's output, the same as in the original.
+If `H3AdaLNLoRAFix` is installed, the node runs it on the boost model itself.
+
+- **Use `steps=6`.** That is the recipe (6 → 2 + 10 steps, hand-off σ ≈ 0.984).
+  This setting is the one exception to the 8-step rule; `steps=8` gives 2 + 14.
+- The LoRA slots default to `minimax_h3_lms_v1.0_r64` at 0.5 and
+  `h3-realism-people-t2v-i2v-r2v` at 1.0 if those files are in `models/loras`,
+  and to `None` otherwise.
+- It is meant for a single hop or two. It is not a long-chain mode.
+- It is refused with `hop_refine` and with `master_audio_file`. A frozen audio
+  stream does not survive a stage that adds no noise.
+- Switching it on changes every hop's cache key, hop 1 included. With it off,
+  the keys are exactly what they were.
+
 ---
 
 ## Reference
@@ -584,6 +608,7 @@ Set `locked: true` on a shot to pin it to its last render regardless.
 | master_audio_file | empty (generated voice) |
 | voice_every_hop | `off` (voice 1–3 ride hop 1 only). **Recommended `speaking`** when one voice has to hold across the chain |
 | quality | final |
+| realism_boost | `off`. Use it with `steps=6` |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master.
 
@@ -682,6 +707,8 @@ The tone estimator is ported from
 The turbo stack in the shipped workflows is
 [PlagueKind](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) and
 [KJNodes](https://github.com/kijai/ComfyUI-KJNodes).
+The realism boost follows The AI Brief's *MiniMax H3 Singularity Dual Sampling*
+workflow.
 
 ## Docs
 

@@ -138,7 +138,7 @@ function commitWidget(node, w, value, onChange) {
     onChange?.();
 }
 
-function labelFor(w) {
+export function labelFor(w) {
     return String(w.name || "").replace(/_/g, " ");
 }
 
@@ -231,7 +231,7 @@ function textField(node, w, onChange) {
 }
 
 /** null when this widget's type is not one the panel can draw. */
-function fieldFor(node, w, onChange) {
+export function fieldFor(node, w, onChange) {
     const t = widgetType(w);
     if (t === "combo") return comboField(node, w, onChange);
     if (t === "toggle" || t === "boolean") return toggleField(node, w, onChange);

@@ -68,6 +68,7 @@ from nodes import VAEDecode
 
 from . import directives as _d
 from . import plan as _plan
+from . import refmod as _refmod
 from . import refs as _refs
 from . import store as _store
 from . import media as _media
@@ -3124,15 +3125,26 @@ class HandTieClips:
                  reference_video_2_file, reference_video_3_file,
                  voice_2_file, voice_3_file,
                  master_audio_file]
+        refmod_names = []
         try:
             for r in (_refs.parse_ref_plan(ref_plan).get("refs") or []):
-                if r.get("file"):
+                if not r.get("file"):
+                    continue
+                if r.get("source") == "refmod":
+                    refmod_names.append(r["file"])
+                else:
                     names.append(r["file"])
+                # A row voice is an input like any other file: swap the wav
+                # in place and the render must change.
+                if r.get("voice"):
+                    names.append(r["voice"])
         except Exception:
             # A malformed plan is run()'s error to report, with a message that
             # names the field. Raising here would surface as a cache failure.
             pass
-        return _media.stamp(names)
+        stamped = _media.stamp(names)
+        extra = _refmod.stamp(refmod_names)
+        return stamped if not extra else f"{stamped}|{extra}"
 
     def run(self, model, clip, vae, audio_vae, prompt,
             chains, resolution,
@@ -3465,12 +3477,85 @@ class HandTieClips:
         # rather than a socket number, and _collect_ref_images below dense-packs
         # and throws it away.
         slot_images = {}
+        slot_videos = {}
+        # id(presentation tensor) -> stored DiT block. Built once per run.
+        # The hop that cites the row is the only one that receives either.
+        refmod_image_blocks = {}
+        refmod_video_blocks = {}
         for _r in ref_plan_refs:
             if not _r["file"]:
                 continue
+            if _r.get("source") == "refmod":
+                if float(_r.get("strength") or 0.0) <= 0.0:
+                    raise ValueError(
+                        f"[{TAG}] @{_r['tag']} has strength 0, which drops the "
+                        f"RefMod. Remove the row, or set a strength above 0.")
+                _loaded = _refmod.load_visual(_r["file"])
+                if _loaded is None:
+                    continue
+                # A video RefMod may be a subject. A character mod built from
+                # several stills is stored as one clip, so refusing a subject
+                # here refused the whole point of the builder. `subject_prose`
+                # cites each subject at the slot it occupies, so this one is
+                # defined as the person in <Video N>.
+                _r["kind"] = _loaded["kind"]
+                _r["latent_digest"] = _loaded["digest"]
+                # A mod assembled in the builder carries the name of its
+                # voice. The row inherits it, so a character is put
+                # together once; a voice typed on the row still wins,
+                # because the rail is the more specific statement.
+                if not _r.get("voice"):
+                    _inherited = _refmod.stored_voice(_r["file"])
+                    if _inherited:
+                        _r["voice"] = _inherited
+                        print(f"[{TAG}] @{_r['tag']}: voice {_inherited} "
+                              f"from the RefMod", flush=True)
+                _block = _refmod.visual_block(_loaded, _r["strength"])
+                _pixels = _refmod.presentation_pixels(
+                    vae, _loaded["latent"], _r.get("mp") or 0.0)
+                if _loaded["kind"] == "image":
+                    _pixels = _pixels[:1]
+                    slot_images[_r["slot"]] = _pixels
+                    refmod_image_blocks[id(_pixels)] = _block
+                else:
+                    if int(_pixels.shape[0]) < 5:
+                        raise ValueError(
+                            f"[{TAG}] @{_r['tag']} decodes to "
+                            f"{int(_pixels.shape[0])} frames. A video reference "
+                            f"needs at least 5. Re-extract it with more latent "
+                            f"frames, or save it as an image mod.")
+                    slot_videos[_r["slot"]] = _pixels
+                    refmod_video_blocks[id(_pixels)] = _block
+                print(f"[{TAG}] @{_r['tag']}: RefMod {_loaded['kind']} "
+                      f"{_loaded['tokens']} tokens, strength {_r['strength']:g}",
+                      flush=True)
+                continue
+            _r["kind"] = "image"
             _im = _media.load_image(_r["file"], cap_mp=_r.get("mp") or 0.0)
             if _im is not None and _im.shape[0] > 0:
                 slot_images[_r["slot"]] = _im[:1]
+        _wired_slots = set(slot_images) | set(slot_videos)
+
+        # Row voices. A second pass rather than a branch inside the loop
+        # above, because the refmod arm returns early and a voice belongs to
+        # both arms equally -- a face is a face whether it arrived as a still
+        # or as a mod.
+        slot_voices = {}
+        for _r in ref_plan_refs:
+            _vf = str(_r.get("voice") or "")
+            if not _vf or _r["slot"] not in _wired_slots:
+                continue
+            _wav = _media.load_audio(_vf, kinds=("audio", "video"))
+            if _wav is None:
+                # Fatal, like a missing picture: a row voice is the thing
+                # that says which face speaks, and rendering the chain with
+                # it silently absent is the failure the register exists to
+                # prevent.
+                raise ValueError(
+                    f"[{TAG}] @{_r['tag']} names voice '{_vf}' "
+                    f"(ComfyUI/input/h3_refs), which could not be read. Drop "
+                    f"the file onto that row, or clear the row's voice.")
+            slot_voices[_r["slot"]] = _wav
         if ref_plan_refs:
             print(f"[{TAG}] reference register:", flush=True)
             print(_refs.describe(ref_plan_obj), flush=True)
@@ -3478,15 +3563,27 @@ class HandTieClips:
             # continuing renders the whole chain with that reference silently
             # inactive, which is the failure the register exists to prevent --
             # and the docs have always promised a stop here.
-            _absent = _refs.missing_files(ref_plan_obj, set(slot_images))
+            _absent = _refs.missing_files(ref_plan_obj, _wired_slots)
             if _absent:
+                _bits = []
+                for _t, _f in _absent:
+                    _row = next((r for r in ref_plan_refs if r["tag"] == _t), {})
+                    _where = ("models/refmods" if _row.get("source") == "refmod"
+                              else "ComfyUI/input/h3_refs")
+                    _bits.append(f"@{_t} names '{_f}' ({_where})")
                 raise ValueError(
-                    f"[{TAG}] reference picture not found in "
-                    f"ComfyUI/input/h3_refs: "
-                    + "; ".join(f"@{_t} names '{_f}'" for _t, _f in _absent)
+                    f"[{TAG}] reference not found: " + "; ".join(_bits)
                     + ". Drop the file onto that row in the REFERENCES rail, or "
-                      "clear the row's picture to render without it.")
-            for _w in _refs.check(ref_plan_obj, set(slot_images)):
+                      "clear the row to render without it.")
+            _refs.check_kind_caps(
+                [r for r in ref_plan_refs if r["slot"] in _wired_slots],
+                media_videos=sum(1 for _v, _a in _vid_slots if _v is not None))
+
+            _refs.check_audio_caps(
+                [r for r in ref_plan_refs if r["slot"] in _wired_slots],
+                media_voices=sum(1 for _v in (voice, voice_2, voice_3)
+                                 if _v is not None))
+            for _w in _refs.check(ref_plan_obj, _wired_slots):
                 print(f"[{TAG}] note: {_w}", flush=True)
             # ref_plan subjects and a `characters` block in continuity_state
             # both feed the prompt header, so filling in both injects identity
@@ -3888,7 +3985,7 @@ class HandTieClips:
                 shot_refs = shot.get("refs")
                 if shot_refs is not None:
                     hop_active = _refs.select_for_shot(
-                        ref_plan_refs, shot_refs, set(slot_images))
+                        ref_plan_refs, shot_refs, _wired_slots)
                     print(
                         f"[{TAG}] hop {i + 1}: shot.refs "
                         + (", ".join("@" + t for t in shot_refs) or "(none)"),
@@ -3896,7 +3993,7 @@ class HandTieClips:
                     )
                 else:
                     hop_active = _refs.active_refs(
-                        ref_plan_refs, i, set(slot_images))
+                        ref_plan_refs, i, _wired_slots)
                     # Continuation: omit shots[] = hop 1 only. Face/outfit plates
                     # of a different room (chain_00034) beat the pin as Pictures 1–3
                     # and hop 2 opened a new Ref2VA generate — commercial kitchen,
@@ -3911,9 +4008,11 @@ class HandTieClips:
                                 f"pin carries wardrobe and room",
                                 flush=True,
                             )
+                hop_pictures = [r for r in hop_active if r.get("kind") != "video"]
+                hop_mod_videos = [r for r in hop_active if r.get("kind") == "video"]
                 base_images = {
                     f"ref_image_{k + 1}": slot_images[r["slot"]]
-                    for k, r in enumerate(hop_active)
+                    for k, r in enumerate(hop_pictures)
                 } or None
             else:
                 base_images = ref_images
@@ -3926,8 +4025,32 @@ class HandTieClips:
                     )
                     base_images = None
 
+            if ref_plan_refs:
+                pass
+            else:
+                hop_pictures = []
+                hop_mod_videos = []
+            hop_video_seed = dict(base_videos or {})
+            # Soundtracks pair with clips BY ORDINAL, so this dict has to be
+            # grown in lockstep with the one above -- `ref_video_audio_2`
+            # belongs to `ref_video_2` and to nothing else.
+            hop_video_audios = dict(base_video_audios or {})
+            # A mod's voice is NOT fused onto its clip as a soundtrack. It
+            # was, and a `video_audio` block reads as "this person saying
+            # these words": the woman opened a single hop with a second of
+            # the ElevenLabs script before her own <d> line (2026-09-23).
+            # Core also trims the clip to a fraction of a second and the
+            # sound not at all. The voice goes beside, as a timbre
+            # reference, the same as a still's -- see `hop_ref_audios`.
+            for _vr in hop_mod_videos:
+                _vn = len(hop_video_seed) + 1
+                hop_video_seed[f"ref_video_{_vn}"] = slot_videos[_vr["slot"]]
+            video_ords = {
+                r["tag"]: len(base_videos or {}) + n + 1
+                for n, r in enumerate(hop_mod_videos)
+            }
             hop_images = base_images
-            hop_videos = base_videos
+            hop_videos = hop_video_seed or None
             live_p = live_v = None
             still_shift = 0
             # Not on a restart. Pinning the previous hop's last frame as
@@ -3936,7 +4059,7 @@ class HandTieClips:
             # says so in as many words. It was still handing over the tail here.
             if not hop_is_start:
                 hop_images, live_p, hop_videos, live_v = _attach_pin_to_qwen(
-                    str(pin_to_qwen), base_images, base_videos,
+                    str(pin_to_qwen), base_images, hop_video_seed,
                     prev_imgs[-1:], prev_imgs[-overlap_n:],
                 )
                 if live_p == 1:
@@ -3961,7 +4084,7 @@ class HandTieClips:
             # and the identity lock's ordinals have to agree, and computing the
             # same shift twice is exactly how they drift apart. `p`, not `n` --
             # `n` is the hop count in the enclosing scope.
-            hop_ords = _refs.ordinals(hop_active)
+            hop_ords = _refs.ordinals(hop_pictures)
             if still_shift:
                 hop_ords = {t: p + still_shift for t, p in hop_ords.items()}
             if ref_plan_refs:
@@ -3979,7 +4102,8 @@ class HandTieClips:
                     declared={r["tag"] for r in ref_plan_refs},
                     subject_names=({k: (v or {}).get("name")
                                     for k, v in (ref_subjects or {}).items()}
-                                   if not hop_is_start else None))
+                                   if not hop_is_start else None),
+                    video_map=video_ords)
                 if hop_is_start:
                     # Every chain start, not just hop 1. subject_prose derives
                     # its own ordinals with no still_shift, which is correct
@@ -3998,7 +4122,8 @@ class HandTieClips:
                     # walks into the shot. `@tag` did not save it either,
                     # because `subject_names` was flattening those to bare
                     # prose on the same off-by-one test.
-                    hop_subject_prose = _refs.subject_prose(hop_active, ref_subjects)
+                    hop_subject_prose = _refs.subject_prose(
+                        hop_active, ref_subjects, video_ords)
             if hop_is_start and hop_subject_prose and not _d.is_full_h3_prompt(block):
                 block = hop_subject_prose + "\n\n" + block
             # Hop 1 has no _assemble_next to fold this into. A full H3 block is
@@ -4024,7 +4149,7 @@ class HandTieClips:
                     # to fully_preserved, so an ordinary identity reference is
                     # unaffected by this narrowing; a wardrobe or setting plate
                     # stops being called a person.
-                    faces = [r for r in hop_active
+                    faces = [r for r in hop_pictures
                              if r["subject"] is not None
                              and r["retention"] == "fully_preserved"]
                     id_ords = [hop_ords[r["tag"]] for r in faces]
@@ -4064,7 +4189,8 @@ class HandTieClips:
                 # Ref2VA model handed a picture and no reason for it renders the
                 # picture. `hop_ords`, not fresh ordinals -- the live frame is
                 # <Picture 1> on every continuation hop.
-                hop_retention = _refs.retention_prose(hop_active, hop_ords)
+                hop_retention = _refs.retention_prose(
+                    hop_active, hop_ords, video_ords)
                 hop_wardrobe = any(r["retention"] == "partially_copy"
                                    for r in hop_active)
                 block = _assemble_next(
@@ -4133,12 +4259,71 @@ class HandTieClips:
                     f"(voice_every_hop={voice_every_hop})",
                     flush=True,
                 )
-            if hop_voice and "<Audio 1>" not in block:
+            # <Audio N> is positional, and core emits every clip's soundtrack
+            # BEFORE any standalone voice. So the global voice stops being
+            # <Audio 1> the moment a reference clip carries sound -- it was
+            # cited as <Audio 1> unconditionally, which pointed that sentence
+            # at the clip's track instead. Walk core's own iteration order.
+            _audio_n = 0
+            _voice_ords = {}
+            _vid_key_tag = {f"ref_video_{_v}": _t for _t, _v in video_ords.items()}
+            for _k in (hop_videos or {}):
+                _suffix = _k.rsplit(chr(95), 1)[-1]
+                if f"ref_video_audio_{_suffix}" not in hop_video_audios:
+                    continue
+                _audio_n += 1
+                if _k in _vid_key_tag:
+                    _voice_ords[_vid_key_tag[_k]] = _audio_n
+            hop_ref_audios = {}
+            if hop_voice:
+                for _a in (ref_audios or {}).values():
+                    hop_ref_audios[f"ref_audio_{len(hop_ref_audios) + 1}"] = _a
+            _voice_ord = _audio_n + 1 if hop_ref_audios else 0
+            _audio_n += len(hop_ref_audios)
+            # Row voices obey the same gate as `voice_file`. A row that rides
+            # all seven hops used to carry its recording onto all seven, and
+            # a quiet hop fills its leftover frames with whatever it is shown.
+            _row_voice_on = (hop_is_start or str(hop_script) != "next"
+                             or _voice_lift)
+            _hop_voice_tags = []
+            _row_slot = {r["tag"]: r["slot"] for r in (hop_active or [])}
+            for _pr in list(hop_pictures) + list(hop_mod_videos):
+                _rv = slot_voices.get(_pr["slot"])
+                if _rv is None:
+                    continue
+                if not _row_voice_on:
+                    print(f"[{TAG}] hop {i + 1}: @{_pr['tag']} voice stays off "
+                          f"this continue (voice_every_hop={voice_every_hop})",
+                          flush=True)
+                    continue
+                _hop_voice_tags.append(_pr["tag"])
+                hop_ref_audios[f"ref_audio_{len(hop_ref_audios) + 1}"] = _rv
+                _audio_n += 1
+                _voice_ords[_pr["tag"]] = _audio_n
+            hop_ref_audios = hop_ref_audios or None
+
+            if _voice_ord and f"<Audio {_voice_ord}>" not in block:
                 block = (
                     block.rstrip()
-                    + "\n\nThe speaker's voice follows <Audio 1> as a "
-                      "timbre reference."
+                    + f"\n\nThe speaker\'s voice follows "
+                      f"<Audio {_voice_ord}> as a timbre reference."
                 )
+            # One sentence per row voice, affirmative and without pronouns,
+            # binding a timbre to a person rather than leaving the model to
+            # guess which of two faces owns which of two recordings.
+            for _rr in hop_active:
+                _ord = _voice_ords.get(_rr["tag"])
+                if not _ord or f"<Audio {_ord}>" in block:
+                    continue
+                if _rr.get("subject"):
+                    _who = f"<Subject {_rr['subject']}>"
+                elif _rr["tag"] in video_ords:
+                    _who = f"<Video {video_ords[_rr['tag']]}>"
+                else:
+                    _who = f"<Picture {hop_ords.get(_rr['tag'], 0)}>"
+                block = (block.rstrip()
+                         + f"\n\n{_who} speaks with the voice in "
+                           f"<Audio {_ord}> as a timbre reference.")
 
             assembled.append((i + 1, block))
 
@@ -4205,6 +4390,30 @@ class HandTieClips:
                     # accounted for by `prev_key`.
                     "refs": {k: _store.tensor_digest(t)
                              for k, t in sorted((base_images or {}).items())},
+                    # Absent unless this hop cites a RefMod, so a still-only
+                    # hop keeps the key it had before RefMods existed. The
+                    # pixel digest above is the Qwen view; this is the stored
+                    # latent and the strength that actually reach the DiT.
+                    **({"refmods": [
+                            {"tag": r["tag"],
+                             "strength": round(float(r["strength"]), 4),
+                             "latent": r.get("latent_digest")}
+                            for r in hop_active if r.get("source") == "refmod"
+                        ]} if any(r.get("source") == "refmod" for r in hop_active)
+                       else {}),
+                    # Same rule as the refs above: per hop, and absent when
+                    # no row on this hop carries a voice, so every key
+                    # written before row voices existed still hits.
+                    # Only the voices this hop actually received, since the
+                    # `voice_every_hop` gate can hold a row's voice back.
+                    **({"voices": {t: _store.audio_digest(
+                            slot_voices.get(_row_slot[t]))
+                        for t in _hop_voice_tags}} if _hop_voice_tags else {}),
+                    # A mod voice used to be fused onto its clip. The same
+                    # inputs now render it beside, so those hops must miss.
+                    **({"voice_bind": "beside"}
+                       if any(t in video_ords for t in _hop_voice_tags)
+                       else {}),
                     # Per hop, not chain-wide: hop 2 after a hop-1 cache hit
                     # has no sampler latent and falls back to AddGuide, which
                     # is a different render of the same inputs.
@@ -4347,10 +4556,18 @@ class HandTieClips:
                     # pin_to_qwen appends one, takes the next number and simply
                     # has no entry here -- it is the previous hop's picture and
                     # has no soundtrack of its own.
-                    ref_video_audios=base_video_audios,
-                    ref_audios=(ref_audios if hop_voice else None),
+                    ref_video_audios=(hop_video_audios or None),
+                    # Row voices are already folded in, at the ordinals the
+                    # citations above were written against.
+                    ref_audios=hop_ref_audios,
                 )
                 cond, latent = _result(packed)[0], _result(packed)[1]
+                if refmod_image_blocks or refmod_video_blocks:
+                    # ReferenceToVideo encoded the decode. Put the stored
+                    # latent back in that slot before anything else copies cond.
+                    cond = _refmod.splice_blocks(
+                        cond, hop_images, hop_videos,
+                        refmod_image_blocks, refmod_video_blocks)
                 # The conditioning as Ref2VA built it, before any pin or guide
                 # is added to it. `refine_cond=base` pulls the second pass
                 # toward this -- the references and the text, nothing about the

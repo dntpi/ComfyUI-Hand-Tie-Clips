@@ -40,6 +40,8 @@ ROUTE = "/h3_ref_chain/vocab"
 UPLOAD_ROUTE = "/h3_ref_chain/upload"
 FILES_ROUTE = "/h3_ref_chain/files"
 PEAKS_ROUTE = "/h3_ref_chain/peaks"
+REFMOD_EST_ROUTE = "/h3_ref_chain/refmod_estimate"
+REFMOD_PLAN_ROUTE = "/h3_ref_chain/refmod_plan"
 LLM_ROUTE = "/h3_ref_chain/llm"
 PLAN_ROUTE = "/h3_ref_chain/plan"
 SWAP_PLAN_ROUTE = "/h3_ref_chain/swap_plan"
@@ -158,6 +160,7 @@ def _payload():
         "video_exts": sorted(_media.VIDEO_EXTS),
         "audio_exts": sorted(_media.AUDIO_EXTS),
         "ref_fields": list(_refs.REF_FIELDS),
+        "ref_sources": list(_refs.SOURCES),
         "subject_fields": list(_refs.SUBJECT_FIELDS),
 
         # mode -> widget -> value the run panel stamps when you pick it.
@@ -198,12 +201,99 @@ def register():
     async def _files(request):
         """What is already in the reference folder, for the editor's picker."""
         try:
+            folder = request.rel_url.query.get("folder") or ""
+            if folder == "refmods":
+                from . import refmod as _refmod
+                return web.json_response({"ok": True, "files": _refmod.listing()})
             kinds = request.rel_url.query.get("kinds") or ""
             want = {k.strip() for k in kinds.split(",") if k.strip()} or None
             return web.json_response({"ok": True, "files": _media.listing(want)})
         except Exception as exc:
             print(f"[{TAG}] files route failed: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    @instance.routes.post(REFMOD_EST_ROUTE)
+    async def _refmod_estimate(request):
+        """Price a mod_plan before it is built: canvas, frames, tokens.
+
+        The builder's own `canvas_for_hw` and `frame_tokens` answer this, so
+        the panel never carries a second copy of the sizing rules. Stills are
+        exact. A clip's latent frame count is the VAE's to decide, so this
+        reports its pixel frames and says so rather than guessing a ratio.
+        """
+        try:
+            from . import refmod as _refmod
+
+            body = await request.json()
+            stills, clip, voice = _refmod.parse_mod_plan({
+                "stills": body.get("stills") or [],
+                "clip": body.get("clip") or None,
+                "voice": body.get("voice") or "",
+            })
+            first = stills[0] if stills else (clip or {}).get("file")
+            if not first:
+                return web.json_response({"ok": True, "empty": True})
+            size = _media.probe_size(first)
+            if size is None:
+                return web.json_response(
+                    {"ok": False,
+                     "error": _refmod.source_problem(first) or
+                              f"{first} could not be measured"})
+            tw, th = _refmod.canvas_for_hw(size[1], size[0])
+            per = _refmod.frame_tokens(tw, th)
+            out = {
+                "ok": True,
+                "canvas": [tw, th],
+                "per_frame_tokens": per,
+                "stills": len(stills),
+                "still_tokens": len(stills) * per,
+                "problems": [_refmod.source_problem(n) or
+                             f"{n} could not be read"
+                             for n in stills
+                             if _media.probe_size(n) is None],
+                "voice": voice,
+            }
+            if clip:
+                n = _media.probe_frames(clip["file"], clip["start"],
+                                        clip["end"], clip["frames"])
+                if n is None:
+                    out["problems"] = out["problems"] + [
+                        _refmod.source_problem(clip["file"], ("video",)) or
+                        f"{clip['file']} could not be read"]
+                else:
+                    snapped = n
+                    while snapped % 17 != 5 and snapped > 0:
+                        snapped -= 1
+                    out["clip_frames"] = snapped
+                    out["clip_dropped"] = n - snapped
+            if voice and _media.resolve(voice) is None:
+                out["problems"] = out["problems"] + [
+                    _refmod.source_problem(voice, ("audio",)) or
+                    f"{voice} could not be read"]
+            return web.json_response(out)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": str(exc)})
+
+    @instance.routes.post(REFMOD_PLAN_ROUTE)
+    async def _refmod_plan(request):
+        """The sources a saved RefMod was built from: `{ok, plan}`.
+
+        Header read only -- no tensor is loaded and no VAE is touched, so
+        this is cheap enough to call while the name field is being typed.
+        An older mod, or one built through the sockets, answers `{}`; the
+        panel shows that as "no source list", never as an error.
+        """
+        try:
+            from . import refmod as _refmod
+
+            body = await request.json()
+            name = str(body.get("name") or "").strip()
+            if not name:
+                return web.json_response({"ok": True, "plan": {}})
+            return web.json_response(
+                {"ok": True, "plan": _refmod.stored_plan(name)})
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": str(exc)})
 
     @instance.routes.post(PEAKS_ROUTE)
     async def _peaks(request):

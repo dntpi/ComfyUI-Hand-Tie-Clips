@@ -1182,3 +1182,89 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
     margin-top: 2px;
     overflow-wrap: anywhere;
 }
+
+/* -- RefMod builder panel ---------------------------------------------- */
+/* Two columns: sources on the left, dials and the running estimate on the
+ * right. It collapses to one column on a narrow node rather than squeezing
+ * the still thumbnails down to smears. */
+/* auto-fit rather than a @container query: the query would have to sit on an
+ * ancestor of this element, and .h3e-mod IS the panel root -- a container
+ * cannot style itself. auto-fit drops to one column on its own. */
+.h3e-mod {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--h3-gap);
+    align-items: start;
+}
+
+.h3e-mod-left,
+.h3e-mod-right {
+    display: flex;
+    flex-direction: column;
+    gap: var(--h3-gap);
+    min-width: 0;
+}
+
+.h3e-mod-head {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    margin-bottom: var(--h3-gap-sm);
+}
+
+/* The add button sits at the far end of the header, away from the count. */
+.h3e-mod-head .h3e-btn { margin-left: auto; }
+
+/* auto-fill, not auto-fit: a single still keeps a thumbnail's width instead
+ * of stretching across the whole column. */
+.h3e-mod-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: var(--h3-gap-sm);
+}
+
+.h3e-mod-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    padding: 4px;
+    border: 1px solid var(--h3-border-soft);
+    border-radius: var(--h3-radius-sm);
+}
+
+.h3e-mod-cellbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+/* The ordinal is the point of this row -- it is the latent frame the still
+ * will occupy -- so it holds the middle and the buttons flank it. */
+.h3e-mod-cellbar .h3e-count {
+    flex: 1 1 auto;
+    text-align: center;
+}
+
+.h3e-mod-cellbar .h3e-btn { padding: 3px 5px; }
+
+.h3e-mod-cliprow {
+    display: flex;
+    gap: var(--h3-gap-sm);
+    align-items: flex-start;
+}
+
+.h3e-mod-trim {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.h3e-mod-dials .h3e-grid { grid-template-columns: minmax(0, 1fr); }
+
+.h3e-mod-summary { margin-top: 0; }
+
+/* A row voice reads as a second reference, not a second name field, so it
+   carries the accent the rail uses for anything that reaches the model. */
+.h3e-voice {
+    border-left: 2px solid var(--h3-accent);
+}

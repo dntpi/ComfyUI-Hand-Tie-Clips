@@ -449,6 +449,19 @@ face plates on every hop:** a hop with no face reference comes back a different
 person and no later hop recovers. A shot's own `refs` overrides all of this for
 that one hop.
 
+A row may be a RefMod instead of a still. `"source": "refmod"` and `"file":
+"hero"` name a `.safetensors` under `models/refmods` (a subfolder is allowed,
+and the extension is omitted). Build the file with **HTC RefMod Builder**. It
+is scheduled with the same `shots` list and the same per-shot `refs` list as a
+picture, and a beat cites it with the same `@tag`. An image mod is a picture
+and a video mod is a `<Video N>`, numbered after the MEDIA clips. Either
+can carry a subject: a character mod built from several stills is stored as
+one clip, and `subject_definitions:` cites it at the slot it occupies --
+`<Subject 1> is the person in <Video 1>`. `"strength": 0.4` mixes the stored
+latent toward a blur of itself; omit it for full strength. `mp` on a RefMod
+row caps only the picture the text encoder sees. The latent the sampler
+attends to stays the one in the file. Audio mods are not applied.
+
 ```json
 {
   "refs": [

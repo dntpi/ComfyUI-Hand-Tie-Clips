@@ -33,3 +33,7 @@ CLAUDE.md
 # `tools/check_workflows.py` validates the two shipped files by name and would
 # not catch it. Remove the line to ship one deliberately.
 workflows/*_Test.json
+
+# Handoff notes and editor/agent tool state -- working files, never ship.
+docs/*HANDOFF*.md
+.serena/

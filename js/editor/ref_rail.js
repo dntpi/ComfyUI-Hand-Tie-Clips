@@ -18,10 +18,39 @@
  * stable @tag instead.
  */
 
+import { api } from "../../../scripts/api.js";
 import { el, button, select, vocab, onVocabRefresh } from "./widget_utils.js";
 import { createPicker } from "./media_picker.js";
 
 const MAX_SLOTS = 9;
+
+let _refmods = null;
+// The builder writes its file on a queue, so a list cached at mount never
+// learns about it until a browser refresh. Re-read after every finished
+// prompt and re-render only when the names actually moved, so a queue that
+// built nothing does not rebuild a rail being edited.
+const _refmodListeners = new Set();
+api.addEventListener("execution_success", () => {
+    const before = JSON.stringify(_refmods || []);
+    _refmods = null;
+    refmodNames().then((names) => {
+        if (JSON.stringify(names) === before) return;
+        for (const fn of _refmodListeners) fn();
+    });
+});
+function refmodNames() {
+    if (_refmods) return Promise.resolve(_refmods);
+    return fetch("/h3_ref_chain/files?folder=refmods")
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((j) => {
+            _refmods = Array.isArray(j.files) ? j.files.map((f) => f.name) : [];
+            return _refmods;
+        })
+        .catch(() => {
+            _refmods = [];
+            return _refmods;
+        });
+}
 
 function blankRef(existing) {
     let n = existing.length + 1;
@@ -107,6 +136,9 @@ export function parseRefPlan(text) {
             desc: r.desc || "",
             shots: Array.isArray(r.shots) ? r.shots.slice() : null,
             mp: r.mp == null ? 0 : Number(r.mp) || 0,
+            source: r.source === "refmod" ? "refmod" : "image",
+            strength: r.strength == null ? 1 : Number(r.strength),
+            voice: r.voice || "",
         })),
         subjects,
     };
@@ -148,6 +180,14 @@ export function refPlanToJson(plan) {
         // Omitted when uncapped, so a plan authored before this existed round
         // trips byte-identical and no diff appears from merely opening it.
         if (r.mp) out.mp = r.mp;
+        // Omitted when empty, so a plan written before row voices existed
+        // round trips byte-identical.
+        if (r.voice) out.voice = r.voice;
+        // Omitted on a still, and at strength 1, for the same reason.
+        if (r.source === "refmod") {
+            out.source = "refmod";
+            if (r.strength != null && Number(r.strength) !== 1) out.strength = Number(r.strength);
+        }
         return out;
     });
     const body = { refs };
@@ -201,7 +241,9 @@ function validate(plan, wired) {
             problems.set(r, r.legacy_slot
                 ? `was wired to ref_image_${r.legacy_slot}, which no longer exists `
                   + `— pick its picture to bring this ref back`
-                : "no picture chosen — this ref is inactive");
+                : (r.source === "refmod"
+                    ? "no refmod chosen — this ref is inactive"
+                    : "no picture chosen — this ref is inactive"));
         }
     }
     // A subject block nothing points at is continuity prose for someone who
@@ -278,7 +320,11 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
     let V = null;
     vocab().then((v) => { V = v; render(); });
     // Re-render when a retry in the plan editor reloads the vocabulary.
-    onVocabRefresh(() => vocab().then((v) => { V = v; render(); }));
+    onVocabRefresh(() => {
+        _refmods = null;
+        vocab().then((v) => { V = v; render(); });
+    });
+    _refmodListeners.add(() => render());
 
     function commit() {
         setPlan(getPlan());
@@ -361,6 +407,23 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
             tag.addEventListener("change", commit);
             row.appendChild(tag);
 
+            const source = el("select", "h3e-select");
+            for (const [value, label] of [["image", "still"], ["refmod", "refmod"]]) {
+                const o = el("option", null, label);
+                o.value = value;
+                source.appendChild(o);
+            }
+            source.value = r.source === "refmod" ? "refmod" : "image";
+            source.title = "A still is a file in input/h3_refs. A refmod is a safetensors "
+                + "file in models/refmods, scheduled onto hops the same way.";
+            source.addEventListener("change", () => {
+                r.source = source.value;
+                r.file = "";
+                if (r.source !== "refmod") r.strength = 1;
+                commit();
+            });
+            row.appendChild(source);
+
             // Was a `slot N` dropdown naming one of nine IMAGE sockets. The
             // picture itself lives here now: drop a file on it, click to
             // browse, or choose one already in the reference folder.
@@ -383,7 +446,35 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                 title: "The picture this reference stands for. Drop a file, or click to browse.",
             });
             pick.root.classList.add("h3e-slot");
-            row.appendChild(pick.root);
+            if (r.source === "refmod") {
+                const mod = el("select", "h3e-select h3e-slot");
+                const blank = el("option", null, "choose a refmod");
+                blank.value = "";
+                mod.appendChild(blank);
+                const have = new Set();
+                const addName = (name) => {
+                    if (!name || have.has(name)) return;
+                    have.add(name);
+                    const o = el("option", null, name);
+                    o.value = name;
+                    mod.appendChild(o);
+                };
+                addName(r.file);
+                refmodNames().then((names) => {
+                    for (const name of names) addName(name);
+                    if (mod.value !== (r.file || "")) mod.value = r.file || "";
+                });
+                mod.value = r.file || "";
+                mod.title = "A safetensors file in models/refmods. Build one with HTC RefMod Builder.";
+                mod.addEventListener("change", () => {
+                    r.file = mod.value;
+                    if (r.file) r.legacy_slot = null;
+                    queueMicrotask(() => commit());
+                });
+                row.appendChild(mod);
+            } else {
+                row.appendChild(pick.root);
+            }
 
             const subj = el("select", "h3e-select h3e-subj");
             const none = el("option", null, "setting/prop");
@@ -462,10 +553,48 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                     [String(v), `Cap this picture at ${v} MP before the encoder sees it.`])),
             });
             mp.classList.add("h3e-mp");
-            mp.title = "Pixel budget for this reference. Lower is fewer tokens and a "
-                + "faster step; 'full' leaves the file alone. Feed a face big and a "
-                + "location plate small.";
+            mp.title = r.source === "refmod"
+                ? "Caps the picture shown to the text encoder. The stored latent is unchanged."
+                : "Pixel budget for this reference. Lower is fewer tokens and a "
+                  + "faster step; 'full' leaves the file alone. Feed a face big and a "
+                  + "location plate small.";
             row.appendChild(mp);
+
+            if (r.source === "refmod") {
+                const strength = el("input", "h3e-input");
+                strength.type = "number";
+                strength.min = "0";
+                strength.max = "1";
+                strength.step = "0.05";
+                strength.value = String(r.strength == null ? 1 : r.strength);
+                strength.title = "1 keeps the stored latent. Lower mixes it toward a blurred copy of itself.";
+                strength.style.width = "4.2em";
+                strength.addEventListener("input", () => {
+                    const n = Number(strength.value);
+                    if (Number.isFinite(n)) r.strength = Math.min(1, Math.max(0, n));
+                    setPlan(plan);
+                });
+                strength.addEventListener("change", commit);
+                row.appendChild(strength);
+            }
+
+            // The voice this reference speaks with. Bound to the ROW, not
+            // to the run, so it rides exactly the hops the row rides --
+            // voice_file 1-3 are global and cannot say which of two faces
+            // owns which of two recordings.
+            const voice = createPicker({
+                kind: "audio",
+                get: () => r.voice || "",
+                set: (v) => { r.voice = v; },
+                onChange: () => queueMicrotask(() => commit()),
+                title: "Optional voice for this reference. On a video RefMod it "
+                    + "becomes that clip's soundtrack, so face and voice reach "
+                    + "the model as ONE reference. On a still it rides beside "
+                    + "the picture as its own <Audio N>. Either way it is cited "
+                    + "on the hops this row rides.",
+            });
+            voice.root.classList.add("h3e-slot", "h3e-voice");
+            row.appendChild(voice.root);
 
             const desc = el("input", "h3e-input h3e-desc");
             desc.type = "text";

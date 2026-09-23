@@ -585,6 +585,70 @@ def load_audio(name, start=0.0, end=0.0, kinds=("audio",)):
         return None
 
 
+# -- probing (used by the RefMod builder's estimate) ------------------------
+
+def probe_size(name):
+    """`(w, h)` of a still or a clip without decoding all of it, or None."""
+    path = resolve(name)
+    if path is None:
+        return None
+    if kind_of(name) == "image":
+        from PIL import Image
+
+        try:
+            with Image.open(path) as im:
+                return int(im.width), int(im.height)
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        import av
+
+        with av.open(path) as container:
+            if not container.streams.video:
+                return None
+            vs = container.streams.video[0]
+            return int(vs.codec_context.width), int(vs.codec_context.height)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def probe_frames(name, start=0.0, end=0.0, max_frames=0):
+    """How many frames `load_video` would return for this window, or None.
+
+    Counted from the stream's own frame total and rate rather than by
+    decoding, so the panel can price a clip while the user drags its
+    window. `load_video` seeks to a keyframe, so this is the window's
+    length, not a promise about which frame it starts on.
+    """
+    path = resolve(name, kinds={"video"})
+    if path is None:
+        return None
+    try:
+        import av
+
+        with av.open(path) as container:
+            if not container.streams.video:
+                return None
+            vs = container.streams.video[0]
+            fps = float(vs.average_rate or 0) or 24.0
+            n_total = int(vs.frames or 0)
+            secs = (n_total / fps) if n_total else float(
+                (vs.duration or 0) * float(vs.time_base or 0) or 0.0)
+    except Exception:  # noqa: BLE001
+        return None
+    lo, hi = clip_window(start, end, secs) if secs > 0 else (0.0, 0.0)
+    first = int(round(lo * fps))
+    last = int(round(hi * fps)) if hi > 0 else 0
+    if not n_total:
+        n_total = int(round(secs * fps)) if secs > 0 else 0
+    if last <= first:
+        last = n_total
+    n = max(0, min(last, n_total) - first) if n_total else 0
+    if max_frames:
+        n = min(n, int(max_frames))
+    return n
+
+
 # -- writing (used by the upload route) ------------------------------------
 
 def unique_path(directory, filename):

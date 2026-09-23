@@ -56,6 +56,7 @@ CHECKS = [
     ("check_speed_mode.py", []),
     ("check_restart_trim.py", []),
     ("check_shot_refs.py", []),
+    ("check_refmod.py", []),
     ("check_planner.py", []),
     ("gen_schema.py", ["--check"]),
 ]

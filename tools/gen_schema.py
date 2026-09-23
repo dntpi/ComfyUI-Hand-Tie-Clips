@@ -156,7 +156,17 @@ def build():
                     "description": "Unique. Written into beats as @tag."},
             "file": {"type": "string",
                      "description": "Basename under ComfyUI/input/h3_refs. "
-                                    "Never a path."},
+                                    "When source is refmod, the safetensors "
+                                    "name under models/refmods. A subfolder is "
+                                    "allowed there. Do not include "
+                                    ".safetensors."},
+            "source": {"type": "string", "enum": ["image", "refmod"],
+                       "description": "image is a still in h3_refs. refmod is "
+                                      "a stored VAE latent. Omit for a still."},
+            "strength": {"type": "number", "minimum": 0, "maximum": 1,
+                         "description": "RefMod only. 1 keeps the stored "
+                                        "latent. Lower mixes it toward a blur "
+                                        "of itself. Omit for 1."},
             "slot": {"type": "integer",
                      "description": "Derived from list position. Do not author "
                                     "it; present only for legacy plans."},
@@ -169,6 +179,18 @@ def build():
                           "description": " | ".join(f"{k}: {v}" for k, v
                                                     in r.RETENTION.items())},
             "desc": {"type": "string"},
+            "voice": {
+                "type": "string",
+                "description": "Optional audio basename in h3_refs -- the "
+                               "voice this reference speaks with. On a video "
+                               "RefMod it becomes that clip's soundtrack and "
+                               "the encoder emits ONE fused reference; on a "
+                               "still it rides beside the picture as its own "
+                               "<Audio N>. It is cited on exactly the hops "
+                               "this row rides, which is what voice_file 1-3 "
+                               f"cannot do. At most {r.MAX_REF_AUDIOS} standalone voices."
+                               ,
+            },
             "shots": {
                 "type": "array", "items": {"type": "integer", "minimum": 1},
                 "minItems": 1,

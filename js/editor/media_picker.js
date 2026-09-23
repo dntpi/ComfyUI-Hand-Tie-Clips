@@ -27,6 +27,22 @@ const FILES_URL = "/h3_ref_chain/files";
 const SUBDIR = "h3_refs";
 
 /** Accept attributes, by what a control is for. */
+/* The server's own sets, in `media.py`. Kept short deliberately: this is a
+  * guard against the obvious mistake, not a content sniffer. */
+const EXTS = {
+    image: ["png", "jpg", "jpeg", "webp", "bmp"],
+    video: ["mp4", "mov", "webm", "mkv", "avi", "m4v"],
+    audio: ["wav", "mp3", "flac", "ogg", "m4a", "aac"],
+};
+
+export function extKind(name) {
+    const ext = String(name || "").split(".").pop().toLowerCase();
+    for (const [k, list] of Object.entries(EXTS)) {
+        if (list.includes(ext)) return k;
+    }
+    return "";
+}
+
 export const ACCEPT = {
     image: "image/*",
     video: "video/*",
@@ -197,6 +213,16 @@ export function createPicker({ kind = "image", get, set, onChange, title } = {})
     async function take(fileList) {
         const list = [...(fileList || [])];
         if (!list.length) return;
+        // `accept` only filters the file dialog -- a drop goes straight
+        // past it, which is how an mp3 reached a clip slot and was not
+        // caught until the VAE asked it for pixels.
+        const wrong = list.slice(0, 1).filter((f) => extKind(f.name) !== kind);
+        if (wrong.length) {
+            const got = extKind(wrong[0].name) || "unknown";
+            console.warn(`[HandTieClips] ${wrong[0].name} is ${got}, not ${kind}`);
+            alert(`${wrong[0].name} is a ${got} file. This slot takes ${kind}.`);
+            return;
+        }
         busy = true;
         paint();
         try {

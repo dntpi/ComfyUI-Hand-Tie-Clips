@@ -41,7 +41,23 @@ RETENTION = {
 # A plan from before the sockets were removed carries an authored `slot` and no
 # `file`; that is detected, kept as `legacy_slot`, and reported by check().
 REF_FIELDS = ("tag", "file", "slot", "subject", "retention", "desc", "shots",
-              "mp")
+              "mp", "source", "strength", "voice")
+
+# A video RefMod shares the encoder's three video slots with the MEDIA clips
+# and, on a continuation, the pin clip. Image rows share the nine picture slots.
+MAX_REF_VIDEOS = 3
+
+# `voice` is an audio basename under h3_refs. It becomes a standalone `audio`
+# block beside the row's picture or clip, cited by one timbre sentence naming
+# the subject. A video row once took it as the clip's soundtrack (one fused
+# `video_audio` block); the model read that as "this person saying these
+# words" and recited the recording before the written line (2026-09-23).
+#
+# It rides the hops the row rides, and on hop 2+ of a `next` chain only as
+# `voice_every_hop` lets `voice_file` ride -- a quiet hop fills its leftover
+# frames with whatever recording it is shown.
+MAX_REF_AUDIOS = 3
+SOURCES = ("image", "refmod")
 
 # Per-reference pixel budget, in megapixels. 0 (or absent) means no cap.
 #
@@ -133,10 +149,39 @@ def _norm_ref(raw, i):
     if not tag:
         _fail(f"{where}: 'tag' is required (a short stable name like 'hero_face')")
 
-    # A bare filename, never a path: media.resolve refuses anything with a
-    # directory component, so accepting one here would only produce a ref that
-    # silently never loads.
-    file = _basename(str(raw.get("file") or "").strip())
+    source = str(raw.get("source") or "image").strip().lower()
+    if source not in SOURCES:
+        _fail(f"{where} (@{tag}): source '{source}' is not valid. "
+              f"Use one of: {', '.join(SOURCES)}")
+
+    # A still is a bare filename. media.resolve refuses a directory component,
+    # so accepting one here would only produce a ref that silently never loads.
+    # A RefMod name may include a subfolder (`people/hero`) because that is
+    # how the refmods folder is laid out. `..` is still refused.
+    raw_file = str(raw.get("file") or "").strip()
+    if source == "refmod":
+        file = raw_file.replace("\\", "/").strip("/")
+        if file.lower().endswith(".safetensors"):
+            file = file[: -len(".safetensors")]
+        if file and any(p in ("", ".", "..") for p in file.split("/")):
+            _fail(f"{where} (@{tag}): refmod file {raw_file!r} leaves the "
+                  f"refmods folder")
+    else:
+        file = _basename(raw_file)
+
+    # A voice is a plain basename like a still: media.resolve refuses a
+    # directory component, so a path here would only ever fail to load.
+    voice = _basename(str(raw.get("voice") or "").strip())
+
+    strength = raw.get("strength", 1.0)
+    if strength in (None, ""):
+        strength = 1.0
+    try:
+        strength = float(strength)
+    except (TypeError, ValueError):
+        _fail(f"{where} (@{tag}): strength {strength!r} is not a number")
+    if strength < 0.0 or strength > 1.0:
+        _fail(f"{where} (@{tag}): strength must be between 0 and 1")
 
     # Legacy: a plan authored against the ref_image_N sockets. Not an error --
     # failing here would stop the editor opening the very plan the author needs
@@ -209,6 +254,9 @@ def _norm_ref(raw, i):
         "desc": str(raw.get("desc") or "").strip(),
         "shots": shots,
         "mp": mp,
+        "source": source,
+        "strength": strength,
+        "voice": voice,
     }
 
 
@@ -272,8 +320,16 @@ def parse_ref_plan(text):
     return {"refs": refs, "subjects": subjects}
 
 
+def _is_video(ref):
+    return ref.get("kind") == "video" or ref.get("source_kind") == "video"
+
+
 def _check_hop_load(refs):
     """Fail if any single shot would carry more stills than one encode takes.
+
+    RefMod rows are not counted here. Their kind (image or video) is a
+    property of the file, which this parser does not open. `check_kind_caps`
+    runs once the files have been read.
 
     The limit is per ENCODE, not per plan -- `active_refs` is what decides who
     turns up at each one. This counted the whole rail until 1.1, so twelve
@@ -287,6 +343,8 @@ def _check_hop_load(refs):
     never accept one that would overflow -- and the ceiling is a hard encoder
     limit, so erring toward refusing is the right direction.
     """
+    picture_refs = [r for r in refs if r.get("source") != "refmod"]
+    refs = picture_refs
     always = [r for r in refs if r["shots"] is None]
     by_shot = {}
     for r in refs:
@@ -313,6 +371,72 @@ def _check_hop_load(refs):
               "references, leaving no slot for the incoming frame. On a "
               "continuation hop pin_to_qwen will be skipped there; drop one "
               "reference if you want the pin shown to the encoder.", flush=True)
+
+
+def check_kind_caps(refs, media_videos=0):
+    """Fail if one hop's loaded refs exceed the picture or video slot cap.
+
+    Call after each refmod row has `kind` set from its file. Plain stills
+    count as pictures. `media_videos` is how many MEDIA clips already occupy
+    video slots on every hop.
+    """
+    media_videos = int(media_videos or 0)
+    pictures = [r for r in refs if not _is_video(r)]
+    videos = [r for r in refs if _is_video(r)]
+
+    def _worst(rows):
+        always = [r for r in rows if r["shots"] is None]
+        by_shot = {}
+        for r in rows:
+            for h in (r["shots"] or []):
+                by_shot.setdefault(h, []).append(r)
+        worst_shot, worst = None, len(always)
+        for h in sorted(by_shot):
+            n = len(always) + len(by_shot[h])
+            if n > worst:
+                worst_shot, worst = h, n
+        return worst_shot, worst
+
+    shot, n = _worst(pictures)
+    if n > MAX_REF_IMAGES:
+        where = f"shot {shot}" if shot is not None else "every shot"
+        _fail(f"{where} would carry {n} pictures; one encode takes at most "
+              f"{MAX_REF_IMAGES}.")
+    shot, n = _worst(videos)
+    if media_videos + n > MAX_REF_VIDEOS:
+        where = f"shot {shot}" if shot is not None else "every shot"
+        _fail(f"{where} would carry {n} video RefMod(s) on top of "
+              f"{media_videos} reference clip(s); one encode takes at most "
+              f"{MAX_REF_VIDEOS} videos.")
+
+
+def check_audio_caps(refs, media_voices=0):
+    """Fail if one hop would carry more standalone voices than H3 accepts.
+
+    Every row voice spends one, a video row's included: it is never fused
+    onto the clip as a soundtrack, because that made the model recite it.
+
+    `media_voices` is how many `voice_file` widgets are filled; those ride
+    every hop the gate lets them ride, so they count as always-on.
+    """
+    rows = [r for r in refs if r.get("voice")]
+    always = [r for r in rows if r["shots"] is None]
+    by_shot = {}
+    for r in rows:
+        for h in (r["shots"] or []):
+            by_shot.setdefault(h, []).append(r)
+    worst_shot, worst = None, len(always)
+    for h in sorted(by_shot):
+        n = len(always) + len(by_shot[h])
+        if n > worst:
+            worst_shot, worst = h, n
+    media_voices = int(media_voices or 0)
+    if media_voices + worst > MAX_REF_AUDIOS:
+        where = f"shot {worst_shot}" if worst_shot is not None else "every shot"
+        _fail(f"{where} would carry {worst} row voice(s) on top of "
+              f"{media_voices} voice_file(s); one encode takes at most "
+              f"{MAX_REF_AUDIOS} standalone voices. Take a voice off a row "
+              f"or schedule the rows onto different shots.")
 
 
 def active_refs(refs, hop_index, wired_slots):
@@ -368,7 +492,7 @@ def ordinals(active):
 
 
 def resolve_tags(text, tag_map, subject_map=None, where="", declared=None,
-                 subject_names=None):
+                 subject_names=None, video_map=None):
     """Replace `@tag` in prose with what this hop calls that reference.
 
     A ref tied to a person resolves to `<Subject N>`, not `<Picture N>`: beat
@@ -407,6 +531,7 @@ def resolve_tags(text, tag_map, subject_map=None, where="", declared=None,
         return t
     subject_map = subject_map or {}
     declared = declared or set()
+    video_map = video_map or {}
 
     def sub(m):
         tag = m.group(1)
@@ -425,13 +550,15 @@ def resolve_tags(text, tag_map, subject_map=None, where="", declared=None,
                     return name[0].upper() + name[1:]
                 return name
             return f"<Subject {num}>"
+        if tag in video_map:
+            return f"<Video {video_map[tag]}>"
         if tag in tag_map:
             return f"<Picture {tag_map[tag]}>"
         w = where + ": " if where else ""
         if tag in declared:
-            _fail(f"{w}@{tag} is in the reference register but has no picture "
-                  f"on this hop. Either its file is not in the reference "
-                  f"folder, or its `shots` list leaves this hop out.")
+            _fail(f"{w}@{tag} is in the reference register but is not on this "
+                  f"hop. Either its file is missing, or its `shots` list "
+                  f"leaves this hop out.")
         known = ", ".join("@" + k for k in sorted(set(tag_map) | set(subject_map))) or "(none)"
         _fail(f"{w}unknown reference '@{tag}'. Known: {known}")
 
@@ -443,7 +570,7 @@ def subjects(active):
     return {r["tag"]: r["subject"] for r in active if r["subject"] is not None}
 
 
-def subject_prose(active, subjects=None):
+def subject_prose(active, subjects=None, video_ords=None):
     """Build `subject_definitions:` and `retention_analysis:` for this hop.
 
     Pictures are grouped by subject number so two people stay two people, and
@@ -454,22 +581,41 @@ def subject_prose(active, subjects=None):
     never told which face belonged to which description.
 
     A ref with no subject is a setting or prop and appears only in retention.
+
+    **A subject is not always a picture.** A character RefMod assembled from
+    several stills is stored and encoded as one clip, so the reference the
+    encoder receives is `<Video N>` -- and it is still that person. Each
+    subject-bearing ref is cited at whichever slot it actually occupies;
+    citing `<Picture 2>` for a reference that arrived as a video defines the
+    subject against nothing, which is worse than leaving it undefined.
     """
     if not active:
         return ""
 
     subjects = subjects or {}
-    ords = ordinals(active)
+    pictures = [r for r in active if not _is_video(r)]
+    ords = ordinals(pictures)
+    video_ords = video_ords or {}
+    cites = {}
+    for r in active:
+        if _is_video(r):
+            pos = video_ords.get(r["tag"])
+            cites[r["tag"]] = f"<Video {pos}>" if pos is not None else None
+        else:
+            pos = ords.get(r["tag"])
+            cites[r["tag"]] = f"<Picture {pos}>" if pos is not None else None
     by_subject = {}
     for r in active:
-        if r["subject"] is not None:
+        # No ordinal means the reference is not in this hop's payload, so
+        # there is nothing to define the subject against.
+        if r["subject"] is not None and cites.get(r["tag"]):
             by_subject.setdefault(r["subject"], []).append(r)
 
     parts = []
     if by_subject:
         lines = []
         for subj in sorted(by_subject):
-            pics = ", ".join(f"<Picture {ords[r['tag']]}>" for r in by_subject[subj])
+            pics = ", ".join(cites[r["tag"]] for r in by_subject[subj])
             info = subjects.get(subj) or {}
             name = info.get("name")
             who = f"{name}, the person in {pics}" if name else f"the person in {pics}"
@@ -485,12 +631,12 @@ def subject_prose(active, subjects=None):
             )
         parts.append("subject_definitions:\n" + "\n".join(lines))
 
-    parts.append(retention_prose(active, ords))
+    parts.append(retention_prose(active, ords, video_ords))
 
     return "\n\n".join(parts)
 
 
-def retention_prose(active, ords=None):
+def retention_prose(active, ords=None, video_ords=None):
     """`retention_analysis:` alone, at the ordinals this hop actually uses.
 
     Split out of `subject_prose` so a continuation hop can emit it too. This
@@ -509,14 +655,19 @@ def retention_prose(active, ords=None):
     if not active:
         return ""
     ords = ords if ords is not None else ordinals(active)
+    video_ords = video_ords or {}
     ret = []
     for r in active:
         # A tag with no ordinal is not in this hop's payload at all. Citing a
         # <Picture N> the encoder cannot see is worse than saying nothing.
-        pos = ords.get(r["tag"])
-        if pos is None:
+        if _is_video(r):
+            pos = video_ords.get(r["tag"])
+            pic = f"<Video {pos}>" if pos is not None else None
+        else:
+            pos = ords.get(r["tag"])
+            pic = f"<Picture {pos}>" if pos is not None else None
+        if pic is None:
             continue
-        pic = f"<Picture {pos}>"
         detail = RETENTION[r["retention"]]
         desc = f" ({r['desc']})" if r["desc"] else ""
         ret.append(f"{pic}{desc}: {detail}.")
@@ -590,8 +741,17 @@ def describe(plan):
             str(s) for s in r["shots"])
         src = r["file"] or (f"(was slot {r['legacy_slot']}, no file)"
                             if r["legacy_slot"] else "(no file)")
-        out.append(f"  @{r['tag']:<16} {src:<28} {subj:<10} "
-                   f"{r['retention']:<16} {when}")
+        if r.get("source") == "refmod":
+            src = "refmod:" + src
+            if float(r.get("strength") or 1.0) != 1.0:
+                src += f" @{float(r['strength']):g}"
+        line = (f"  @{r['tag']:<16} {src:<28} {subj:<10} "
+                f"{r['retention']:<16} {when}")
+        if r.get("voice"):
+            # Always its own audio block now, a video mod included: fused as
+            # a clip soundtrack, the model recited the recording.
+            line += "  + voice " + r["voice"] + " (beside)"
+        out.append(line)
     return "\n".join(out)
 
 
@@ -646,7 +806,9 @@ def check(plan, wired_slots):
             warnings.append(
                 f"@{r['tag']} has no picture chosen. This ref is inactive.")
         else:
+            folder = ("models/refmods" if r.get("source") == "refmod"
+                      else "the reference folder")
             warnings.append(
-                f"@{r['tag']} names '{r['file']}', which is not in the reference "
-                f"folder or could not be read. This ref is inactive.")
+                f"@{r['tag']} names '{r['file']}', which is not in {folder} "
+                f"or could not be read. This ref is inactive.")
     return warnings

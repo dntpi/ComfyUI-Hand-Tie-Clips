@@ -462,6 +462,28 @@ latent toward a blur of itself; omit it for full strength. `mp` on a RefMod
 row caps only the picture the text encoder sees. The latent the sampler
 attends to stays the one in the file. Audio mods are not applied.
 
+A RefMod can carry a caption: the builder's `description`, or whatever another
+builder wrote into the file. Picking the mod on a row whose describe box is
+empty copies the caption into `desc`, and from then on the row's text is what
+reaches the prompt -- edit it freely. The node never reads the caption at
+render time. When the two differ, a ↺ beside the box puts the file's text
+back. The plan writer cannot look at a RefMod, so `desc` is all it knows of
+one; write it before you WRITE.
+
+A character sheet's backdrop gets encoded along with the character and can
+bleed into the render. The builder's `subject_mask=auto` cuts the subject out
+of every source with rembg (installed by comfyui_essentials; the first build
+downloads its model), then repaints the backdrop from the subject's own edge
+colours before the VAE sees it -- so neither the sheet's structure nor its
+white reaches the latent. The cutout is cleaned first: patches the model was
+unsure of inside the figure are kept, and on a plain sheet the sheet-coloured
+rim round the figure and the panel dividers are dropped. A `MASK` wired into
+the builder is used as given and outranks `auto`: one mask covers every
+source, or a batch gives one per source, stills then the clip.
+`background_retention` is how much of the backdrop survives -- 0 replaces it,
+0.3-0.6 fades it. The mask is baked into the file, so rebuild the mod to
+change it.
+
 ```json
 {
   "refs": [

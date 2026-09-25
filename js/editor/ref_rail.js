@@ -24,32 +24,41 @@ import { createPicker } from "./media_picker.js";
 
 const MAX_SLOTS = 9;
 
+/** `[{name, kind, description}]` from the refmods folder listing. */
 let _refmods = null;
 // The builder writes its file on a queue, so a list cached at mount never
 // learns about it until a browser refresh. Re-read after every finished
-// prompt and re-render only when the names actually moved, so a queue that
-// built nothing does not rebuild a rail being edited.
+// prompt and re-render only when a name or a caption actually moved, so a
+// queue that built nothing does not rebuild a rail being edited.
 const _refmodListeners = new Set();
 api.addEventListener("execution_success", () => {
     const before = JSON.stringify(_refmods || []);
     _refmods = null;
-    refmodNames().then((names) => {
-        if (JSON.stringify(names) === before) return;
+    refmodRows().then((rows) => {
+        if (JSON.stringify(rows) === before) return;
         for (const fn of _refmodListeners) fn();
     });
 });
-function refmodNames() {
+function refmodRows() {
     if (_refmods) return Promise.resolve(_refmods);
     return fetch("/h3_ref_chain/files?folder=refmods")
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((j) => {
-            _refmods = Array.isArray(j.files) ? j.files.map((f) => f.name) : [];
+            _refmods = Array.isArray(j.files) ? j.files : [];
             return _refmods;
         })
         .catch(() => {
             _refmods = [];
             return _refmods;
         });
+}
+function refmodNames() {
+    return refmodRows().then((rows) => rows.map((f) => f.name));
+}
+/** The caption stored in a mod's header, from the cached listing. */
+function refmodCaption(name) {
+    const row = (_refmods || []).find((f) => f.name === name);
+    return String(row?.description || "").trim();
 }
 
 function blankRef(existing) {
@@ -469,6 +478,13 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                 mod.addEventListener("change", () => {
                     r.file = mod.value;
                     if (r.file) r.legacy_slot = null;
+                    // An empty describe box takes the file's own caption. A
+                    // filled one is the person's and is left alone; the
+                    // button beside it offers the file text instead.
+                    if (r.file && !String(r.desc || "").trim()) {
+                        const cap = refmodCaption(r.file);
+                        if (cap) r.desc = cap;
+                    }
                     queueMicrotask(() => commit());
                 });
                 row.appendChild(mod);
@@ -596,7 +612,10 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
             voice.root.classList.add("h3e-slot", "h3e-voice");
             row.appendChild(voice.root);
 
-            const desc = el("input", "h3e-input h3e-desc");
+            // The cell, not the input, carries .h3e-desc: it holds the grid
+            // track, so the caption button below cannot push × to a new line.
+            const descCell = el("div", "h3e-desc h3e-desc-cell");
+            const desc = el("input", "h3e-input");
             desc.type = "text";
             desc.value = r.desc || "";
             desc.placeholder = "describe this photo";
@@ -604,7 +623,26 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                 + "at cfg 1.0 a detail that is not there is asked for, not ignored.";
             desc.addEventListener("input", () => { r.desc = desc.value; setPlan(plan); });
             desc.addEventListener("change", commit);
-            row.appendChild(desc);
+            descCell.appendChild(desc);
+            row.appendChild(descCell);
+            if (r.source === "refmod" && r.file) {
+                // Shown only when the row's text and the file's caption
+                // differ. The row's text is what reaches the prompt; the
+                // file's is never read at render time.
+                const useCap = button("↺", "", () => {
+                    r.desc = refmodCaption(r.file);
+                    commit();
+                });
+                useCap.style.display = "none";
+                descCell.appendChild(useCap);
+                refmodRows().then(() => {
+                    const cap = refmodCaption(r.file);
+                    if (!cap || String(r.desc || "").trim() === cap) return;
+                    useCap.title = `Use the text stored in ${r.file}: "${cap}"`;
+                    useCap.style.display = "";
+                    if (!String(r.desc || "").trim()) desc.placeholder = cap;
+                });
+            }
 
             row.appendChild(button("×", "Remove this reference", () => {
                 const p = getPlan();

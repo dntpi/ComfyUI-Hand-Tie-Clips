@@ -421,6 +421,36 @@ def main():
     ck("and overruled when the rail has one",
        overruled["refs"][0].get("mp") == 0.54)
 
+    # A RefMod row is the rail's too. The writer is never told `source`
+    # exists, so every register came back all stills and Accept turned
+    # @hero (a latent in models/refmods) into a still named "hero_mod".
+    rail_mod = [{"tag": "hero", "file": "hero_mod", "source": "refmod",
+                 "strength": 0.0, "voice": "hero_voice.wav"},
+                {"tag": "ref_2", "file": "kitchen.png"}]
+    wrote = json.dumps({"refs": [{"tag": "hero", "file": "hero_mod",
+                                  "subject": 1, "desc": "a face"},
+                                 {"tag": "ref_2", "file": "kitchen.png",
+                                  "retention": "reference",
+                                  "desc": "a kitchen", "source": "refmod"}],
+                        "subjects": {}})
+    got = {r["tag"]: r for r in json.loads(
+        PL._restore_rail_only(wrote, rail_mod))["refs"]}
+    ck("a RefMod row keeps source, strength and voice through a write",
+       got["hero"].get("source") == "refmod"
+       and got["hero"].get("strength") == 0.0
+       and got["hero"].get("voice") == "hero_voice.wav", repr(got["hero"]))
+    ck("and the model cannot make a still into a RefMod",
+       "source" not in got["ref_2"], repr(got["ref_2"]))
+    stubbed = json.loads(PL._stub_missing_subjects(json.dumps(
+        {"refs": [dict(got["hero"], desc=""), got["ref_2"]],
+         "subjects": {}})))
+    by = {r["tag"]: r for r in stubbed["refs"]}
+    ck("the subject stub keeps a RefMod a RefMod, and adds no defaults",
+       by["hero"].get("source") == "refmod"
+       and by["hero"].get("strength") == 0.0
+       and "source" not in by["ref_2"] and "strength" not in by["ref_2"],
+       repr(stubbed["refs"]))
+
     # Spoken WORDS, not lines. A line runs from six words to twenty, and six
     # words is 2.4 s of a 10 s hop: chain_00059 was written one six-word line
     # per 10 s hop and rendered 17.8% voiced, longest run 0.5 s.

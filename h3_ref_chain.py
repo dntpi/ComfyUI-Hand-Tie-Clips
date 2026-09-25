@@ -3231,7 +3231,8 @@ class HandTieClips:
                         "this model plus the two boost LoRAs -- paints the "
                         "other 10 with no fresh noise. The recipe is steps=6, "
                         "not 8. Follows sampler_name / scheduler. Not with "
-                        "hop_refine or master_audio_file. Moves every hop's "
+                        "master_audio_file. hop_refine runs after it, on the "
+                        "MODEL wire or refine_model. Moves every hop's "
                         "cache key, hop 1 included."
                     ),
                 }),
@@ -3885,18 +3886,22 @@ class HandTieClips:
         except ValueError as e:
             raise RuntimeError(f"{TAG}: {e}") from e
 
-        # Realism boost. Refused, not reconciled, beside the two things it
-        # cannot be judged or run against: a refine stacked on a regeneration
-        # compares with neither alone, and the audio lock's frozen stream would
-        # reach stage 3 un-noised under DisableNoise.
+        # Realism boost. Refused beside the audio lock, whose frozen stream
+        # would reach stage 3 un-noised under DisableNoise. Allowed beside
+        # hop_refine: the refine runs on whatever the boost hands out, both
+        # are in the hop key, and a long boosted chain is the case the refine
+        # was built for. It refines on the MODEL wire (or refine_model), not
+        # the boost model, so it can pull the boost's look back -- said once.
         boost_on = str(realism_boost) == "on"
         boost_loras = [(str(boost_lora_1), float(boost_lora_1_strength)),
                        (str(boost_lora_2), float(boost_lora_2_strength))]
         if boost_on:
             if str(hop_refine) != "off":
-                raise RuntimeError(
-                    f"{TAG}: realism_boost and hop_refine are both on. Boost "
-                    "already re-samples the whole hop; turn one off.")
+                print(f"[{TAG}] realism_boost + hop_refine={hop_refine}: each "
+                      "hop is boosted, then refined on "
+                      + ("the wired refine_model" if refine_model is not None
+                         else "the MODEL wire (not the boost LoRAs)")
+                      + ".", flush=True)
             if str(master_audio_file or "").strip():
                 raise RuntimeError(
                     f"{TAG}: realism_boost does not run with master_audio_file: "

@@ -258,9 +258,30 @@ def listing():
                 meta = read_meta(full)
                 if isinstance(meta, dict):
                     kind = str(meta.get("kind") or "refmod")
-                rows.append((mtime, stem, kind))
+                rows.append((mtime, stem, kind, description_of(meta)))
     rows.sort(reverse=True)
-    return [{"name": n, "kind": k} for _m, n, k in rows]
+    return [{"name": n, "kind": k, "description": d}
+            for _m, n, k, d in rows]
+
+
+def description_of(meta):
+    """The caption a RefMod carries in its header, or "".
+
+    Luisa's layout has had a `description` field all along; this pack wrote it
+    empty until the builder grew one, and other builders fill it. The editor
+    offers it as the row's `desc` -- it is never read on the render path, so a
+    caption the person has not accepted reaches no prompt. A bundle's own
+    field wins, then the member `load_visual` would pick.
+    """
+    if not isinstance(meta, dict):
+        return ""
+    text = str(meta.get("description") or "").strip()
+    if text or meta.get("kind") != "bundle":
+        return text
+    for member in meta.get("members") or []:
+        if isinstance(member, dict) and member.get("kind") in ("image", "video"):
+            return str(member.get("description") or "").strip()
+    return ""
 
 
 def stamp(names):
@@ -403,6 +424,155 @@ def _blur_latent(z, factor=8):
     down = F.adaptive_avg_pool3d(z.float(), (t, max(1, h // factor), max(1, w // factor)))
     up = F.interpolate(down, size=(t, h, w), mode="trilinear", align_corners=False)
     return up.to(dtype=z.dtype)
+
+
+def refine_cutout(mask, frames, low=0.1, pocket=0.005):
+    """A matting model's soft mask, made solid inside and clean at the edge.
+
+    The two halves of a cutout fail differently, so they are treated apart.
+
+    Inside, a matting model is unsure as well as at the edge -- on a
+    character sheet the robes came back as grey patches, and every grey
+    pixel is subject half-lost. So the question is turned round: backdrop
+    is what is confidently empty (`< low`) AND touches the frame's border
+    or is a pocket larger than `pocket` of it. Everything else, shrunk
+    back from its outline, is a core held at full weight.
+
+    At the edge, the model's own soft alpha is kept -- that is what it is
+    good at -- except that on a plain sheet an edge pixel the colour of
+    the sheet is let go. That removes the white rim a cutout leaves round
+    a figure, the thin panel dividers a sheet grid is drawn with, and the
+    wedges of sheet caught between hair and shoulder. What the model was
+    sure of inside the figure is never keyed, so a white collar stays.
+    """
+    import numpy as np  # noqa: PLC0415
+    from scipy import ndimage  # noqa: PLC0415
+
+    out = []
+    for raw_t, px_t in zip(mask, frames):
+        raw = raw_t.float().cpu().numpy()
+        px = px_t[..., :3].float().cpu().numpy()
+        labels, count = ndimage.label(raw < low)
+        if count:
+            edge = np.unique(np.concatenate(
+                [labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
+            sizes = np.bincount(labels.ravel(), minlength=count + 1)
+            backdrop_ids = set(int(i) for i in edge if i) | set(
+                int(i) for i in np.nonzero(sizes >= pocket * raw.size)[0] if i)
+            backdrop = np.isin(labels, sorted(backdrop_ids))
+        else:
+            backdrop = np.zeros_like(raw, dtype=bool)
+        inset = max(1, round(min(raw.shape) / 100))
+        core = ndimage.binary_erosion(~backdrop, iterations=inset)
+        m = np.maximum(raw, core.astype(np.float32))
+
+        sure = backdrop & (raw < 0.02)
+        if sure.sum() > 0.01 * raw.size:
+            sheet = np.median(px[sure], axis=0)
+            spread = float(np.abs(px[sure] - sheet).mean())
+            if spread < 0.06:  # a plain sheet, not a photographed room
+                near = np.abs(px - sheet).max(axis=-1)
+                key = np.clip((near - 0.04) / 0.12, 0.0, 1.0)
+                m = np.where(core & (raw >= 0.9), m, m * key)
+        out.append(torch.from_numpy(m.astype(np.float32)))
+    return torch.stack(out)
+
+
+def pull_push_fill(frames, mask):
+    """Every pixel coloured from the subject nearest it, smoothly.
+
+    The standard pull-push hole fill: pool colour-times-weight and weight
+    down to one pixel, then walk back up, keeping a level's own colour in
+    proportion to how much subject it holds and taking the coarser guess
+    for the rest. The backdrop ends up a soft extension of the subject's
+    own edge colours -- no structure of its own, and none of its tone.
+    """
+    c = frames[..., :3].float().movedim(-1, 1)          # [T, 3, H, W]
+    w = mask.float().to(c.device).unsqueeze(1)          # [T, 1, H, W]
+    colours, weights = [c * w], [w]
+    while max(colours[-1].shape[-2:]) > 1:
+        colours.append(F.avg_pool2d(colours[-1], 2, ceil_mode=True))
+        weights.append(F.avg_pool2d(weights[-1], 2, ceil_mode=True))
+    fill = colours[-1] / weights[-1].clamp_min(1e-6)
+    for cl, wl in zip(reversed(colours[:-1]), reversed(weights[:-1])):
+        coarse = F.interpolate(fill, size=cl.shape[-2:], mode="bilinear",
+                               align_corners=False)
+        own = cl / wl.clamp_min(1e-6)
+        fill = wl * own + (1.0 - wl) * coarse
+    return fill.movedim(1, -1).clamp(0.0, 1.0)
+
+
+def isolate_subject(frames, mask, retention=0.0):
+    """`[T,H,W,C]` canvas frames with the backdrop replaced, before encode.
+
+    Done on pixels, not on the latent, for three reasons. A latent blend
+    keeps the backdrop's tone -- a blurred white sheet is still white --
+    and a blur taken over the whole latent smears the subject outward
+    across its own edge. And a mask pooled onto the 16x latent grid loses
+    anything thinner than a cell, which on a sheet is hairpins and loose
+    strands. Filled in pixel space, the VAE encodes one ordinary picture
+    with a clean edge, and the decode Qwen is shown is the same picture.
+
+    `retention` is how much of the original backdrop is kept: 0 replaces
+    it, 1 changes nothing. A mask with one frame covers every frame.
+    """
+    m = mask.float().to(frames.device)
+    if m.shape[0] == 1 and frames.shape[0] > 1:
+        m = m.expand(frames.shape[0], -1, -1)
+    if tuple(m.shape) != tuple(frames.shape[:3]):
+        _fail(f"subject mask {tuple(m.shape)} does not cover frames "
+              f"{tuple(frames.shape[:3])}")
+    r = min(1.0, max(0.0, float(retention)))
+    if r >= 1.0 or float(m.amax()) <= 0.0:
+        return frames
+    px = frames[..., :3].float()
+    keep = (r + (1.0 - r) * m).unsqueeze(-1)
+    out = keep * px + (1.0 - keep) * pull_push_fill(px, m)
+    return out.to(frames.dtype)
+
+
+def mask_to_canvas(mask, tw, th):
+    """`[T,H,W]` MASK stretched onto the canvas the way `to_canvas` stretches pixels."""
+    import comfy.utils
+
+    if mask.dim() == 2:
+        mask = mask.unsqueeze(0)
+    if mask.dim() != 3:
+        _fail(f"a subject mask must be [T,H,W], got {tuple(mask.shape)}")
+    m = comfy.utils.common_upscale(mask.float().unsqueeze(1), int(tw), int(th),
+                                   "bilinear", "disabled")
+    return m.squeeze(1).clamp(0.0, 1.0)
+
+
+CUTOUT_MODEL = "isnet-general-use"
+_cutout_session = None
+
+
+def cutout_masks(frames):
+    """`[T,H,W]` subject masks for `[T,H,W,C]` canvas frames, by rembg.
+
+    rembg is optional -- ComfyUI does not ship it, comfyui_essentials
+    installs it -- so it is imported here and a missing install fails the
+    build with the fix rather than breaking the node on load. The first use
+    downloads the model into rembg's own folder (~/.u2net).
+    """
+    global _cutout_session
+    try:
+        from rembg import new_session, remove  # noqa: PLC0415
+    except ImportError:
+        _fail("subject_mask=auto needs rembg (pip install rembg), or wire a "
+              "MASK into the builder's mask socket")
+    import numpy as np  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+
+    if _cutout_session is None:
+        _cutout_session = new_session(CUTOUT_MODEL)
+    out = []
+    for frame in frames:
+        px = (frame[..., :3].float().clamp(0, 1) * 255).round().byte().cpu().numpy()
+        m = remove(Image.fromarray(px), session=_cutout_session, only_mask=True)
+        out.append(torch.from_numpy(np.asarray(m.convert("L"), dtype=np.float32) / 255.0))
+    return torch.stack(out)
 
 
 def apply_strength(latent, strength):
@@ -609,7 +779,7 @@ def fit_token_budget(latent, budget, label):
 
 
 def metadata_for(name, kind, latent, mode, source, source_shape, pool, steps,
-                 plan=None):
+                 plan=None, description="", mask=None):
     t, h, w = (int(latent.shape[2]), int(latent.shape[3]), int(latent.shape[4]))
     return {
         "name": name,
@@ -623,7 +793,7 @@ def metadata_for(name, kind, latent, mode, source, source_shape, pool, steps,
         "pool": pool,
         "optimize_steps": int(steps or 0),
         "tags": [],
-        "description": "",
+        "description": str(description or "").strip(),
         "concept_type": "generic",
         # Which sources went in, not just how many pixels came out.
         # `source_shape` records the canvas; this records the files, so a
@@ -632,6 +802,9 @@ def metadata_for(name, kind, latent, mode, source, source_shape, pool, steps,
         # accepts, so the round trip needs no second format. Empty when the
         # legacy sockets built it -- there are no filenames behind a wire.
         "mod_plan": plan if isinstance(plan, dict) else {},
+        # How the background was suppressed, if it was: `{"source":
+        # "auto"|"wired", "background_retention": r}`. Empty is unmasked.
+        "subject_mask": mask if isinstance(mask, dict) else {},
         "_format_version": FORMAT_VERSION,
         "sample_rate": 32000,
     }

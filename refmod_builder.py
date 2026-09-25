@@ -62,6 +62,23 @@ class HTCRefModBuilder:
                     "tooltip": "Write the safetensors file. Off returns the name and does not write."}),
                 "build": (["stop", "start"], {"default": "stop",
                     "tooltip": "stop leaves the file alone and does not use the VAE, so a queue can run the chain. start writes the RefMod on this queue."}),
+                "description": ("STRING", {"default": "",
+                    "tooltip": "One sentence of what the mod shows, stored in the file. "
+                               "A reference row that picks this mod with its describe "
+                               "box empty is filled from it; after that the row's own "
+                               "text is what reaches the prompt."}),
+                "subject_mask": (["off", "auto"], {"default": "off",
+                    "tooltip": "auto cuts the subject out of every source with rembg "
+                               "and repaints the backdrop from the subject's own "
+                               "edge colours before encoding, so a sheet's backdrop "
+                               "does not ride into the render. A wired mask outranks it."}),
+                "background_retention": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0,
+                    "step": 0.05,
+                    "tooltip": "How much of the backdrop a mask keeps. 0 replaces it, "
+                               "1 leaves it untouched, 0.3-0.6 fades it."}),
+                "mask": ("MASK", {"tooltip": "Subject mask, 1 = keep. One mask covers every "
+                                             "source; a batch gives one per source, stills "
+                                             "then the clip."}),
             },
         }
 
@@ -92,7 +109,34 @@ class HTCRefModBuilder:
             names.append(_voice)
         return _media.stamp(names)
 
-    def _encode_plan(self, vae, stills, clip):
+    def _isolated(self, canvas, index, count, masking):
+        """`canvas` with its backdrop replaced, or as it was when nothing masks it."""
+        if not masking:
+            return canvas
+        wired = masking.get("wired")
+        if wired is not None:
+            if wired.shape[0] == 1:
+                pick = wired
+            elif count == 1 and wired.shape[0] == canvas.shape[0]:
+                pick = wired  # one clip, a mask per frame
+            else:
+                pick = wired[index:index + 1]
+            # A matte the author made is taken as given.
+            m = _refmod.mask_to_canvas(pick, canvas.shape[2], canvas.shape[1])
+        else:
+            m = _refmod.refine_cutout(_refmod.cutout_masks(canvas), canvas)
+        if m.shape[0] not in (1, canvas.shape[0]):
+            m = m[:1]
+        kept = float(m.mean())
+        print(f"[{TAG}] RefMod source {index + 1}: subject covers {kept:.0%} of "
+              f"the canvas", flush=True)
+        if kept < 0.02:
+            print(f"[{TAG}] RefMod source {index + 1}: the mask keeps almost "
+                  f"nothing, so the backdrop is left as it was", flush=True)
+            return canvas
+        return _refmod.isolate_subject(canvas, m, masking["retention"])
+
+    def _encode_plan(self, vae, stills, clip, masking=None):
         """Every source onto one canvas, encoded, stacked along time."""
         first = _media.load_image(stills[0]) if stills else None
         if first is None:
@@ -102,11 +146,13 @@ class HTCRefModBuilder:
                 _refmod._fail(_refmod.source_problem(clip['file'], ("video",)) or f"mod_plan source {clip['file']} could not be read")
         tw, th = _refmod.canvas_size(first)
         parts, shapes = [], []
-        for name in stills:
+        count = len(stills) + (1 if clip else 0)
+        for i, name in enumerate(stills):
             px = _media.load_image(name)
             if px is None:
                 _refmod._fail(_refmod.source_problem(name, ("image",)) or f"mod_plan source {name} could not be read")
-            z = vae.encode(_refmod.to_canvas(px, tw, th))
+            canvas = self._isolated(_refmod.to_canvas(px, tw, th), i, count, masking)
+            z = vae.encode(canvas)
             self._check_encode(z, name)
             parts.append(z)
             shapes.append(f"{name} 1f")
@@ -116,7 +162,9 @@ class HTCRefModBuilder:
             if px is None:
                 _refmod._fail(_refmod.source_problem(clip['file'], ("video",)) or f"mod_plan source {clip['file']} could not be read")
             px = _refmod.snap_video_frames(px)
-            z = vae.encode(_refmod.to_canvas(px, tw, th))
+            canvas = self._isolated(_refmod.to_canvas(px, tw, th), count - 1,
+                                    count, masking)
+            z = vae.encode(canvas)
             self._check_encode(z, clip["file"])
             parts.append(z)
             shapes.append(f"{clip['file']} {int(px.shape[0])}f")
@@ -132,7 +180,8 @@ class HTCRefModBuilder:
 
     def build(self, vae, name, mode, mod_plan="", images=None, video=None, pool=16,
               latent_frames=16, refine_steps=0, max_tokens=0,
-              subfolder="", save=True, build="stop"):
+              subfolder="", save=True, build="stop", description="",
+              subject_mask="off", background_retention=0.0, mask=None):
         stem = name
         folder = (subfolder or "").strip().replace("\\", "/").strip("/")
         if folder:
@@ -156,6 +205,39 @@ class HTCRefModBuilder:
             problem = _refmod.source_problem(voice, ("audio",))
             if problem:
                 _refmod._fail(problem)
+        # Settled before the VAE is touched, so a mask batch that does not
+        # match the sources fails in a second rather than after an encode.
+        masking, mask_meta = None, {}
+        retention = float(background_retention or 0.0)
+        if mask is not None or str(subject_mask) == "auto":
+            if mask is not None:
+                wired = mask if mask.dim() == 3 else mask.unsqueeze(0)
+                if stills or clip:
+                    count = len(stills) + (1 if clip else 0)
+                    ok = wired.shape[0] in (1, count) or (
+                        count == 1 and clip and not stills)
+                else:
+                    count = 1
+                    ok = True  # one socket source: a mask or a mask per frame
+                if not ok:
+                    raise ValueError(
+                        f"{TAG}: the mask batch has {wired.shape[0]} masks for "
+                        f"{count} sources. Wire one mask for all of them, or "
+                        f"one per source, stills then the clip.")
+                if str(subject_mask) == "auto":
+                    print(f"[{TAG}] a mask is wired, so subject_mask=auto is "
+                          f"not run", flush=True)
+                masking = {"wired": wired, "retention": retention}
+                mask_meta = {"source": "wired", "fill": "pull-push",
+                             "background_retention": retention}
+            else:
+                masking = {"wired": None, "retention": retention}
+                mask_meta = {"source": "auto", "model": _refmod.CUTOUT_MODEL,
+                             "fill": "pull-push", "background_retention": retention}
+            if retention >= 1.0:
+                print(f"[{TAG}] background_retention=1 keeps the whole "
+                      f"background, so the mask changes nothing", flush=True)
+
         plan_used = {}
         if stills or clip or voice:
             plan_used = {"stills": list(stills)}
@@ -166,7 +248,7 @@ class HTCRefModBuilder:
             if images is not None or video is not None:
                 print(f"[{TAG}] mod_plan names sources, so the images/video "
                       f"sockets are ignored", flush=True)
-            full = self._encode_plan(vae, stills, clip)
+            full = self._encode_plan(vae, stills, clip, masking)
             source = "video" if clip else ("image" if len(stills) == 1 else "images")
         else:
             if images is None and video is None:
@@ -181,7 +263,8 @@ class HTCRefModBuilder:
             else:
                 frames = images[:1]
                 source = "image"
-            full = vae.encode(_refmod.fit_canvas(frames))
+            canvas = self._isolated(_refmod.fit_canvas(frames), 0, 1, masking)
+            full = vae.encode(canvas)
             self._check_encode(full, stem)
 
         source_shape = "x".join(str(int(n)) for n in full.shape[2:])
@@ -205,7 +288,7 @@ class HTCRefModBuilder:
                   * (int(latent.shape[4]) // 2))
         meta = _refmod.metadata_for(
             stem, kind, latent, mode, source, source_shape, pool_label, steps,
-            plan=plan_used)
+            plan=plan_used, description=description, mask=mask_meta)
         if save:
             root = _refmod.register_folder()
             written = _refmod.save_latent(root, stem, latent, meta)

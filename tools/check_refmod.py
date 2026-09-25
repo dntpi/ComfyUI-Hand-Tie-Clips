@@ -356,6 +356,43 @@ def test_stored_plan():
        M.parse_mod_plan(voiced["mod_plan"])[2] == "v.wav")
 
 
+def test_description():
+    """The caption rides in the header and reaches the rail's listing."""
+    latent = torch.zeros(1, 24, 1, 8, 8)
+    meta = M.metadata_for("cap", "image", latent, "encode", "images",
+                          "1x8x8", "encode", 0,
+                          description="  a woman in a red coat  ")
+    ck("the builder's description is written, trimmed",
+       meta["description"] == "a woman in a red coat", meta["description"])
+    ck("and a mod built without one still writes an empty field",
+       M.metadata_for("m", "image", latent, "encode", "image", "1x8x8",
+                      "encode", 0)["description"] == "")
+    ck("a bundle falls back to its visual member's caption",
+       M.description_of({"kind": "bundle", "description": "", "members": [
+           {"kind": "audio", "description": "a voice"},
+           {"kind": "video", "description": "a dancer"}]}) == "a dancer")
+    ck("a header that is not a dict has no caption",
+       M.description_of(None) == "")
+    from safetensors.torch import save_file
+    with tempfile.TemporaryDirectory() as tmp:
+        M.save_latent(tmp, "cap", latent, meta)
+        # Another builder's file: Luisa's layout, caption filled in.
+        save_file({"latent": latent}, os.path.join(tmp, "other.safetensors"),
+                  metadata={M.META_KEY: json.dumps(
+                      {"_format_version": 4, "kind": "image",
+                       "description": "an old man, grey beard"})})
+        real = M.roots
+        M.roots = lambda: [tmp]
+        try:
+            rows = {r["name"]: r for r in M.listing()}
+        finally:
+            M.roots = real
+    ck("the listing carries each file's caption",
+       rows["cap"]["description"] == "a woman in a red coat"
+       and rows["other"]["description"] == "an old man, grey beard",
+       repr(rows))
+
+
 def test_video_subject():
     """A character mod is a video reference AND an identity.
 
@@ -384,7 +421,117 @@ def test_video_subject():
        "subject_definitions:" not in off, off)
 
 
+def test_subject_mask():
+    """The backdrop is repainted from the subject on pixels, before encode."""
+    # A red square on a white sheet: the backdrop must lose its white.
+    px = torch.ones(1, 64, 64, 3)
+    px[:, 16:48, 16:48] = torch.tensor([0.8, 0.1, 0.1])
+    m = torch.zeros(1, 64, 64)
+    m[:, 16:48, 16:48] = 1.0
+    out = M.isolate_subject(px, m, 0.0)
+    ck("the subject is left exactly as it was",
+       torch.equal(out[:, 16:48, 16:48], px[:, 16:48, 16:48]))
+    corner = out[0, 2, 2]
+    ck("the backdrop takes the subject's colour, not the sheet's white",
+       torch.allclose(corner, torch.tensor([0.8, 0.1, 0.1]), atol=0.02), repr(corner))
+    ck("retention 1 changes nothing",
+       torch.equal(M.isolate_subject(px, m, 1.0), px))
+    mid = M.isolate_subject(px, m, 0.4)
+    ck("retention in between keeps that much of the backdrop",
+       torch.allclose(mid[0, 2, 2], 0.4 * px[0, 2, 2] + 0.6 * out[0, 2, 2], atol=1e-5))
+    ck("an empty mask leaves the frame alone rather than inventing a colour",
+       torch.equal(M.isolate_subject(px, torch.zeros(1, 64, 64), 0.0), px))
+    clip = px.expand(3, -1, -1, -1).clone()
+    ck("one mask covers every frame of a clip",
+       M.isolate_subject(clip, m, 0.0).shape == clip.shape)
+    fill = M.pull_push_fill(torch.rand(1, 37, 53, 3), m[:, :37, :53])
+    ck("the fill copes with odd sizes", fill.shape == (1, 37, 53, 3))
+
+    # A cutout unsure inside the subject: a grey patch, and a small hole.
+    soft = torch.zeros(1, 200, 200)
+    soft[:, 40:200, 40:160] = 1.0                 # a bust cut off by the frame
+    soft[:, 120:170, 60:100] = 0.4                # the model was not sure here
+    soft[:, 70:74, 90:94] = 0.0                   # a gap between strands
+    soft[:, 100:160, 120:150] = 0.0               # a real pocket of backdrop
+    soft[:, 40:200, 38:40] = 0.5                  # the rim a cutout leaves
+    sheet = torch.ones(1, 200, 200, 3)            # a white sheet
+    sheet[:, 40:200, 40:160] = 0.3                # a dark figure on it
+    sheet[:, 60:66, 80:120] = 1.0                 # with a white collar
+    sheet[:, 100:160, 120:150] = 1.0
+    solid = M.refine_cutout(soft, sheet)
+    ck("an unsure patch inside the subject becomes subject",
+       float(solid[0, 140, 80]) == 1.0)
+    ck("a small enclosed gap is part of the subject",
+       float(solid[0, 72, 92]) == 1.0)
+    ck("a large enclosed pocket stays backdrop",
+       float(solid[0, 130, 135]) == 0.0)
+    ck("the border-connected backdrop stays backdrop",
+       float(solid[0, 5, 5]) == 0.0)
+    ck("the sheet-coloured rim round the figure is let go",
+       float(solid[0, 100, 38]) == 0.0, float(solid[0, 100, 38]))
+    ck("a white collar the model was sure of is kept",
+       float(solid[0, 62, 100]) == 1.0)
+    room = torch.rand(1, 200, 200, 3)             # a photographed room
+    ck("a busy backdrop is not colour-keyed",
+       float(M.refine_cutout(soft, room)[0, 100, 38]) == 0.5)
+
+    ck("a mask is stretched onto the canvas like the pixels are",
+       M.mask_to_canvas(torch.ones(1, 90, 160), 320, 192).shape == (1, 192, 320))
+    z = torch.zeros(1, 24, 1, 16, 16)
+    meta = M.metadata_for("m", "image", z, "encode", "image", "1x16x16", "encode", 0,
+                          mask={"source": "auto", "background_retention": 0.0})
+    ck("the header records how the mod was masked",
+       meta["subject_mask"]["source"] == "auto")
+    ck("and an unmasked mod records nothing",
+       M.metadata_for("m", "image", z, "encode", "image", "1x16x16", "encode",
+                      0)["subject_mask"] == {})
+
+
+def test_builder_mask():
+    """The builder masks each source and refuses a batch that does not fit."""
+    import importlib
+    import types
+    pkg = types.ModuleType("htc_pack")
+    pkg.__path__ = [_PACK]
+    sys.modules.setdefault("htc_pack", pkg)
+    B = importlib.import_module("htc_pack.refmod_builder")
+    BM = sys.modules["htc_pack.refmod"]
+
+    class VAE:
+        def encode(self, px):
+            t = 1 + (px.shape[0] - 1) // 4
+            return torch.ones(1, 24, t, px.shape[1] // 16, px.shape[2] // 16)
+
+    seen = []
+    real = BM.isolate_subject
+    BM.isolate_subject = lambda f, m, r: (seen.append((tuple(m.shape), r)), real(f, m, r))[1]
+    try:
+        still = torch.rand(1, 256, 320, 3)
+        name, = B.HTCRefModBuilder().build(
+            VAE(), "m", "encode", images=still, save=False, build="start",
+            mask=torch.ones(1, 128, 160), background_retention=0.25)
+        ck("a wired mask reaches the pixels on the canvas, with its retention",
+           seen == [((1, 256, 320), 0.25)], repr(seen))
+        seen.clear()
+        B.HTCRefModBuilder().build(VAE(), "m", "encode", images=still,
+                                   save=False, build="start")
+        ck("no mask, no masking", seen == [])
+        try:
+            B.HTCRefModBuilder().build(
+                VAE(), "m", "encode", build="start", save=False,
+                mod_plan=json.dumps({"stills": ["a.png", "b.png", "c.png"]}),
+                mask=torch.ones(2, 64, 64))
+            ck("a mask batch that fits no source count is refused", False)
+        except ValueError as exc:
+            ck("a mask batch that fits no source count is refused",
+               "2 masks for 3 sources" in str(exc), str(exc))
+    finally:
+        BM.isolate_subject = real
+
+
 if __name__ == "__main__":
+    test_subject_mask()
+    test_builder_mask()
     test_schedule()
     test_strength_and_file()
     test_kind_cap()
@@ -397,4 +544,5 @@ if __name__ == "__main__":
     test_video_subject()
     test_splice_keeps_audio()
     test_stored_plan()
+    test_description()
     print("check_refmod: ok")

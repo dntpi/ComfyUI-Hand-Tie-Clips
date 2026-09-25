@@ -466,6 +466,8 @@
 .h3e-ref.h3e-bad .h3e-tag { border-color: var(--h3-error); }
 .h3e-inactive .h3e-ord { background: var(--h3-sunken); color: var(--h3-faint); }
 .h3e-tag, .h3e-slot, .h3e-subj, .h3e-ret, .h3e-mp, .h3e-desc { width: 100%; }
+.h3e-desc-cell { display: flex; gap: 3px; min-width: 0; }
+.h3e-desc-cell > .h3e-input { flex: 1 1 auto; min-width: 0; width: auto; }
 
 /* The rail's 7-track grid needs ~536px of content width and the node only ever
  * offers ~510px at NODE_WIDTH 560, so it is crushed by default. These queries

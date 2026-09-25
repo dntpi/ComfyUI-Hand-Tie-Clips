@@ -271,13 +271,24 @@ export function createVideoSwap(node, { onWritten } = {}) {
         }
         pending = { shot: one, videoDesc: videoDesc || "" };
         draftList.textContent = "";
-        let beat = "";
-        try { beat = JSON.parse(one).shots[0].beat || ""; } catch (err) { /* */ }
+        // In full, the way WRITE's draft is: Accept writes all of it, so a
+        // preview cut at a character count read as a plan the model had not
+        // finished. The list scrolls instead.
+        let shot = {};
+        try { shot = JSON.parse(one).shots[0] || {}; } catch (err) { /* */ }
         draftList.appendChild(el("div", "h3e-writer-draft-line",
-            beat ? beat.slice(0, 240) : "(one hop)"));
+            shot.beat || "(one hop)"));
+        const dirs = Object.entries(shot.directives || {})
+            .map(([k, v]) => `${k}=${v}`);
+        if (Array.isArray(shot.refs)) {
+            dirs.push("refs " + (shot.refs.map((t) => "@" + t).join(" ") || "(none)"));
+        }
+        if (dirs.length) {
+            draftList.appendChild(el("div", "h3e-writer-draft-line", dirs.join(" · ")));
+        }
         if (pending.videoDesc) {
             draftList.appendChild(el("div", "h3e-writer-draft-line",
-                "clip: " + pending.videoDesc.slice(0, 160)));
+                "clip: " + pending.videoDesc));
         }
         draft.style.display = "";
     }

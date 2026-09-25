@@ -91,6 +91,17 @@ def _pinned_refs(raw, limit):
             mp = float(r.get("mp") or 0) or None
         except (TypeError, ValueError):
             mp = None
+        # `source` / `strength` / `voice` ride for the same reason as `mp`:
+        # planner.RAIL_ONLY_FIELDS puts them back. Defaults go up as None so a
+        # plain still does not come back with `source: image` written on it.
+        source = "refmod" if str(r.get("source") or "") == "refmod" else None
+        try:
+            strength = float(r["strength"]) if r.get("strength") not in (
+                None, "") else None
+        except (TypeError, ValueError):
+            strength = None
+        if strength == 1.0:
+            strength = None
         out.append({
             "tag": tag,
             "file": fname,
@@ -98,6 +109,9 @@ def _pinned_refs(raw, limit):
             "retention": str(r.get("retention") or ""),
             "desc": str(r.get("desc") or ""),
             "mp": mp,
+            "source": source,
+            "strength": strength,
+            "voice": str(r.get("voice") or "").strip() or None,
         })
         if len(out) >= int(limit):
             break
@@ -290,8 +304,11 @@ def register():
             name = str(body.get("name") or "").strip()
             if not name:
                 return web.json_response({"ok": True, "plan": {}})
+            path = _refmod.resolve(name)
             return web.json_response(
-                {"ok": True, "plan": _refmod.stored_plan(name)})
+                {"ok": True, "plan": _refmod.stored_plan(name),
+                 "description": _refmod.description_of(
+                     _refmod.read_meta(path) if path else None)})
         except Exception as exc:  # noqa: BLE001
             return web.json_response({"ok": False, "error": str(exc)})
 
@@ -559,6 +576,10 @@ def register():
             def encode():
                 out = []
                 for p in pinned:
+                    # A RefMod is a latent, not a picture in h3_refs; the
+                    # writer gets its `desc` and nothing to look at.
+                    if p.get("source") == "refmod":
+                        continue
                     url = _media.vision_data_url(p["file"])
                     if url:
                         out.append({"tag": p["tag"], "data_url": url})
@@ -572,6 +593,11 @@ def register():
                 images = []
 
         vision_notes = []
+        mods = [p["tag"] for p in pinned if p.get("source") == "refmod"]
+        if mods:
+            vision_notes.append(
+                "the writer cannot look at a RefMod; it read the description "
+                "of " + ", ".join("@" + t for t in mods) + " instead")
 
         async def complete_fn(messages, schema=None):
             try:

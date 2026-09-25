@@ -175,8 +175,9 @@ def main():
     ck("the LoRA combos always offer None",
        "None" in opt["boost_lora_1"][0] and "None" in opt["boost_lora_2"][0])
     src = inspect.getsource(H3.HandTieClips.run)
-    ck("run() refuses boost beside hop_refine",
-       "realism_boost and hop_refine are both on" in src)
+    ck("run() allows boost beside hop_refine and says so",
+       "realism_boost and hop_refine are both on" not in src
+       and "realism_boost + hop_refine=" in src)
     ck("run() refuses boost beside master_audio_file",
        "realism_boost does not run with master_audio_file" in src)
     ck("the boost field is keyed only when on",

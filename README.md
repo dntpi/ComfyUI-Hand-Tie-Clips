@@ -510,8 +510,12 @@ If `H3AdaLNLoRAFix` is installed, the node runs it on the boost model itself.
   `h3-realism-people-t2v-i2v-r2v` at 1.0 if those files are in `models/loras`,
   and to `None` otherwise.
 - It is meant for a single hop or two. It is not a long-chain mode.
-- It is refused with `hop_refine` and with `master_audio_file`. A frozen audio
-  stream does not survive a stage that adds no noise.
+- It is refused with `master_audio_file`. A frozen audio stream does not
+  survive a stage that adds no noise.
+- It runs with `hop_refine`, for longer boosted chains. Each hop is boosted,
+  then refined. The refine runs on the MODEL wire, or on `refine_model` if one
+  is wired, not on the boost LoRAs, so a strong refine can pull the boost's
+  look back.
 - Switching it on changes every hop's cache key, hop 1 included. With it off,
   the keys are exactly what they were.
 

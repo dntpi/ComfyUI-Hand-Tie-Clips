@@ -483,6 +483,13 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                 // so the server can put it back, or every write silently
                 // resets every row to "full".
                 mp: r.mp ? Number(r.mp) : null,
+                // Same reason: the rail owns these and the writer never sees
+                // them. Without them Accept turned every RefMod row back into
+                // a still.
+                source: r.source === "refmod" ? "refmod" : null,
+                strength: r.strength == null || r.strength === ""
+                    ? null : Number(r.strength),
+                voice: r.voice ? String(r.voice) : null,
             }));
     }
 

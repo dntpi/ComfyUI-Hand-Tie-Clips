@@ -961,7 +961,11 @@ def _merge_register(base_text, patch_text, keep=None):
 # 0.54 MP (1.58 MP total against a 0.72 MP canvas) and the next write put the
 # same three back at native size, 3.23 MP, which is the run that came back with
 # the reference photograph rendered instead of the beat.
-RAIL_ONLY_FIELDS = ("mp",)
+# `source`, `strength` and `voice` are the same case: the writer is never
+# told they exist, so every written row came back an image row, and Accept
+# turned each RefMod on the rail into a still named after a file that is not
+# in h3_refs.
+RAIL_ONLY_FIELDS = ("mp", "source", "strength", "voice")
 
 
 def _restore_rail_only(ref_text, pinned):
@@ -1014,7 +1018,9 @@ def _restore_rail_only(ref_text, pinned):
             value = row.get(field)
             if r.pop(field, None) is not None:
                 touched = True
-            if value not in (None, "", 0):
+            # Not `0`: a strength of 0 is a setting. `_pinned_refs` sends
+            # an unset cap as None, never 0.
+            if value not in (None, ""):
                 r[field] = value
                 touched = True
     return json.dumps(obj, indent=2) if touched else ref_text
@@ -1300,6 +1306,14 @@ def _stub_missing_subjects(ref_text):
         for k in ("file", "subject", "retention", "desc", "shots", "mp"):
             if r.get(k) not in (None, "", [], 0, 0.0):
                 row[k] = r[k]
+        # parse_ref_plan fills the defaults in; carry only what differs, or
+        # every stubbed row grows `source: image` and `strength: 1.0`.
+        if r.get("source") == "refmod":
+            row["source"] = "refmod"
+        if r.get("strength") is not None and float(r["strength"]) != 1.0:
+            row["strength"] = r["strength"]
+        if r.get("voice"):
+            row["voice"] = r["voice"]
         out_refs.append(row)
     return json.dumps(
         {"refs": out_refs, "subjects": {str(k): v for k, v in subs.items()}},

@@ -28,7 +28,8 @@ const PLAN_URL = "/h3_ref_chain/refmod_plan";
 
 /** Dials the panel draws, so the mount hides exactly these. */
 const DIALS = ["name", "mode", "pool", "latent_frames", "refine_steps",
-    "max_tokens", "subfolder", "save", "build"];
+    "max_tokens", "subfolder", "save", "build", "description",
+    "subject_mask", "background_retention"];
 
 /** Drawn only when mode is training; pooling is what they configure. */
 const POOL_ONLY = new Set(["pool", "latent_frames", "refine_steps"]);
@@ -357,6 +358,13 @@ export function createModBuilder(node, { onChange } = {}) {
             if (!data.ok) { setSummary("error", data.error || "read failed"); return; }
             const stored = data.plan || {};
             const stills = Array.isArray(stored.stills) ? stored.stills : [];
+            // The caption comes back with the sources, so a rebuild does not
+            // quietly write the file out with an empty description.
+            const cap = widgetByName(node, "description");
+            if (cap && data.description && !String(cap.value || "").trim()) {
+                cap.value = data.description;
+                renderDials();
+            }
             if (!stills.length && !stored.clip && !stored.voice) {
                 // Not an error. A mod built through the sockets, or before
                 // the header carried this, has nothing to give back.

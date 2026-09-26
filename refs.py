@@ -719,6 +719,84 @@ def retention_prose(active, ords=None, video_ords=None):
     return "retention_analysis:\n" + "\n".join(ret)
 
 
+def speaker_ids(text, speech_starts=()):
+    """`{subject number: "S1"}` for the people who speak in `text`.
+
+    The official contract names speakers `(S1)`, `(S2)` in order of who talks
+    first. An author who wrote `<Subject 2> (S1)` is taken at their word.
+    Anyone else who speaks is numbered after them, in order of first line.
+
+    The speaker of a line is the FIRST `<Subject N>` of the sentence the line
+    sits in, not the nearest one before it: in "<Subject 1> raises an eyebrow
+    at <Subject 2>: <d>..." the nearest is the person spoken TO. A sentence
+    starts after `. ` / `! ` / `? ` (or `.' `), a line break, or the previous
+    line's `</d>`. `speech_starts` are the offsets where lines begin, from the
+    caller, so the quoted-line rule is not copied here.
+    """
+    import re                       # local, as everywhere else in this module
+
+    ids = {}
+    for m in re.finditer(r"<Subject (\d+)>\s*\((S\d+)\)", text):
+        ids.setdefault(int(m.group(1)), m.group(2))
+    taken = set(ids.values())
+    # `.'` too: a quoted line ends its sentence on the quote, not the stop.
+    bounds = [m.end() for m in re.finditer(r"[.!?]['\"’”]?\s|\n|</d>", text)]
+    subjects = [(m.start(), int(m.group(1)))
+                for m in re.finditer(r"<Subject (\d+)>", text)]
+    n = 0
+    for start in sorted(speech_starts):
+        opens = max([b for b in bounds if b <= start], default=0)
+        who = [s for pos, s in subjects if opens <= pos < start]
+        if not who or who[0] in ids:
+            continue
+        n += 1
+        while f"S{n}" in taken:
+            n += 1
+        ids[who[0]] = f"S{n}"
+        taken.add(f"S{n}")
+    return ids
+
+
+def bind_voices(block, bindings, speech_starts=()):
+    """Tie each voice to its person, inside `subject_definitions` when there is one.
+
+    `bindings` is `[{"audio": n, "subject": num or None, "who": label}]`.
+
+    In the definitions it is the contract's own form, `<Audio N> is the
+    voice-timbre reference for <Subject N> (Sx).`, which joins the three
+    labels a speaking person has -- face, voice and speaker ID -- in the one
+    block where people are defined. Appended after the soundscape fields,
+    without the speaker ID, two voiced people in a five-line exchange came
+    back as one voice saying every line after the first (2026-09-26).
+
+    A hop with no definitions block (a continuation), or a voice on a row
+    with no subject, keeps a trailing sentence -- carrying the speaker ID
+    when there is one.
+    """
+    if not bindings:
+        return block
+    ids = speaker_ids(block, speech_starts)
+    head = "subject_definitions:\n"
+    at = block.find(head)
+    inline, trailing = [], []
+    for b in bindings:
+        subj = b.get("subject")
+        sx = f" ({ids[subj]})" if subj in ids else ""
+        if subj and at >= 0:
+            inline.append(f"<Audio {b['audio']}> is the voice-timbre reference "
+                          f"for <Subject {subj}>{sx}.")
+        else:
+            trailing.append(f"{b['who']}{sx} speaks with the voice in "
+                            f"<Audio {b['audio']}> as a timbre reference.")
+    if inline:
+        end = block.find("\n\n", at + len(head))
+        end = len(block.rstrip()) if end < 0 else end
+        block = block[:end] + "\n" + "\n".join(inline) + block[end:]
+    for line in trailing:
+        block = block.rstrip() + "\n\n" + line
+    return block
+
+
 def continuity_line(subjects, subject_nums=None):
     """Identity prose for a hop that cites no photographs.
 

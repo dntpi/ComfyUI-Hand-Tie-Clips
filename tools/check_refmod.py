@@ -714,6 +714,75 @@ def test_voice_window():
         ck("a window loads only the window", abs(secs(cut) - 3.0) < 0.05, str(secs(cut)))
 
 
+def test_voice_binding():
+    """Face, voice and speaker ID are joined inside subject_definitions."""
+    import re
+    import importlib
+    import types
+    pkg = types.ModuleType("htc_pack")
+    pkg.__path__ = [_PACK]
+    sys.modules.setdefault("htc_pack", pkg)
+    P = importlib.import_module("htc_pack.planner")
+
+    def starts(t):
+        return ([m.start() for m in re.finditer("<d>", t)]
+                + [a for a, _b in P.spoken_spans(t)])
+
+    head = ("subject_definitions:\n<Subject 1> is haerin, the person in <Video 1>.\n"
+            "<Subject 2> is kelly, the person in <Video 2>.\n\n"
+            "retention_analysis:\n<Video 1>: face carries over.\n\n")
+    # The 2026-09-26 five-line exchange, as authored and with the IDs removed.
+    body = ("<Subject 1> and <Subject 2> sit side by side. "
+            "<Subject 1> (S1) raises an eyebrow at <Subject 2>: "
+            "<d>[English] You're late again.</d> "
+            "<Subject 2> (S2) holds up both hands: <d>[English] The train stopped.</d> "
+            "<Subject 1> (S1) folds her arms: <d>[English] Twice?</d>")
+    bare = re.sub(r"\s*\(S\d\)", "", body)
+    ck("authored speaker IDs are kept",
+       R.speaker_ids(head + body, starts(head + body)) == {1: "S1", 2: "S2"})
+    got = R.speaker_ids(head + bare, starts(head + bare))
+    ck("the speaker is who opens the sentence, not who is spoken to",
+       got == {1: "S1", 2: "S2"}, repr(got))
+    quoted = ("<Subject 1> turns to <Subject 2> and says, 'You actually came.' "
+              "<Subject 2> smiles and answers, 'I said I would.'")
+    got = R.speaker_ids(quoted, starts(quoted))
+    ck("the quoted-line form ends its sentence on the quote",
+       got == {1: "S1", 2: "S2"}, repr(got))
+    flip = bare.replace("<Subject 1> raises", "<Subject 2> raises", 1)
+    got = R.speaker_ids(flip, starts(flip))
+    ck("whoever speaks first is S1", got.get(2) == "S1", repr(got))
+    got = R.speaker_ids("<Subject 2> (S1) says: <d>[English] a</d> <Subject 1> "
+                        "answers: <d>[English] b</d>", [30, 70])
+    ck("a derived ID skips one the author took", got == {2: "S1", 1: "S2"}, repr(got))
+
+    bindings = [{"audio": 1, "subject": 1, "who": "<Subject 1>"},
+                {"audio": 2, "subject": 2, "who": "<Subject 2>"}]
+    block = head + "detailed_description:\n" + body
+    out = R.bind_voices(block, bindings, starts(block))
+    defs = out.split("retention_analysis:")[0]
+    ck("each voice is bound in subject_definitions, with its speaker ID",
+       "<Audio 1> is the voice-timbre reference for <Subject 1> (S1)." in defs
+       and "<Audio 2> is the voice-timbre reference for <Subject 2> (S2)." in defs,
+       defs)
+    ck("nothing is appended after the official fields",
+       out.rstrip().endswith("<d>[English] Twice?</d>"), out[-120:])
+    ck("the rest of the block is untouched",
+       out.replace("<Audio 1> is the voice-timbre reference for <Subject 1> (S1).\n", "")
+          .replace("<Audio 2> is the voice-timbre reference for <Subject 2> (S2).\n", "")
+       == block, "")
+    cont = "<Subject 1> (S1) says: <d>[English] hi</d>"
+    out = R.bind_voices(cont, bindings[:1], starts(cont))
+    ck("a continuation hop keeps a trailing sentence, with the ID",
+       out.endswith("<Subject 1> (S1) speaks with the voice in <Audio 1> as a "
+                    "timbre reference."), out)
+    out = R.bind_voices(block, [{"audio": 3, "subject": None, "who": "<Picture 2>"}],
+                        starts(block))
+    ck("a voice on a row with no subject stays a trailing sentence",
+       out.endswith("<Picture 2> speaks with the voice in <Audio 3> as a timbre "
+                    "reference."), out[-100:])
+    ck("no bindings, no change", R.bind_voices(block, [], []) is block)
+
+
 def test_rail_keeps_voice_window():
     """The plan writer cannot see a trim, so Accept must not erase one."""
     import importlib
@@ -732,6 +801,7 @@ def test_rail_keeps_voice_window():
 
 
 if __name__ == "__main__":
+    test_voice_binding()
     test_voice_window()
     test_rail_keeps_voice_window()
     test_looks()

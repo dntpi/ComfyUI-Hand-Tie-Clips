@@ -4550,9 +4550,11 @@ class HandTieClips:
                     + f"\n\nThe speaker\'s voice follows "
                       f"<Audio {_voice_ord}> as a timbre reference."
                 )
-            # One sentence per row voice, affirmative and without pronouns,
-            # binding a timbre to a person rather than leaving the model to
-            # guess which of two faces owns which of two recordings.
+            # One binding per row voice, affirmative and without pronouns,
+            # tying a timbre to a person rather than leaving the model to
+            # guess which of two faces owns which of two recordings. Where
+            # it goes, and the speaker IDs it carries: `refs.bind_voices`.
+            _bindings = []
             for _rr in hop_active:
                 _ord = _voice_ords.get(_rr["tag"])
                 if not _ord or f"<Audio {_ord}>" in block:
@@ -4563,9 +4565,12 @@ class HandTieClips:
                     _who = f"<Video {video_ords[_rr['tag']]}>"
                 else:
                     _who = f"<Picture {hop_ords.get(_rr['tag'], 0)}>"
-                block = (block.rstrip()
-                         + f"\n\n{_who} speaks with the voice in "
-                           f"<Audio {_ord}> as a timbre reference.")
+                _bindings.append({"audio": _ord, "subject": _rr.get("subject"),
+                                  "who": _who})
+            if _bindings:
+                _starts = ([_m.start() for _m in re.finditer(r"<d>", block)]
+                           + [_a for _a, _b in _planner.spoken_spans(block)])
+                block = _refs.bind_voices(block, _bindings, _starts)
 
             assembled.append((i + 1, block))
 

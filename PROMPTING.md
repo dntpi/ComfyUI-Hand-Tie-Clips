@@ -278,6 +278,45 @@ If you are pasting a plan into the **JSON** tab rather than typing into the
 cards, single quotes around dialogue survive the round trip more reliably than
 escaped double quotes, and read identically to the encoder.
 
+### Two people talking
+
+One sentence per line: who speaks, the line, then what they do.
+
+```
+@haerin says, 'Twice? That's your excuse every week,' and folds her arms.
+@kelly laughs and says, 'Coffee's on me,' and slides a cup across the table.
+```
+
+The node works out who is `(S1)` and who is `(S2)` from that — the person who
+opens the sentence speaks its line — and binds each row's voice to its speaker.
+You do not write speaker IDs or official tags for this.
+
+Three rules, all consequences of [law 1](#1-the-prompt-is-additive):
+
+- **Give the listener a closed-mouth action in the same sentence.** A person with
+  nothing to do while the other speaks is animated from whatever is nearby, and
+  the nearest thing is usually the line.
+- **Never put `both` or `together` next to a line.** It makes the line theirs
+  jointly, and H3 renders joint speech.
+- **A very short line needs this most.** A one-word line is half a second of
+  audio, the weakest hold on a speaker in the whole exchange.
+
+```
+BAD   @haerin smiles and says, 'Deal.' After that last word, both lift their
+      cups and sip with their lips closed.
+GOOD  @haerin smiles and says, 'Deal,' as @kelly sips from her cup with her lips
+      closed.
+```
+
+The bad version rendered "Deal" in both mouths on two seeds out of two; the good
+one was clean on the same two. Five quick turns between two voices is still a
+hard case at 8 steps — if one seed hands a run of lines to the wrong person, try
+another seed before rewriting.
+
+A voice longer than 8 s is used for its first 8 s unless you trim it on the
+reference row: a 26 s recording handed over whole was recited into the hop, and
+then gave its lines to the other speaker.
+
 ### Ambience: narrowband and specific
 
 After shot 1 the official soundscape fields are stripped and ambience is plain

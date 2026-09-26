@@ -48,52 +48,32 @@ class HTCH3Cache:
         return {
             "required": {
                 "model": ("MODEL", {
-                    "tooltip": "MiniMax-H3 MODEL. Anything else is refused, not ignored.",
+                    "tooltip": "The MiniMax H3 model.",
                 }),
                 "reuse_threshold": ("FLOAT", {
                     "default": DEFAULTS["reuse_threshold"], "min": 0.0, "max": 1.0, "step": 0.01,
-                    "tooltip": (
-                        "How far features may drift before a skip is refused. "
-                        "Higher skips more work and costs fidelity; lower runs "
-                        "more real steps. Raise it only if quality holds on a "
-                        "chain, not on a single hop -- caching error compounds "
-                        "hop to hop the same way everything else here does."
-                    ),
+                    "tooltip": ("How much may change before a cached step is refused. Higher is faster and "
+                                "less exact."),
                 }),
                 "start_percent": ("FLOAT", {
                     "default": DEFAULTS["start_percent"], "min": 0.0, "max": 1.0, "step": 0.01,
-                    "tooltip": (
-                        "Sampling progress before which nothing is ever reused. "
-                        "Early steps decide structure, so they run dense."
-                    ),
+                    "tooltip": "No reuse before this point in sampling. Early steps shape the picture.",
                 }),
                 "end_percent": ("FLOAT", {
                     "default": DEFAULTS["end_percent"], "min": 0.0, "max": 1.0, "step": 0.01,
-                    "tooltip": (
-                        "Sampling progress after which reuse stops. Late steps "
-                        "polish detail, so the last stretch runs dense too."
-                    ),
+                    "tooltip": "No reuse after this point in sampling. Late steps add detail.",
                 }),
                 "max_steps": ("INT", {
                     "default": DEFAULTS["max_steps"], "min": 1, "max": 10, "step": 1,
-                    "tooltip": (
-                        "Longest run of consecutive block-stack skips allowed. "
-                        "1 means every skip is followed by a real step, which "
-                        "is what upstream actually runs. 2+ is faster and lets "
-                        "error accumulate across the gap."
-                    ),
+                    "tooltip": "Most skipped steps in a row. 1 is safest; higher is faster.",
                 }),
                 "device": (list(DEVICE_MODES), {
                     "default": "auto",
-                    "tooltip": (
-                        "Where the cached residual lives. auto keeps it with "
-                        "the model; cpu offloads it to system RAM, which is the "
-                        "one to try when the refine pass tips you into OOM."
-                    ),
+                    "tooltip": "Where the cache lives. cpu saves video memory.",
                 }),
                 "verbose": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Log each step's cache decision and a skip summary at the end.",
+                    "tooltip": "Log each step's cache decision.",
                 }),
             },
         }

@@ -234,18 +234,18 @@ class HTCSeamReport:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE", {"tooltip": "The chain's `images` output -- the joined master."}),
+                "images": ("IMAGE", {"tooltip": "The chain's images."}),
                 "hops": ("INT", {
                     "default": 3, "min": 2, "max": 64,
-                    "tooltip": "How many hops were joined. Must match the render or the seam positions are wrong.",
+                    "tooltip": "How many hops were joined. Ignored when info is wired.",
                 }),
                 "overlap": ("INT", {
                     "default": 22, "min": 1, "max": 4096,
-                    "tooltip": "Frames trimmed at each join. 22 = the 0.9 s default; 5 = 0.2 s; 39 = 1.6 s.",
+                    "tooltip": "Frames trimmed at each join. Ignored when info is wired.",
                 }),
                 "window": ("INT", {
                     "default": 6, "min": 1, "max": 120,
-                    "tooltip": "Frames averaged either side of the cut. Wider is steadier but folds in more real scene change.",
+                    "tooltip": "Frames averaged on each side of a join.",
                 }),
             },
             "optional": {
@@ -254,15 +254,7 @@ class HTCSeamReport:
                 # existed keeps reading its three numbers out of the right slots.
                 "info": ("STRING", {
                     "forceInput": True,
-                    "tooltip": (
-                        "The chain's `info` output. Wire it and this node "
-                        "reads the join frames the render actually wrote, so "
-                        "hops and overlap below are ignored and cannot go "
-                        "stale. Leave it unwired and they are used as before. "
-                        "Wiring it is not just convenience: a chain containing "
-                        "an anchor=restart hop has no single hop length to "
-                        "solve for, and the numbers below cannot describe it."
-                    ),
+                    "tooltip": "The chain's info output. Wire it so the join positions are exact.",
                 }),
             },
         }

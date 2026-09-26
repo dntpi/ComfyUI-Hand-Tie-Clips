@@ -523,31 +523,20 @@ class HTCToneCompensate:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "source": ("IMAGE", {"tooltip": "The previous segment. The whole thing is fine -- only its last `overlap` frames are read."}),
-                "target": ("IMAGE", {"tooltip": "The generated segment to correct."}),
+                "source": ("IMAGE", {"tooltip": "The earlier clip."}),
+                "target": ("IMAGE", {"tooltip": "The clip to correct."}),
                 "mode": (MODES, {
                     "default": "frame_shift",
-                    "tooltip": (
-                        "frame_shift: per-frame additive shift. gain_bias: global "
-                        "affine, robust. lut: tone curve, captures nonlinear drift -- "
-                        "measured indistinguishable from gain_bias, not the overfitter "
-                        "this once claimed. On a measured 3-hop chain frame_shift was "
-                        "the WEAKEST correction of the four. "
-                        "anchor behaves as frame_shift HERE -- its chain-wide half needs "
-                        "hop 1's statistics, which only HandTieClips carries."
-                    ),
+                    "tooltip": ("How to correct. frame_shift shifts each frame; gain_bias and lut match the "
+                                "overall tone; anchor works like frame_shift on this node."),
                 }),
                 "overlap": ("INT", {
                     "default": DEFAULT_OVERLAP, "min": 1, "max": 4096,
-                    "tooltip": (
-                        "Number of keyframe frames: last `overlap` of source vs first "
-                        "`overlap` of target. Must equal the keyframe count used for "
-                        "generation (22 = 0.9 s @ 24 fps), NOT the whole segment."
-                    ),
+                    "tooltip": "Frames the two clips share at the join. 22 matches the chain's default.",
                 }),
                 "lut_bins": ("INT", {
                     "default": 64, "min": 16, "max": 512,
-                    "tooltip": "Aggregation bins for lut mode. Ignored otherwise.",
+                    "tooltip": "Detail of the tone curve in lut mode.",
                 }),
             }
         }

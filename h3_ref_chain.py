@@ -2332,32 +2332,31 @@ class HandTieClips:
                         "They sit at a table, look up, and speak one short line. "
                         "Then they settle, watching the room."
                     ),
-                    "tooltip": (
-                        "Hop 1 prompt. Separate hops with --- on its own line, "
-                        "or JSON {\"prompts\": [...]}. hop_script=verbatim: one block "
-                        "+ chains>1 wraps later hops. hop_script=next: later --- blocks "
-                        "are only 'what happens next'."
-                    ),
+                    "tooltip": ("The prompt when no shot plan is set. Separate hops with --- on its own "
+                                "line."),
                 }),
                 "chains": (["1", "2", "3", "4", "5", "6", "7", "8"], {
                     "default": "3",
-                    "tooltip": "How many generates to run and join. 3 at 10 s is about 28 s of master after the overlap trim.",
+                    "tooltip": ("How many hops to render when no shot plan is set. With a plan, the shot "
+                                "count decides."),
                 }),
                 "resolution": (list(RESOLUTIONS), {
                     "default": DEFAULT_RESOLUTION,
-                    "tooltip": "Output area. 0.98 MP is the top rung because H3 caps at 768x1344 (1.03 MP); 16:9 there is 1312x736. Every size is snapped to H3's 32 px grid and kept under the cap.",
+                    "tooltip": "Output size, as an area. 0.98 MP is the largest H3 supports.",
                 }),
                 "aspect": (list(ASPECTS), {
                     "default": DEFAULT_ASPECT,
-                    "tooltip": "Frame shape. Combined with resolution to set width and height. Widest first, then square, then the portraits.",
+                    "tooltip": "Frame shape. Sets width and height together with resolution.",
                 }),
                 "duration": (["5 s", "7 s", "8 s", "10 s", "15 s"], {
                     "default": "10 s",
-                    "tooltip": "Length of each hop at 24 fps (H3 17k+5 grid: 124 / 192 / 243 / 362 frames). 5 s (124f) drops the airlock on a continuous join; use 8 s or 15 s to validate a seam.",
+                    "tooltip": ("Length of each hop. A shot can set its own. Judge joins at 8 s or longer; "
+                                "5 s is too short to show them."),
                 }),
                 "overlap": (["0.9 s", "0.2 s", "1.6 s"], {
                     "default": "0.9 s",
-                    "tooltip": "Pinned clip from the previous hop at frame 0. 0.9 s (22 frames) is the native continuation length.",
+                    "tooltip": ("How much of the previous hop each hop continues from. 0.9 s is the default "
+                                "and usually right."),
                 }),
                 "seed": ("INT", {
                     "default": 0, "min": 0, "max": 0xffffffffffffffff,
@@ -2369,21 +2368,15 @@ class HandTieClips:
                     "label_off": "same seed every hop",
                 }),
                 "steps": ("INT", {"default": 14, "min": 1, "max": 50, "tooltip":
-                    "Video tolerates a low count; GENERATED AUDIO DOES NOT. "
-                    "Measured single-hop at 576p, seed pinned: 6 -> 10 steps "
-                    "cut the voice's spectral flatness 15% (less noise, more "
-                    "harmonic) and raised voiced share 83 -> 87%, while "
-                    "laplacian texture did not move. Most of it lands by 10. "
-                    "Audio gets no second pass -- refine_audio=freeze keeps "
-                    "the refine off the audio stream -- so this widget alone "
-                    "sets voice quality. Put `steps` on the speaking shots in "
-                    "the plan to pay for voice only where there is a voice."}),
+                    ("Sampling steps per hop. A shot can set its own. 8 for a turbo LoRA; more "
+                     "steps mostly improve generated speech.")}),
                 "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "res_multistep"}),
                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "beta"}),
                 "shift_video": ("FLOAT", {"default": 12.0, "min": 0.01, "max": 100.0, "step": 0.01}),
                 "shift_audio": ("FLOAT", {"default": 3.0, "min": 0.01, "max": 100.0, "step": 0.01}),
                 "ref_image_size": (["match", "max"], {
-                    "tooltip": "match = faster. max = 2048 short-edge identity, slower every step.",
+                    "tooltip": ("How large reference pictures go in. match is faster; max keeps more face "
+                                "detail but is slower."),
                 }),
             },
             "optional": {
@@ -2396,130 +2389,63 @@ class HandTieClips:
                 # the saved-workflow format.
                 "hop_script": (["verbatim", "next"], {
                     "default": "verbatim",
-                    "tooltip": (
-                        "verbatim: your text is the hop prompt. next: hop 1 is the first "
-                        "block; every later block is only the new beat. One block + next: "
-                        "hops 2+ advance without replaying the opening."
-                    ),
+                    "tooltip": ("Only without a shot plan. next: later hops get only the new part of the "
+                                "prompt. verbatim: every hop gets its text as written."),
                 }),
                 "pin_to_qwen": (["off", "last frame", "pin clip", "both"], {
                     "default": "last frame",
-                    "tooltip": (
-                        "AddGuide is invisible to the text encoder. last frame = "
-                        "<Picture 1> of the previous hop's last frame (identity stills "
-                        "shift to Picture 2+). pin clip = overlap as extra <Video>. "
-                        "Voice stays <Audio 1>."
-                    ),
+                    "tooltip": ("Shows the text encoder where the previous hop ended. last frame (default) "
+                                "adds its last frame as a picture; pin clip adds the overlap as a short "
+                                "video."),
                 }),
                 "continuity_state": ("STRING", {
                     "multiline": True,
                     "default": "",
                     "forceInput": True,
-                    "tooltip": (
-                        "Optional JSON continuity state from HTCContinuityState (or a String "
-                        "Primitive node for hand-typed JSON). hop_script=next only: locked + "
-                        "context text rides every hop 2+, mutable beats are indexed per hop. "
-                        "Unwired = no effect."
-                    ),
+                    "tooltip": ("Optional text from HTC Continuity State. The reference register replaces "
+                                "it; leave unwired."),
                 }),
                 "shot_plan": ("STRING", {
                     "multiline": True,
                     "default": "",
-                    "tooltip": (
-                        "Shot plan JSON: {\"shots\":[{\"beat\":\"...\","
-                        "\"directives\":{\"join\":\"continuous\"}}, ...]}. "
-                        "The shot count is the hop count, so `chains` is ignored. "
-                        "Directives compile to vetted continuity prose; `prose` per shot "
-                        "is appended verbatim. Blank = use the `prompt` widget instead."
-                    ),
+                    "tooltip": "The shot list, written by the SCRIPT tab. One shot per hop.",
                 }),
                 "ref_plan": ("STRING", {
                     "multiline": True,
                     "default": "",
-                    "tooltip": (
-                        "Reference register JSON: {'refs':[{'tag':'hero_face',"
-                        "'file':'face.png','subject':1,'retention':'fully_preserved'}]}. "
-                        "'file' is a picture in the reference folder, chosen in the panel. "
-                        "Beats refer to refs by @tag, resolved to the correct "
-                        "<Picture N> per hop, so removing or scheduling off a ref "
-                        "never renumbers the others. Refs sharing a 'subject' are "
-                        "the same person; different numbers stay different people. "
-                        "Blank = positional behaviour: refs are read in slot order."
-                    ),
+                    "tooltip": ("The reference list, written by the REFS tab. Beats cite each reference by "
+                                "@tag."),
                 }),
                 "cache_hops": (["off", "on"], {
                     "default": "off",
-                    "tooltip": (
-                        "Store each hop losslessly on disk, keyed by a chained "
-                        "content hash. Unchanged hops load instead of re-rendering, "
-                        "so editing only the last shot re-renders only that shot, "
-                        "and an interrupted chain resumes. Editing an early shot "
-                        "correctly invalidates every hop after it."
-                    ),
+                    "tooltip": ("Keep each rendered hop on disk. Unchanged hops load instead of "
+                                "re-rendering. Needed for retakes, render_from and the TIMELINE film."),
                 }),
                 "cache_budget_gb": ("FLOAT", {
                     "default": 20.0, "min": 1.0, "max": 500.0, "step": 1.0,
-                    "tooltip": "Least-recently-used hops are evicted above this size.",
+                    "tooltip": "Disk space for cached hops. The oldest are removed above this.",
                 }),
                 "audio_pin_frames": ("INT", {
                     "default": 24, "min": 0, "max": 240, "step": 24,
-                    "tooltip": (
-                        "Audio context handed to the Motion-Context pin, in frames. "
-                        "24 is one second and lands on the model's 40 Hz audio grid; "
-                        "multiples of 24 keep whole seconds. Longer audio context "
-                        "costs conditioning rows but NO delivered frames, so it is "
-                        "the cheap lever on speech that breaks across a join -- try "
-                        "96 (4 s) for continuous dialogue. 0 follows the picture "
-                        "overlap. Video pin length is not adjustable here: it "
-                        "follows the overlap widget."
-                    ),
+                    "tooltip": ("How much of the previous hop's sound each hop continues from, in frames "
+                                "(24 = 1 s). Raise it for dialogue that runs across joins. 0 matches the "
+                                "overlap."),
                 }),
                 "pin_renorm": (["off", "band"], {
                     "default": "off",
-                    "tooltip": (
-                        "Rescale each pinned latent back toward the first pinned "
-                        "hop's, to fight the texture ratchet -- measured at +4.2% "
-                        "mid-band per join, flat inside each hop. Both modes are "
-                        "scalar rescales, so neither moves structure or can blur "
-                        "detail. "
-                        "band: match the HIGH-BAND FRACTION, the statistic the "
-                        "ratchet actually moves. "
-                        "sigma: match total spread -- the original lever, kept "
-                        "for old workflows, and measurably the wrong statistic: "
-                        "total sigma FALLS across a chain whose picture is "
-                        "baking, so it corrects the wrong way. Saved as `on` "
-                        "before 0.5. "
-                        "off leaves every pin untouched. The log prints "
-                        "`pin drift` every hop either way, so you can read the "
-                        "ratchet without changing anything."
-                    ),
+                    "tooltip": ("Counters the fine detail that builds up at each join. band applies it; off "
+                                "leaves the join as generated."),
                 }),
                 "pin_noise": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 0.10, "step": 0.005,
-                    "tooltip": (
-                        "Mix seeded noise into the pinned latent before it "
-                        "conditions the next hop -- the other half of the texture "
-                        "ratchet fix. Small values only: measured gains fall off "
-                        "and reverse above 0.10, which is why the range stops "
-                        "there. 0.0 leaves the pin untouched; 0.05 is the "
-                        "suggested starting point."
-                    ),
+                    "tooltip": ("Adds a little noise to the join, another way to stop detail building up. "
+                                "Try 0.05; 0 is off."),
                 }),
                 "tone_compensate": (_tone.MODES, {
                     "default": "off",
-                    "tooltip": (
-                        "Undo the denoiser's tone bias on each hop, measured on the "
-                        "overlap that hop regenerated. The estimate needs both copies "
-                        "of the overlap, which only exist inside this node -- a "
-                        "downstream node cannot do this. Enabling any mode also "
-                        "clamps the master to 0..1. "
-                        "MEASURED on a 3-hop chain, mean seam step against off "
-                        "(2.36/255): anchor 0.68, gain_bias 0.76, lut 0.77, "
-                        "frame_shift 1.35. anchor is the one to reach for. Every "
-                        "mode OVERSHOOTS -- an uncorrected seam brightens, a "
-                        "corrected one darkens -- and none of them fixes the FIRST "
-                        "join, which all four overshoot by a similar margin."
-                    ),
+                    "tooltip": ("Evens out the brightness shift between hops. anchor holds the whole chain "
+                                "to one look; the other modes correct each join; off leaves hops as "
+                                "rendered."),
                 }),
                 # ---------------------------------------------------------
                 # APPEND-ONLY ZONE. `widgets_values` in a saved workflow is a
@@ -2540,20 +2466,15 @@ class HandTieClips:
                 # ---------------------------------------------------------
                 "start_image_file": ("STRING", {
                     "default": "",
-                    "tooltip": "First-frame pin for hop 1 only. Set in the panel.",
+                    "tooltip": "A picture for hop 1 to start on. Set it on the MEDIA tab.",
                 }),
                 "reference_video_file": ("STRING", {
                     "default": "",
-                    "tooltip": "Motion/look plate. Not the previous hop. Set in the panel.",
+                    "tooltip": "A clip to borrow motion or look from. Set it on the MEDIA tab.",
                 }),
                 "voice_file": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "Voice or timbre reference for hop 1, cited as <Audio 1>. "
-                        "Later hops use the audio pin instead -- an uncited "
-                        "timbre clip on a quiet hop fills leftover frames with "
-                        "that recording. Set in the panel."
-                    ),
+                    "tooltip": "A voice sample, cited as <Audio 1>. Set it on the MEDIA tab.",
                 }),
                 # Appended here on 2026-08-29, per the note above: LAST, so
                 # every saved workflow keeps its widget alignment and simply
@@ -2564,70 +2485,32 @@ class HandTieClips:
                     # on the node body -- and one sentence in a one-line box is
                     # discoverable where a multiline textarea would be a slab.
                     "default": _d.ESTABLISH,
-                    "tooltip": (
-                        "Opening line prepended to hop 1 only, before the beat. "
-                        "The default asserts live action; clear it, or replace it "
-                        "with your own medium, for anything else. Dropped "
-                        "automatically when shot 1 already names a medium."
-                    ),
+                    "tooltip": ("A line added at the start of hop 1. The default says live action; change "
+                                "it for another style, or clear it."),
                 }),
                 # Appended 2026-08-30, still obeying the append-only rule above.
                 "render_through": ("INT", {
                     "default": 0, "min": 0, "max": 64,
-                    "tooltip": (
-                        "Stop after this many hops. 0 renders the whole plan. "
-                        "With cache_hops=on the hops you already rendered are "
-                        "kept, so 3 then 5 then 8 builds a chain up in stages "
-                        "and only ever renders the new hops. The plan is not "
-                        "changed -- shot 4 still knows it is shot 4."
-                    ),
+                    "tooltip": "Stop after this hop. 0 renders every hop.",
                 }),
                 "quality": (["final", "draft"], {
                     "default": "final",
-                    "tooltip": (
-                        "draft forces 0.3 MP and 6 steps for a fast structural "
-                        "read of the whole chain -- does the story hold, do the "
-                        "joins land. Resolution and steps are both in the cache "
-                        "key, so drafts and finals never overwrite each other; "
-                        "they simply cost two entries."
-                    ),
+                    "tooltip": ("draft renders small and fast to check the story and the joins. final is "
+                                "the real render."),
                 }),
                 "dry_run": (["off", "on"], {
                     "default": "off",
-                    "tooltip": (
-                        "Compile every hop's prompt and stop -- no sampling, no "
-                        "model, seconds not minutes. Read them on `info`, or as "
-                        "a page on `contact_sheet`. This is the only way to see "
-                        "what the text encoder will actually receive before "
-                        "paying for it."
-                    ),
+                    "tooltip": ("Build every prompt without rendering, to check what each hop will send. "
+                                "Read them on the info output."),
                 }),
                 "contact_sheet": (["off", "on"], {
                     "default": "off",
-                    "tooltip": (
-                        "Build the `contact_sheet` output: one row per hop with "
-                        "its first and last delivered frame, its beat, its "
-                        "directives and what happened to it. Wire it to a Save "
-                        "Image. Always built during a dry run."
-                    ),
+                    "tooltip": "Also output an image with each hop's first and last frame and its beat.",
                 }),
                 "tone_anchor": ("FLOAT", {
                     "default": _tone.ANCHOR_STRENGTH, "min": 0.0, "max": 1.0, "step": 0.05,
-                    "tooltip": (
-                        "Strength of tone_compensate=anchor's pull back toward "
-                        "hop 1's look -- its L* level, its a*/b* colour and its "
-                        "L* spread. Ignored by every other mode. 0 disables the "
-                        "pull and leaves plain frame_shift; 0.35 closes about a "
-                        "third of the gap per hop, which arrests a long slide "
-                        "without visibly pumping. Raise it to 0.6-0.8 for long "
-                        "chains that grey out: a measured 9-hop study lost a "
-                        "fifth of its chroma by the end, and 0.35 only slows "
-                        "that. Costs about 15 s per 15 s hop at 1344x768: the "
-                        "measurement is in Lab, which is a colour-space round "
-                        "trip over every frame. A shot can opt out with "
-                        "\"tone\": \"free\" or move the anchor to itself with "
-                        "\"tone\": \"rebase\"."
-                    ),
+                    "tooltip": ("How strongly anchor pulls each hop back to the reference look. 0.35 is "
+                                "gentle; raise it if a long chain fades."),
                 }),
                 # APPENDED, never inserted -- the same rule the ref sockets at
                 # the top of this block were deleted for. `widgets_values` is a
@@ -2636,62 +2519,32 @@ class HandTieClips:
                 # reads its own settings out of the wrong slots. Silently: the
                 # numbers all still parse, they are just the wrong numbers.
                 "soundtrack": ("AUDIO", {
-                    "tooltip": (
-                        "Optional music bed under the whole chain, mixed in once "
-                        "after the last hop is joined. A mix, not a replacement: "
-                        "H3's own dialogue and effects stay. Wire a Load Audio, "
-                        "or anything with an AUDIO output. Unwired, the audio "
-                        "output is untouched."
-                    ),
+                    "tooltip": "Optional music under the whole chain, mixed in at the end.",
                 }),
                 "music_gain_db": ("FLOAT", {
                     "default": -14.0, "min": -60.0, "max": 6.0, "step": 0.5,
-                    "tooltip": (
-                        "Level of the bed against the generated audio. -14 sits "
-                        "a track under speech without fighting it; -6 is a "
-                        "music-led cut. Push it far enough and the peak guard "
-                        "trims the whole mix rather than let it clip -- which it "
-                        "says in `info` rather than doing quietly."
-                    ),
+                    "tooltip": "Music level. -14 sits under speech; -6 is music-led.",
                 }),
                 "music_duck": ("FLOAT", {
                     "default": 0.6, "min": 0.0, "max": 1.0, "step": 0.05,
-                    "tooltip": (
-                        "Pull the bed down while anyone is talking and let it "
-                        "back up in the gaps. 0 is off: a flat bed at "
-                        "music_gain_db and nothing else. 0.6 drops it about 8 dB "
-                        "under speech, which is what keeps dialogue intelligible "
-                        "under a loud track. Fast attack, slow release, no "
-                        "model -- same result every run."
-                    ),
+                    "tooltip": "Lowers the music while someone speaks. 0 is off; 0.6 keeps speech clear.",
                 }),
                 "music_fit": (["loop", "once"], {
                     "default": "loop",
-                    "tooltip": (
-                        "loop: repeat the track to cover the chain, crossfading "
-                        "each wrap so it cannot click. once: play it through and "
-                        "leave silence after. A track longer than the chain is "
-                        "trimmed either way."
-                    ),
+                    "tooltip": ("loop repeats the track to fill the chain; once plays it through and then "
+                                "stops."),
                 }),
                 "music_fade_s": ("FLOAT", {
                     "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.25,
-                    "tooltip": (
-                        "Seconds of fade on the bed at the start and end of the "
-                        "finished chain, so it neither begins on a cut nor stops "
-                        "on a dropout. Also sets the loop crossfade length."
-                    ),
+                    "tooltip": "Fade in and out at the start and end of the music, in seconds.",
                 }),
                 # The picker's half of the soundtrack, and the one most people
                 # use. Same shape as voice_file: a basename under h3_refs, set
                 # in the panel. LAST, per the note at the top of this block.
                 "soundtrack_file": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "Music bed as a filename, set in the panel next to the "
-                        "voice reference. The `soundtrack` socket wins when both "
-                        "are set."
-                    ),
+                    "tooltip": ("A music file for the soundtrack. Set it on the MEDIA tab. A wired "
+                                "soundtrack wins."),
                 }),
                 # Trim windows, appended 2026-09-01 -- LAST, per the note at
                 # the top of this block. Six floats rather than one JSON blob
@@ -2705,110 +2558,48 @@ class HandTieClips:
                 # media.clip_window is the single definition of what they mean.
                 "voice_start_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": (
-                        "Trim window into the voice reference, in seconds. Leave both at 0 for "
-                        "the whole file; an end of 0 always means "
-                        "'to the end', so a longer replacement file "
-                        "still plays out. "
-                        "Worth setting: H3 encodes the WHOLE voice file into the "
-                        "conditioning with no cap, and every latent frame of it "
-                        "is attended over on every step of every hop. A "
-                        "three-minute take is a large invisible tax."
-                    ),
+                    "tooltip": ("Where the voice sample starts, in seconds. Leave both at 0 to use its "
+                                "first 8 s."),
                 }),
                 "voice_end_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "End of the voice window. 0 = to the end of the file.",
+                    "tooltip": "Where the voice sample ends, in seconds. 0 is the end of the file.",
                 }),
                 "reference_video_start_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": (
-                        "Trim window into the reference clip, in seconds. Leave both at 0 for "
-                        "the whole file; an end of 0 always means "
-                        "'to the end', so a longer replacement file "
-                        "still plays out. "
-                        "H3 already truncates the clip to the hop length, but "
-                        "only from frame 0 -- so without this there is no way to "
-                        "point at the motion you actually want."
-                    ),
+                    "tooltip": "Where the reference clip starts, in seconds.",
                 }),
                 "reference_video_end_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "End of the reference clip window. 0 = to the end.",
+                    "tooltip": "Where the reference clip ends, in seconds. 0 is the end.",
                 }),
                 "music_start_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": (
-                        "Trim window into the soundtrack, in seconds. Leave both at 0 for "
-                        "the whole file; an end of 0 always means "
-                        "'to the end', so a longer replacement file "
-                        "still plays out. "
-                        "The window is cut from the TRACK first; music_fit then "
-                        "loops or trims that to the chain. Without it a mastered "
-                        "track always starts the chain on its intro."
-                    ),
+                    "tooltip": "Where the music starts in the file, in seconds.",
                 }),
                 "music_end_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "End of the soundtrack window. 0 = to the end.",
+                    "tooltip": "Where the music ends in the file, in seconds. 0 is the end.",
                 }),
                 # Appended 2026-09-03 -- LAST, per the note at the top of this
                 # block. `render_through` has been here since 0.4 and stops the
                 # chain; this is the other end of the same range.
                 "render_from": ("INT", {
                     "default": 0, "min": 0, "max": 64,
-                    "tooltip": (
-                        "Start at this hop instead of hop 1. 0 starts at the "
-                        "beginning. Everything before it is replayed from the "
-                        "hop cache rather than rendered, so re-running one shot "
-                        "in the middle of a long chain costs that shot. "
-                        "Needs cache_hops=on, and every earlier hop must "
-                        "already be in the cache -- it names the first one that "
-                        "is not rather than guessing at the join. Pair it with "
-                        "render_through to render a range."
-                    ),
+                    "tooltip": ("Start rendering at this hop; earlier hops load from the cache. 0 starts at "
+                                "hop 1. Needs cache_hops on."),
                 }),
                 "reference_video_desc": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "What the reference clip is for, in your words -- "
-                        "\"a slow dolly along a counter\", \"the way she turns "
-                        "and looks back\". The clip goes in as <Video 1> either "
-                        "way; this is the only thing that tells the encoder "
-                        "why it is there, and a reference the prompt never "
-                        "explains tends to get rendered as the shot. Leave it "
-                        "empty and the prompt is exactly what it was."
-                    ),
+                    "tooltip": ("What the reference clip is for, in a few words, e.g. \"a slow dolly along "
+                                "the counter\". Without it the model may copy the clip outright."),
                 }),
                 # Appended 2026-09-03 -- LAST, per the note at the top of this
                 # block.
                 "reference_video_size": (list(_media.VIDEO_SIZES), {
                     "default": _media.DEFAULT_VIDEO_SIZE,
-                    "tooltip": (
-                        "How large to decode the reference clip, as an area "
-                        "budget. MAX asks core what it would resize the clip "
-                        "to anyway, so the model sees the same pixels and the "
-                        "memory is not spent -- a 10 s 4K plate costs about "
-                        "36 GB of system RAM decoded at source and about "
-                        "4.5 GB at MAX. The megapixel values go below that, "
-                        "trading reference detail for memory. A clip already "
-                        "smaller than the value you pick is left alone; "
-                        "nothing here ever scales up. Megapixels are decimal "
-                        "here -- 0.5 MP is 500,000 pixels, whatever the clip's "
-                        "aspect ratio, which is the point of budgeting by area "
-                        "rather than by edge. "
-                        "It is also an INFLUENCE dial, not only a memory one. "
-                        "Area sets how many tokens the clip costs, and that is "
-                        "how loudly it speaks: core aligns reference frame N "
-                        "with output frame N, so wherever the clip shows a "
-                        "clear face it competes with your identity stills for "
-                        "that same face. At MAX it wins. An identity swap that "
-                        "only takes hold part-way through the hop -- the "
-                        "clip's person at the start, yours once the "
-                        "clip's face is obscured -- is this, and 0.3 MP "
-                        "fixed it on a measured case. Lower it when "
-                        "identity matters more than the clip's detail."
-                    ),
+                    "tooltip": ("How large the reference clip is decoded. Lower saves memory and makes the "
+                                "clip influence the result less, which helps when it fights your faces."),
                 }),
                 # APPENDED, never inserted. `widgets_values` is a bare ordered
                 # array matched to this schema by index, so a widget added
@@ -2817,38 +2608,14 @@ class HandTieClips:
                 # safe; adding a widget is not.
                 "pin_mech": (["auto", "motion_context", "addguide"], {
                     "default": "auto",
-                    "tooltip": (
-                        "Which mechanism pins hops 2+ to the previous hop. "
-                        "auto = Motion-Context when the pack is installed, the "
-                        "overlap has a matching context_length and the previous "
-                        "hop left a sampler latent; AddGuide pixels otherwise. "
-                        "Forcing one does not fall back -- it fails with the "
-                        "reason, because a lever that silently becomes the "
-                        "other setting cannot be compared against it. "
-                        "motion_context: latent join, no decode/re-encode. "
-                        "addguide: re-encodes decoded pixels, which is itself a "
-                        "VAE round trip and may scrub differently. The "
-                        "mechanism is in the per-hop cache key, so switching "
-                        "re-renders hops 2+ and leaves hop 1 on disk."
-                    ),
+                    "tooltip": ("How hops are joined. auto uses Motion-Context when available, AddGuide "
+                                "otherwise. Forcing one fails rather than falling back."),
                 }),
                 # APPENDED, never inserted -- see the note above `pin_mech`.
                 "tone_anchor_ref": (["hop1", "still"], {
                     "default": "hop1",
-                    "tooltip": (
-                        "What tone_compensate=anchor pulls TOWARD. Ignored by "
-                        "every other mode. hop1 is the original behaviour: the "
-                        "chain holds whatever tone hop 1 rendered. still uses "
-                        "start_image instead, and pulls hop 1 as well -- which "
-                        "matters because hop 1 already misses the photograph "
-                        "before any relay has happened. A measured 9-hop study "
-                        "read the still at chroma 33.6 and hop 1 at 30, so a "
-                        "chain anchored on hop 1 is holding a target that is "
-                        "already short. Needs start_image_file set. Under the "
-                        "Motion-Context join the correction still only reaches "
-                        "the delivered frames, not the pin -- set "
-                        "pin_mech=addguide for it to feed back."
-                    ),
+                    "tooltip": ("What anchor holds the chain to. hop1 is the first hop's look; still is the "
+                                "start image, which needs start_image_file."),
                 }),
                 # APPENDED after pin_mech and tone_anchor_ref. Those two already
                 # shipped on this trunk; the 3x3 extra slots go last so existing
@@ -2858,77 +2625,51 @@ class HandTieClips:
                 # matched the 9 and passed exactly one of each of the others.
                 "reference_video_2_file": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "Reference clip 2 of 3. H3 takes three; this pack "
-                        "passed one until now. Cited as <Video 2> when every "
-                        "earlier slot is filled -- the numbering is dense, so "
-                        "clearing slot 2 renumbers slot 3. Decoded at the same "
-                        "reference video size as slot 1. Set in the panel."
-                    ),
+                    "tooltip": "A second reference clip. Set it on the MEDIA tab.",
                 }),
                 "reference_video_2_start_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim in, seconds, for reference clip 2.",
+                    "tooltip": "Where reference clip 2 starts, in seconds.",
                 }),
                 "reference_video_2_end_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim out, seconds, for reference clip 2. 0 = to the end.",
+                    "tooltip": "Where reference clip 2 ends, in seconds. 0 is the end.",
                 }),
                 "reference_video_3_file": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "Reference clip 3 of 3. H3 takes three; this pack "
-                        "passed one until now. Cited as <Video 3> when every "
-                        "earlier slot is filled -- the numbering is dense, so "
-                        "clearing slot 2 renumbers slot 3. Decoded at the same "
-                        "reference video size as slot 1. Set in the panel."
-                    ),
+                    "tooltip": "A third reference clip. Set it on the MEDIA tab.",
                 }),
                 "reference_video_3_start_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim in, seconds, for reference clip 3.",
+                    "tooltip": "Where reference clip 3 starts, in seconds.",
                 }),
                 "reference_video_3_end_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim out, seconds, for reference clip 3. 0 = to the end.",
+                    "tooltip": "Where reference clip 3 ends, in seconds. 0 is the end.",
                 }),
                 "voice_2_file": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "Voice reference 2 of 3, cited as <Audio 2>. H3 takes "
-                        "three standalone reference audios; this pack passed one "
-                        "until now. Dense numbering, so clearing slot 2 renumbers "
-                        "slot 3 -- and a beat that names an ordinal would then "
-                        "cite the wrong voice. Every reference audio is attended "
-                        "on every step of every hop, so trim them. Set in the panel."
-                    ),
+                    "tooltip": "A second voice sample. Set it on the MEDIA tab.",
                 }),
                 "voice_2_start_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim in, seconds, for voice 2.",
+                    "tooltip": "Where voice 2 starts, in seconds. Leave both at 0 to use its first 8 s.",
                 }),
                 "voice_2_end_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim out, seconds, for voice 2. 0 = to the end.",
+                    "tooltip": "Where voice 2 ends, in seconds. 0 is the end.",
                 }),
                 "voice_3_file": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "Voice reference 3 of 3, cited as <Audio 3>. H3 takes "
-                        "three standalone reference audios; this pack passed one "
-                        "until now. Dense numbering, so clearing slot 2 renumbers "
-                        "slot 3 -- and a beat that names an ordinal would then "
-                        "cite the wrong voice. Every reference audio is attended "
-                        "on every step of every hop, so trim them. Set in the panel."
-                    ),
+                    "tooltip": "A third voice sample. Set it on the MEDIA tab.",
                 }),
                 "voice_3_start_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim in, seconds, for voice 3.",
+                    "tooltip": "Where voice 3 starts, in seconds. Leave both at 0 to use its first 8 s.",
                 }),
                 "voice_3_end_s": ("FLOAT", {
                     "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.1,
-                    "tooltip": "Trim out, seconds, for voice 3. 0 = to the end.",
+                    "tooltip": "Where voice 3 ends, in seconds. 0 is the end.",
                 }),
                 # APPENDED, never inserted. Empty string leaves every existing
                 # path byte-identical: the lock is not called, the cache key
@@ -2937,65 +2678,21 @@ class HandTieClips:
                 # every hop lip-syncs to one continuous window of it.
                 "master_audio_file": ("STRING", {
                     "default": "",
-                    "tooltip": (
-                        "One continuous voice take every hop lip-syncs to. "
-                        "Basename under h3_refs. Empty = off, generated voice "
-                        "as before. When set: the take is sliced on the same "
-                        "clock as the picture (hop 1 starts at 0.00s), encoded "
-                        "on the 40 Hz audio-latent grid, and frozen with a "
-                        "noise_mask so only the picture is denoised. Delivered "
-                        "audio is a passthrough of this file, no VAE round "
-                        "trip. The beat still needs the words in "
-                        "<d>[English] ...</d> -- unmatched text can pull the "
-                        "mouth off the take. Changing the file invalidates "
-                        "the hop cache."
-                    ),
+                    "tooltip": ("One recorded take for the whole chain; the picture lip-syncs to it and the "
+                                "audio is used as-is. The beats still need the words. Empty is off."),
                 }),
                 "last_frame_guide": (["off", "before_restart", "still"], {
                     "default": "off",
-                    "tooltip": (
-                        "Pin start_image at a hop's last PIXEL frame "
-                        "(AddGuide frame_idx=-1), so the hop ENDS on the "
-                        "photograph. off = shipped behaviour, frame 0 only. "
-                        "before_restart = only on a hop whose NEXT shot is "
-                        "anchor=restart; that restart opens on the same "
-                        "photograph, so both sides of the cut meet on one "
-                        "image and it reads as a match cut rather than a "
-                        "jump. That is the recommended setting. "
-                        "still = every hop: the same benefit at the restart, "
-                        "but it overrides an authored framing directive at "
-                        "EVERY hop ending. A shot set framing=close plays "
-                        "close for six seconds, snaps to the still's wider "
-                        "framing in about 0.6 s, and the next hop pushes "
-                        "back in -- watched, that reads as the camera "
-                        "cutting in and out. Safe only when no shot authors "
-                        "a framing. Needs start_image_file. Does NOT become "
-                        "the next hop's frame 0; that is keyframe chaining, "
-                        "which this is not."
-                    ),
+                    "tooltip": ("Makes a hop end on the start image. before_restart does it only before a "
+                                "restart, so the cut matches; still does it on every hop."),
                 }),
                 # APPENDED 2026-09-09, LAST for the same reason as everything
                 # else down here: widgets_values is positional and a saved
                 # workflow reads it by index.
                 "voice_every_hop": (["off", "speaking", "on"], {
                     "default": "off",
-                    "tooltip": (
-                        "Whether voice 1-3 stay cited as <Audio 1..3> after "
-                        "hop 1. off = shipped behaviour, hop 1 only: later "
-                        "hops inherit the timbre through the audio pin, "
-                        "which drifts over a long chain. speaking = ride "
-                        "every hop whose beat has a spoken line, skip the "
-                        "quiet ones -- RECOMMENDED, and the setting that "
-                        "keeps one voice across a whole chain. on = ride "
-                        "every hop regardless. What off is protecting "
-                        "against: an uncited timbre clip on a hop with no "
-                        "line fills the leftover frames with that "
-                        "recording, which once put a 1.35 s male take into "
-                        "the last second of a hop whose written line "
-                        "followed a woman's face. That needs a QUIET hop, "
-                        "so speaking cannot reach it. Moves the cache key "
-                        "of every hop it changes."
-                    ),
+                    "tooltip": ("Whether the voice samples ride after hop 1. speaking (recommended) keeps "
+                                "them on hops with a spoken line; off is hop 1 only; on is every hop."),
                 }),
                 # APPENDED 2026-09-14 (the refine pass). Same rule again:
                 # widgets_values is positional, so these go LAST and nothing
@@ -3004,164 +2701,60 @@ class HandTieClips:
                 # it is on, so a workflow saved before today keys byte-identical.
                 "hop_refine": (["off", "full", "pin_only"], {
                     "default": "off",
-                    "tooltip": (
-                        "Re-sample each finished hop a second time at low "
-                        "denoise, to put back the texture the chain loses. "
-                        "off = shipped behaviour, one sampler pass. "
-                        "full = the refined latent is what ships AND what the "
-                        "next hop continues. pin_only = the refine is handed "
-                        "forward as the next hop's teacher but not one "
-                        "delivered pixel of THIS hop moves, so the cost lands "
-                        "on the chain and not on the picture; skipped on the "
-                        "last hop, which teaches nobody. Targets same-frame "
-                        "consistency -- limits over a long chain are still "
-                        "being characterised. Moves every hop's cache key, "
-                        "including hop 1's, because the refine runs after "
-                        "every sampler."
-                    ),
+                    "tooltip": ("A light second pass on each hop to restore texture. full ships the refined "
+                                "result; pin_only uses it only for the next hop's join; off skips it."),
                 }),
                 "refine_denoise": ("FLOAT", {
                     "default": 0.50, "min": 0.05, "max": 1.0, "step": 0.05,
-                    "tooltip": (
-                        "How far back toward noise the second pass starts. "
-                        "0.50 is the published value. At H3's shift=12.0 this "
-                        "is coarser than it reads: 0.7, 0.8 and 0.9 all "
-                        "collapse to the same two-sigma schedule, so the dial "
-                        "does its real work below ~0.6. Measured across three "
-                        "runs the seam cost does NOT track this number -- 0.20 "
-                        "and 0.50 both land at 2.4-2.8x -- so do not reach "
-                        "here first when a join looks wrong; reach for "
-                        "refine_blend."
-                    ),
+                    "tooltip": "How much the second pass changes. 0.5 is the usual value.",
                 }),
                 "refine_steps": ("INT", {
                     "default": 2, "min": 0, "max": 40,
-                    "tooltip": (
-                        "Steps in the second pass. 0 = the same count the hop "
-                        "sampled at. 2 is the published value and it is the "
-                        "lever that actually separates the good runs from the "
-                        "bad ones: at shift 12 / denoise 0.50 the schedule is "
-                        "[0.9231, 0.8000, 0] and the pass is deliberately "
-                        "under-converged -- it perturbs the texture without "
-                        "re-deciding the picture. 3 already looks like a "
-                        "different shot."
-                    ),
+                    "tooltip": "Steps in the second pass. 2 is the usual value; 0 uses the hop's steps.",
                 }),
                 "refine_sampler": (["same"] + comfy.samplers.KSampler.SAMPLERS, {
                     "default": "same",
-                    "tooltip": (
-                        "Sampler for the second pass. same = whatever the hop "
-                        "used. The best pairing measured so far is a plain "
-                        "base sampler with res_multistep here."
-                    ),
+                    "tooltip": "Sampler for the second pass. same uses the hop's.",
                 }),
                 "refine_scheduler": (["same"] + comfy.samplers.KSampler.SCHEDULERS, {
                     "default": "simple",
-                    "tooltip": (
-                        "Scheduler for the second pass. It is in the sigma "
-                        "cache key, so flipping it really does rebuild the "
-                        "schedule rather than re-serving the first one."
-                    ),
+                    "tooltip": "Scheduler for the second pass. same uses the hop's.",
                 }),
                 "refine_cond": (["base", "hop"], {
                     "default": "base",
-                    "tooltip": (
-                        "What the second pass is pulled toward. base = the "
-                        "conditioning as Ref2VA built it, before any pin or "
-                        "guide -- the references and the text, nothing about "
-                        "the join. hop = the same pinned conditioning the hop "
-                        "sampled under, which re-asserts the pin on a picture "
-                        "that has already left it."
-                    ),
+                    "tooltip": ("What the second pass follows. base is the prompt and references; hop also "
+                                "includes the join."),
                 }),
                 "refine_model": ("MODEL", {
-                    "tooltip": (
-                        "Optional. A DIFFERENT model for the second pass, e.g. "
-                        "an undistilled base when the chain itself runs turbo. "
-                        "Unwired = refine on the same model the hop sampled "
-                        "with. Gets its own guider, since the hop's is bound "
-                        "to the hop's model. Fingerprinted into the hop key."
-                    ),
+                    "tooltip": ("Optional different model for the second pass, e.g. an undistilled base "
+                                "under a turbo chain."),
                 }),
                 "refine_audio": (["freeze", "refine"], {
                     "default": "freeze",
-                    "tooltip": (
-                        "freeze = the audio stream is masked out of the second "
-                        "pass, so audio leaves a refine chain bit-identical to "
-                        "a no-refine one. RECOMMENDED and measured: the refine "
-                        "has nothing to gain on audio (it exists to fix "
-                        "texture, which is a picture property) and re-cooking "
-                        "it made the voice strained across three runs. Held on "
-                        "EVERY hop including hop 1, because hop 1's voice is "
-                        "what every later hop's pin continues. refine = let "
-                        "the second pass touch audio too; kept for the A/B."
-                    ),
+                    "tooltip": ("freeze (recommended) leaves the sound untouched by the second pass; refine "
+                                "lets it change the audio too."),
                 }),
                 "refine_blend": ("STRING", {
                     "default": _rblend.AUTO, "multiline": False,
-                    "tooltip": (
-                        "frame:weight keyframes deciding which frames ship the "
-                        "raw sample (0) and which ship the refined one (1). "
-                        "'auto' derives them from THIS run's overlap -- raw "
-                        "across the pin, then crossing to fully refined over "
-                        "the 22 frames after it -- so the join continues a hop "
-                        "that was sampled the same way it was, which is the "
-                        "measured seam cost of refining. At the default 0.9 s "
-                        "overlap that is exactly '0:0, 22:0, 44:1', the "
-                        "published ramp; at 0.2 s or 1.6 s the literal string "
-                        "would hold the wrong frames, which is why auto exists. "
-                        "Type your own pairs to override. Frames are mapped "
-                        "onto the latent grid through H3's real (1,4,4,4,4) "
-                        "token cycle and read off this render's own length, "
-                        "not off a duration widget. Empty = no blend, the "
-                        "refine ships whole."
-                    ),
+                    "tooltip": ("Which frames use the second pass. auto keeps the start of each hop as "
+                                "generated so joins stay clean. Empty uses the second pass everywhere."),
                 }),
                 "refine_blend_interp": (["linear", "smooth", "step"], {
                     "default": "linear",
-                    "tooltip": (
-                        "How the blend moves between keyframes. linear is what "
-                        "the published run used. smooth eases both ends; step "
-                        "holds each key until the next one, which is a hard "
-                        "switch and mostly a diagnostic."
-                    ),
+                    "tooltip": "How refine_blend changes between its points. linear is the usual choice.",
                 }),
                 "refine_head": (["refine", "freeze"], {
                     "default": "refine",
-                    "tooltip": (
-                        "The OTHER way to keep the join stock, kept for the "
-                        "A/B against refine_blend. freeze masks the pinned "
-                        "head out of the second pass instead of lerping it "
-                        "back afterwards, with a 2-step ramp that stays inside "
-                        "the head so no delivered frame gets a partial "
-                        "denoise. It kills the seam flash and wins on the "
-                        "face; the grain cost is real and is invisible on "
-                        "bokeh. Only hops 2+ have a head. Off-grid overlaps "
-                        "have no whole number of latent steps to freeze and "
-                        "say so in the log."
-                    ),
+                    "tooltip": ("Another way to keep joins clean: freeze leaves each hop's opening out of "
+                                "the second pass. refine includes it."),
                 }),
                 # APPENDED 2026-09-15 (the speed preset). Last slot again, for
                 # the same positional reason: nothing above it moves.
                 "speed_mode": (["regular", "turbo"], {
                     "default": "regular",
-                    "tooltip": (
-                        "Which base is on the wire -- DECLARED, because nothing "
-                        "here can detect it. A ModelPatcher carries no name. "
-                        "regular = the refine widgets are used exactly as they "
-                        "read. turbo = a distilled few-step base, and the "
-                        "refine block takes the preset's values instead, with "
-                        "every override named in the log beside the value the "
-                        "widget read. It makes no parity claim: on matched runs "
-                        "at a pinned seed a turbo base measured junction MAE "
-                        "8.40-10.85 and CLIMBING against 2.07-4.02 flat for a "
-                        "plain hybrid over 9-10 hops, with the turbo "
-                        "checkpoint in the base loader only -- so it compounds "
-                        "through the conditioning path, and the preset reduces "
-                        "that rather than undoing it. It reaches the hop key "
-                        "only through the refine fields it moves, so with "
-                        "hop_refine=off it is inert."
-                    ),
+                    "tooltip": ("Set turbo when a turbo model or LoRA is on the wire; nothing detects it. "
+                                "It adjusts the second pass to suit, but a turbo chain still drifts more "
+                                "at the joins. regular otherwise."),
                 }),
                 # APPENDED 2026-09-19, LAST for the same reason as everything
                 # else down here: widgets_values is positional and a saved
@@ -3179,69 +2772,26 @@ class HandTieClips:
                     # derivation is frontend behaviour and not a contract.
                     "default": 0.0, "min": 0.0, "max": 3600.0,
                     "step": 0.01, "round": 0.01,
-                    "tooltip": (
-                        "Where the chain's window opens inside "
-                        "master_audio_file, in seconds. There is no matching "
-                        "end: the window's WIDTH is the chain itself "
-                        "(duration x shots - overlap), so the only choice is "
-                        "where it starts. The MEDIA strip draws it as a "
-                        "fixed-width box you slide along the waveform. "
-                        "Worth setting: hop lengths are quantised, so a chain "
-                        "length is almost never a track length -- 6 x 10 s is "
-                        "56.17 s, not 60 -- and at 0.00 a mastered track "
-                        "gives you its intro. Moving this changes the hop "
-                        "cache key."
-                    ),
+                    "tooltip": "Where the chain starts inside master_audio_file, in seconds.",
                 }),
                 # APPENDED 2026-09-20, LAST, for the reason stated above:
                 # inserting it beside the other refine_* widgets would have
                 # renumbered refine_cond onward in every saved workflow.
                 "refine_align": (["hop_tail", "denoise"], {
                     "default": "denoise",
-                    "tooltip": (
-                        "Where on the noise curve the second pass lands. "
-                        "hop_tail re-runs the hop's OWN last refine_steps "
-                        "sigmas, so every eval sits on the grid the trunk was "
-                        "distilled for -- this is the setting to use with a "
-                        "turbo LoRA or merge, and it costs exactly the same "
-                        "time. denoise is the original path: an independent "
-                        "int(steps/denoise)-step schedule, which at 2/0.50 is "
-                        "the tail of a 4-step grid even when the hop ran 8. "
-                        "Its closing stride (0.8 -> 0) is larger than any step "
-                        "the hop took, which a few-step distill was never "
-                        "trained for. denoise stays the DEFAULT because an "
-                        "undistilled trunk is accurate at every sigma, so the "
-                        "wider stride costs nothing there -- and a graph "
-                        "saved before this widget existed reloads on the "
-                        "schedule it actually rendered under. speed_mode="
-                        "turbo sets hop_tail for you. refine_denoise is "
-                        "ignored under hop_tail."
-                    ),
+                    "tooltip": ("Where the second pass lands on the schedule. hop_tail suits turbo models; "
+                                "denoise is the original behaviour."),
                 }),
                 # APPENDED 2026-09-23, LAST, same positional reason.
                 "realism_boost": (["off", "on"], {
                     "default": "off",
-                    "tooltip": (
-                        "The Singularity dual-sampling recipe, per hop. The "
-                        "schedule is doubled (base 6 = 12 steps) and split "
-                        "after its first base step: 2 steps on the model wire "
-                        "set the composition, then the latent is re-noised at "
-                        "the hand-off sigma (~0.984) and the boost model -- "
-                        "this model plus the two boost LoRAs -- paints the "
-                        "other 10 with no fresh noise. The recipe is steps=6, "
-                        "not 8. Follows sampler_name / scheduler. Not with "
-                        "master_audio_file. hop_refine runs after it, on the "
-                        "MODEL wire or refine_model. Moves every hop's "
-                        "cache key, hop 1 included."
-                    ),
+                    "tooltip": ("Two-stage sampling with the boost LoRAs for more realistic texture. It "
+                                "doubles the steps: base 6 is 2 + 10. Not with master_audio_file."),
                 }),
                 "boost_lora_1": (_boost_lora_choices(), {
                     "default": _boost_lora_default(0, _boost_lora_choices()),
-                    "tooltip": (
-                        "First boost LoRA, applied on top of the model wire "
-                        "for the boost stage only. The original ran "
-                        "minimax_h3_lms_v1.0_r64 at 0.5. None = skip."
-                    ),
+                    "tooltip": ("First boost LoRA. The recipe uses minimax_h3_lms_v1.0_r64 at 0.5. None "
+                                "skips it."),
                 }),
                 "boost_lora_1_strength": ("FLOAT", {
                     "default": BOOST_LORA_DEFAULTS[0][1],
@@ -3249,10 +2799,8 @@ class HandTieClips:
                 }),
                 "boost_lora_2": (_boost_lora_choices(), {
                     "default": _boost_lora_default(1, _boost_lora_choices()),
-                    "tooltip": (
-                        "Second boost LoRA, on top of the first. The original "
-                        "ran h3-realism-people-t2v-i2v-r2v at 1.0. None = skip."
-                    ),
+                    "tooltip": ("Second boost LoRA. The recipe uses h3-realism-people-t2v-i2v-r2v at 1.0. "
+                                "None skips it."),
                 }),
                 "boost_lora_2_strength": ("FLOAT", {
                     "default": BOOST_LORA_DEFAULTS[1][1],
@@ -5465,15 +5013,16 @@ class HTCContinuityState:
             "optional": {
                 "setting_locked": ("STRING", {
                     "multiline": True, "default": "",
-                    "tooltip": "Verbatim setting text (location, lighting). Injected unchanged into every hop 2+.",
+                    "tooltip": "Setting text (place, lighting) repeated on every hop after the first.",
                 }),
                 "setting_context": ("STRING", {
                     "multiline": True, "default": "",
-                    "tooltip": "Current-state setting text, less rigid than locked. Injected every hop 2+.",
+                    "tooltip": ("Current setting text, less fixed than locked, repeated on every hop after "
+                                "the first."),
                 }),
                 "setting_mutable": ("STRING", {
                     "multiline": True, "default": "",
-                    "tooltip": "Per-hop setting beat text, --- delimited like characters_mutable.",
+                    "tooltip": "Per-hop setting text, separated by ---.",
                 }),
             },
         }

@@ -30,46 +30,37 @@ class HTCRefModBuilder:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "vae": ("VAE", {"tooltip": "The H3 video VAE. The diffusion model is not used."}),
+                "vae": ("VAE", {"tooltip": "The H3 video VAE."}),
                 "name": ("STRING", {"default": "hero",
-                    "tooltip": "File name under models/refmods, without .safetensors. "
-                               "This is what a reference row stores in file."}),
+                    "tooltip": ("File name for the RefMod under models/refmods. Pick it on a REFS row by "
+                                "this name.")}),
             },
             "optional": {
                 "mod_plan": ("STRING", {"default": "", "multiline": True,
-                    "tooltip": "The panel writes this. Stills and a clip, by "
-                               "filename in h3_refs. Each still is one latent "
-                               "frame; the clip's frames follow them."}),
-                "images": ("IMAGE", {"tooltip": "Legacy socket. One still, first frame of a batch. Ignored when mod_plan names sources."}),
-                "video": ("IMAGE", {"tooltip": "Legacy socket. A clip, at least 5 frames. Ignored when mod_plan names sources."}),
+                    "tooltip": "The stills, clip and voice for this RefMod, written by the panel."}),
+                "images": ("IMAGE", {"tooltip": "Optional still to build from, instead of the panel."}),
+                "video": ("IMAGE", {"tooltip": "Optional clip to build from, instead of the panel."}),
                 "max_tokens": ("INT", {"default": 0, "min": 0, "max": 1048576,
-                    "tooltip": "VRAM headroom guard, not a fidelity limit -- 24k-token "
-                               "mods are known to run. Above this, near-duplicate "
-                               "frames are dropped and then time is resampled. "
-                               "0 disables the cap."}),
+                    "tooltip": ("Memory guard. Above this, near-duplicate frames are dropped. 0 is no "
+                                "limit.")}),
                 "subfolder": ("STRING", {"default": "",
-                    "tooltip": "Folder under models/refmods. The rail name becomes subfolder/name."}),
+                    "tooltip": "Optional folder under models/refmods."}),
                 "save": ("BOOLEAN", {"default": True,
-                    "tooltip": "Write the safetensors file. Off returns the name and does not write."}),
+                    "tooltip": "Write the file. Off only reports the name."}),
                 "build": (["stop", "start"], {"default": "stop",
-                    "tooltip": "stop leaves the file alone and does not use the VAE, so a queue can run the chain. start writes the RefMod on this queue."}),
+                    "tooltip": ("start builds the RefMod on this queue. stop leaves it alone, so the chain "
+                                "can run without rebuilding.")}),
                 "description": ("STRING", {"default": "",
-                    "tooltip": "One sentence of what the mod shows, stored in the file. "
-                               "A reference row that picks this mod with its describe "
-                               "box empty is filled from it; after that the row's own "
-                               "text is what reaches the prompt."}),
+                    "tooltip": ("One sentence describing what the RefMod shows. Fills an empty description "
+                                "on a REFS row.")}),
                 "subject_mask": (["off", "auto"], {"default": "off",
-                    "tooltip": "auto cuts the subject out of every source with rembg "
-                               "and repaints the backdrop from the subject's own "
-                               "edge colours before encoding, so a sheet's backdrop "
-                               "does not ride into the render. A wired mask outranks it."}),
+                    "tooltip": ("auto cuts the person out of each source and fills the background, so it "
+                                "does not ride into renders. A wired mask wins.")}),
                 "background_retention": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0,
                     "step": 0.05,
-                    "tooltip": "How much of the backdrop a mask keeps. 0 replaces it, "
-                               "1 leaves it untouched, 0.3-0.6 fades it."}),
-                "mask": ("MASK", {"tooltip": "Subject mask, 1 = keep. One mask covers every "
-                                             "source; a batch gives one per source, stills "
-                                             "then the clip."}),
+                    "tooltip": "How much background a mask keeps. 0 removes it; 1 keeps it all."}),
+                "mask": ("MASK", {"tooltip": ("Optional mask of the subject, white = keep. One for all sources, or one "
+                                              "per source.")}),
             },
         }
 

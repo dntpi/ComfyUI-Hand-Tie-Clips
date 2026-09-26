@@ -44,19 +44,15 @@ class HTCChainPreview:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE", {"tooltip": "From H3 Ref2VA Chain. Passed straight through."}),
+                "images": ("IMAGE", {"tooltip": "The chain's images. Passed through unchanged."}),
             },
             "optional": {
                 "audio": ("AUDIO", {
-                    "tooltip": (
-                        "The chain's audio. Wire it and the panel reports A/V "
-                        "drift, which accumulates roughly 40 ms per hop from the "
-                        "audio crossfade at each join."
-                    ),
+                    "tooltip": "The chain's audio. Wire it to see the audio and video lengths compared.",
                 }),
                 "info": ("STRING", {
                     "forceInput": True,
-                    "tooltip": "The chain's `info` output. Shown in the panel's detail view, never in the status strip.",
+                    "tooltip": "The chain's info output, shown in the details.",
                 }),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},

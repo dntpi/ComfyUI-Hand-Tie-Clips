@@ -177,11 +177,13 @@ def main():
        and "2.07" in (notes.get("turbo") or ""),
        "junction MAE from the matched pinned-seed pair")
     tip = (opt["speed_mode"][1] or {}).get("tooltip") or ""
+    # Plain words in the tooltip; the measured numbers live in the console
+    # note checked above.
     ck("the tooltip makes no parity claim",
-       "8.40" in tip and "climbing" in tip.lower(),
-       "it says turbo is worse, with the number")
+       "drifts more" in tip.lower(),
+       "it says a turbo chain is worse at the joins")
     ck("the tooltip says nothing auto-detects",
-       "detect" in tip.lower() and "declared" in tip.lower(),
+       "nothing detects" in tip.lower(),
        "a ModelPatcher carries no name")
 
     print("\n%s" % ("FAILED: " + ", ".join(FAIL) if FAIL else "ALL PASS"))

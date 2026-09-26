@@ -3684,11 +3684,16 @@ class HandTieClips:
                 # voice. The row inherits it, so a character is put
                 # together once; a voice typed on the row still wins,
                 # because the rail is the more specific statement.
+                # The window comes with it, unless the row sets its own:
+                # the row trim is the one on the rail, beside the waveform.
                 if not _r.get("voice"):
                     _inherited = _refmod.stored_voice(_r["file"])
                     if _inherited:
-                        _r["voice"] = _inherited
-                        print(f"[{TAG}] @{_r['tag']}: voice {_inherited} "
+                        _r["voice"] = _inherited["file"]
+                        if not (_r.get("voice_start") or _r.get("voice_end")):
+                            _r["voice_start"] = _inherited["start"]
+                            _r["voice_end"] = _inherited["end"]
+                        print(f"[{TAG}] @{_r['tag']}: voice {_inherited['file']} "
                               f"from the RefMod", flush=True)
                 _block = _refmod.visual_block(_loaded, _r["strength"])
                 # The kept photographs when the builder stored them, so Qwen
@@ -3735,7 +3740,9 @@ class HandTieClips:
             _vf = str(_r.get("voice") or "")
             if not _vf or _r["slot"] not in _wired_slots:
                 continue
-            _wav = _media.load_audio(_vf, kinds=("audio", "video"))
+            _wav = _media.load_audio(_vf, start=float(_r.get("voice_start") or 0.0),
+                                     end=float(_r.get("voice_end") or 0.0),
+                                     kinds=("audio", "video"))
             if _wav is None:
                 # Fatal, like a missing picture: a row voice is the thing
                 # that says which face speaks, and rendering the chain with
@@ -3746,6 +3753,20 @@ class HandTieClips:
                     f"(ComfyUI/input/h3_refs), which could not be read. Drop "
                     f"the file onto that row, or clear the row's voice.")
             slot_voices[_r["slot"]] = _wav
+            # The trimmed length, since that is what core encodes whole. The
+            # hop key needs nothing new: it digests this waveform, so a
+            # window moves the key and an untrimmed voice keeps its old one.
+            _vsec = _wav["waveform"].shape[-1] / float(_wav["sample_rate"])
+            _vwin = _refs.window_label(_r.get("voice_start"), _r.get("voice_end"))
+            print(f"[{TAG}] @{_r['tag']}: voice {_vsec:.1f}s"
+                  + (f" {_vwin}" if _vwin else " (whole file)"), flush=True)
+            if _vsec > _refs.VOICE_LONG_S:
+                print(f"[{TAG}] WARNING: @{_r['tag']}'s voice runs {_vsec:.1f}s, "
+                      f"past the {_refs.VOICE_LONG_S:g}s H3 reference clips are "
+                      f"trained on. Core encodes it whole, and a hop whose "
+                      f"lines run out replays it in the frames left over. "
+                      f"Trim it to one clean sentence on the row's voice "
+                      f"(or in the RefMod's voice slot).", flush=True)
         if ref_plan_refs:
             print(f"[{TAG}] reference register:", flush=True)
             print(_refs.describe(ref_plan_obj), flush=True)

@@ -627,7 +627,113 @@ def test_builder_looks():
         BM.save_latent, BM.register_folder = real_save, real_folder
 
 
+def test_voice_window():
+    """A voice's trim window: on the row, in the mod, inherited, and loaded."""
+    plan = R.parse_ref_plan(json.dumps({"refs": [
+        {"tag": "hero", "file": "a.png", "voice": "vo.wav",
+         "voice_start": 1.5, "voice_end": 6},
+        {"tag": "tail", "file": "b.png", "voice": "vo.wav", "voice_start": 2},
+        {"tag": "bare", "file": "c.png", "voice": "vo.wav"},
+    ]}))
+    hero, tail, bare = plan["refs"]
+    ck("a row window parses",
+       hero["voice_start"] == 1.5 and hero["voice_end"] == 6.0)
+    ck("an absent window is the whole file",
+       bare["voice_start"] == 0.0 and bare["voice_end"] == 0.0)
+    ck("an end of 0 reads 'to the end'",
+       R.window_label(tail["voice_start"], tail["voice_end"]) == "[2s-end]")
+    text = R.describe(plan)
+    ck("the register prints the window", "vo.wav [1.5s-6s] (beside)" in text, text)
+    ck("an untrimmed voice prints as before", "@bare" in text and
+       "vo.wav (beside)" in text.split("@bare")[1])
+    for bad, why in (({"voice_start": 5, "voice_end": 2}, "a reversed window"),
+                     ({"voice_start": -1}, "a negative start"),
+                     ({"voice_end": "soon"}, "a word for a time")):
+        row = {"tag": "x", "file": "a.png", "voice": "vo.wav", **bad}
+        try:
+            R.parse_ref_plan(json.dumps({"refs": [row]}))
+        except ValueError:
+            ck(why + " is refused", True)
+        else:
+            ck(why + " is refused", False)
+
+    # The mod side. The name comes back alone, so every caller that only
+    # needs the file is unchanged; the window is read beside it.
+    trimmed = {"stills": ["a.png"], "voice": {"file": "vo.wav", "start": 2, "end": 7.5}}
+    ck("an object voice still parses to its name",
+       M.parse_mod_plan(json.dumps(trimmed))[2] == "vo.wav")
+    ck("the mod window reads back", M.voice_window(trimmed) == (2.0, 7.5))
+    ck("a bare voice has no window",
+       M.voice_window({"stills": ["a.png"], "voice": "vo.wav"}) == (0.0, 0.0))
+    try:
+        M.parse_mod_plan(json.dumps(
+            {"stills": ["a.png"], "voice": {"file": "vo.wav", "start": 8, "end": 3}}))
+        ck("a reversed mod window is refused", False)
+    except ValueError:
+        ck("a reversed mod window is refused", True)
+
+    latent = torch.zeros(1, 24, 1, 2, 2)
+    with tempfile.TemporaryDirectory() as tmp:
+        for stem, plan_used in (("cut", trimmed),
+                                ("whole", {"stills": ["a.png"], "voice": "vo.wav"})):
+            meta = M.metadata_for(stem, "image", latent, "encode", "image",
+                                  "1x2x2", "encode", 0, plan=plan_used)
+            M.save_latent(tmp, stem, latent, meta)
+        M.roots = lambda: [tmp]
+        ck("a stored voice carries its window",
+           M.stored_voice("cut") == {"file": "vo.wav", "start": 2.0, "end": 7.5},
+           repr(M.stored_voice("cut")))
+        ck("an untrimmed stored voice has a zero window",
+           M.stored_voice("whole") == {"file": "vo.wav", "start": 0.0, "end": 0.0})
+        listed = {r["name"]: r["voice"] for r in M.listing()}
+        ck("the listing hands the rail the voice and its window",
+           listed["cut"] == {"file": "vo.wav", "start": 2.0, "end": 7.5}
+           and listed["whole"]["end"] == 0.0, repr(listed))
+
+    # What the chain loads: the trimmed length, which is what core encodes.
+    import media as MED
+    import wave
+    import struct
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "tone.wav")
+        sr = 16000
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes(struct.pack("<" + "h" * (sr * 10), *([1000] * (sr * 10))))
+        real = MED.resolve
+        MED.resolve = lambda name, kinds=None: path
+        try:
+            whole = MED.load_audio("tone.wav")
+            cut = MED.load_audio("tone.wav", start=2.0, end=5.0)
+        finally:
+            MED.resolve = real
+        secs = lambda a: a["waveform"].shape[-1] / float(a["sample_rate"])
+        ck("the whole file loads whole", abs(secs(whole) - 10.0) < 0.05, str(secs(whole)))
+        ck("a window loads only the window", abs(secs(cut) - 3.0) < 0.05, str(secs(cut)))
+
+
+def test_rail_keeps_voice_window():
+    """The plan writer cannot see a trim, so Accept must not erase one."""
+    import importlib
+    import types
+    pkg = types.ModuleType("htc_pack")
+    pkg.__path__ = [_PACK]
+    sys.modules.setdefault("htc_pack", pkg)
+    P = importlib.import_module("htc_pack.planner")
+    written = json.dumps({"refs": [{"tag": "hero", "file": "a.png",
+                                    "voice_start": 99, "voice_end": 100}]})
+    pinned = [{"tag": "hero", "file": "a.png", "voice": "vo.wav",
+               "voice_start": 1.5, "voice_end": None}]
+    got = json.loads(P._restore_rail_only(written, pinned))["refs"][0]
+    ck("the rail's window wins over a written one",
+       got.get("voice_start") == 1.5 and "voice_end" not in got, repr(got))
+
+
 if __name__ == "__main__":
+    test_voice_window()
+    test_rail_keeps_voice_window()
     test_looks()
     test_builder_looks()
     test_subject_mask()

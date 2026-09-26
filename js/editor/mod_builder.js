@@ -38,7 +38,7 @@ export const BUILDER_WIDGETS = ["mod_plan"].concat(DIALS);
 
 function parseModPlan(text) {
     const raw = String(text || "").trim();
-    if (!raw) return { stills: [], clip: null, voice: "" };
+    if (!raw) return { stills: [], clip: null, voice: "", voiceStart: 0, voiceEnd: 0 };
     let data;
     try {
         data = JSON.parse(raw);
@@ -63,7 +63,11 @@ function parseModPlan(text) {
             };
         }
     }
-    let voice = typeof data.voice === "string" ? data.voice : "";
+    // A bare name, or `{file, start, end}` once it is trimmed (refmod.voice_window).
+    const v = data.voice;
+    let voice = typeof v === "string" ? v : String(v?.file || v?.name || "");
+    const voiceStart = (v && typeof v === "object") ? Number(v.start) || 0 : 0;
+    const voiceEnd = (v && typeof v === "object") ? Number(v.end) || 0 : 0;
     // A sound file in the clip slot is what a voice looked like before
     // this slot existed. Move it rather than dead-ending on the parser,
     // which now refuses it: the author's intent is not in doubt.
@@ -73,7 +77,7 @@ function parseModPlan(text) {
         console.log("[HandTieClips] moved a sound file from the RefMod clip"
                     + " slot to its voice slot");
     }
-    return { stills, clip, voice };
+    return { stills, clip, voice, voiceStart, voiceEnd };
 }
 
 function modPlanToJson(plan) {
@@ -89,7 +93,17 @@ function modPlanToJson(plan) {
     }
     // Omitted when empty, so a mod_plan written before the voice
     // slot existed round-trips through the panel byte for byte.
-    if (plan.voice) out.voice = plan.voice;
+    if (plan.voice) {
+        // The object form only when trimmed, for the same byte-for-byte reason.
+        if (plan.voiceStart || plan.voiceEnd) {
+            const v = { file: plan.voice };
+            if (plan.voiceStart) v.start = Math.round(plan.voiceStart * 1000) / 1000;
+            if (plan.voiceEnd) v.end = Math.round(plan.voiceEnd * 1000) / 1000;
+            out.voice = v;
+        } else {
+            out.voice = plan.voice;
+        }
+    }
     return JSON.stringify(out, null, 2);
 }
 
@@ -106,7 +120,7 @@ export function createModBuilder(node, { onChange } = {}) {
     const readPlan = () => {
         const parsed = parseModPlan(planWidget?.value);
         planBad = parsed === null;
-        return parsed || { stills: [], clip: null, voice: "" };
+        return parsed || { stills: [], clip: null, voice: "", voiceStart: 0, voiceEnd: 0 };
     };
     let plan = readPlan();
 
@@ -233,20 +247,40 @@ export function createModBuilder(node, { onChange } = {}) {
         kind: "audio",
         title: "Drop a voice here. It is stored by name, not encoded.",
         get: () => plan.voice || "",
-        set: (v) => { plan.voice = v || ""; },
+        set: (v) => {
+            // A window belongs to the file it was cut from.
+            if ((v || "") !== plan.voice) { plan.voiceStart = 0; plan.voiceEnd = 0; }
+            plan.voice = v || "";
+        },
         onChange: () => { writePlan(); renderVoice(); },
     });
     voiceSec.appendChild(voicePick.root);
     voicePick.render();
+    /* The window a reference row inherits with the voice. Core encodes the
+     * whole file, and a hop whose lines run out replays it -- so hand over
+     * one clean sentence of timbre, not a script. */
+    const voiceBar = createTrimBar({
+        kind: "audio",
+        name: () => plan.voice || "",
+        get: () => ({ start: plan.voiceStart || 0, end: plan.voiceEnd || 0 }),
+        set: (a, b) => {
+            plan.voiceStart = Number(a) || 0;
+            plan.voiceEnd = Number(b) || 0;
+        },
+        onChange: () => { writePlan(); },
+    });
+    voiceSec.appendChild(voiceBar.root);
     voiceSec.appendChild(el("div", "h3e-note h3e-note-hint",
         "A timbre reference. It rides the hops the reference row rides, "
         + "hop 2+ only as voice_every_hop allows. The sound file "
-        + "stays in h3_refs -- the mod names it, it is not inside it."));
+        + "stays in h3_refs -- the mod names it, it is not inside it. "
+        + "Trim it to one clean sentence: the whole window is encoded."));
     left.appendChild(voiceSec);
 
     function renderVoice() {
         voiceCount.textContent = plan.voice || "optional";
         voicePick.render();
+        voiceBar.render();
     }
 
     // The live bar, so a repaint can be told to let go of its <video> element.
@@ -374,6 +408,8 @@ export function createModBuilder(node, { onChange } = {}) {
             plan.stills = stills.slice();
             plan.clip = stored.clip ? { ...stored.clip } : null;
             plan.voice = stored.voice || "";
+            plan.voiceStart = Number(stored.voice_start) || 0;
+            plan.voiceEnd = Number(stored.voice_end) || 0;
             writePlan();
             renderStills();
             renderClip();
@@ -498,6 +534,6 @@ export function createModBuilder(node, { onChange } = {}) {
         refresh,
         /** Widget names the panel drew, so the mount hides exactly those. */
         ownedNames: () => ["mod_plan"].concat(owned),
-        dispose: () => { stopFiles?.(); clipBar?.destroy?.(); },
+        dispose: () => { stopFiles?.(); clipBar?.destroy?.(); voiceBar.destroy(); },
     };
 }

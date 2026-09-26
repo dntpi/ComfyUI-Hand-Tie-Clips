@@ -182,14 +182,25 @@ def build():
             "voice": {
                 "type": "string",
                 "description": "Optional audio basename in h3_refs -- the "
-                               "voice this reference speaks with. On a video "
-                               "RefMod it becomes that clip's soundtrack and "
-                               "the encoder emits ONE fused reference; on a "
-                               "still it rides beside the picture as its own "
-                               "<Audio N>. It is cited on exactly the hops "
+                               "voice this reference speaks with. It rides "
+                               "beside the picture or clip as its own "
+                               "<Audio N>, a video RefMod included. It is "
+                               "cited on exactly the hops "
                                "this row rides, which is what voice_file 1-3 "
                                f"cannot do. At most {r.MAX_REF_AUDIOS} standalone voices."
                                ,
+            },
+            "voice_start": {
+                "type": "number", "minimum": 0,
+                "description": "Start of the voice's trim window, in seconds, "
+                               "set by the person on the rail. Do not author "
+                               "it: omit the field.",
+            },
+            "voice_end": {
+                "type": "number", "minimum": 0,
+                "description": "End of the voice's trim window, in seconds; 0 "
+                               "is the end of the file. Set on the rail. Do "
+                               "not author it: omit the field.",
             },
             "shots": {
                 "type": "array", "items": {"type": "integer", "minimum": 1},

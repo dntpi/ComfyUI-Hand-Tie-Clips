@@ -41,7 +41,7 @@ RETENTION = {
 # A plan from before the sockets were removed carries an authored `slot` and no
 # `file`; that is detected, kept as `legacy_slot`, and reported by check().
 REF_FIELDS = ("tag", "file", "slot", "subject", "retention", "desc", "shots",
-              "mp", "source", "strength", "voice")
+              "mp", "source", "strength", "voice", "voice_start", "voice_end")
 
 # A video RefMod shares the encoder's three video slots with the MEDIA clips
 # and, on a continuation, the pin clip. Image rows share the nine picture slots.
@@ -57,6 +57,21 @@ MAX_REF_VIDEOS = 3
 # `voice_every_hop` lets `voice_file` ride -- a quiet hop fills its leftover
 # frames with whatever recording it is shown.
 MAX_REF_AUDIOS = 3
+
+# `voice_start` / `voice_end` trim that recording, in seconds, with the
+# meaning `media.clip_window` gives every other trim: an end of 0 is "to the
+# end of the file", and both 0 is the whole file. Core encodes a voice whole,
+# with no cap, and a hop whose lines run out replays that recording in the
+# frames left over -- a 26 s take behind a 4 s exchange was recited
+# (2026-09-26). The window is the author's instrument for handing over one
+# sentence of timbre rather than a script.
+#
+# It applies to the voice the row ends up with. When the row names none and
+# inherits the RefMod's, a row window outranks the one stored in the mod.
+#
+# Past this, a voice is longer than any reference H3 is trained on (core's
+# reference clips are 2-15 s), and the chain says so on the queue.
+VOICE_LONG_S = 15.0
 SOURCES = ("image", "refmod")
 
 # Per-reference pixel budget, in megapixels. 0 (or absent) means no cap.
@@ -135,6 +150,27 @@ def _norm_subject(key, raw):
     return num, out
 
 
+def _seconds(value, where, tag, field):
+    """A trim point in seconds. Absent, empty and 0 are all 0."""
+    if value in (None, ""):
+        return 0.0
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        _fail(f"{where} (@{tag}): {field} {value!r} is not a number of seconds")
+    if not out >= 0.0:
+        _fail(f"{where} (@{tag}): {field} must be 0 or more seconds")
+    return out
+
+
+def window_label(start, end):
+    """`[1.5s-6s]`, `[1.5s-end]`, or `` for the whole file."""
+    start, end = float(start or 0.0), float(end or 0.0)
+    if not start and not end:
+        return ""
+    return f"[{start:g}s-" + (f"{end:g}s]" if end else "end]")
+
+
 def _norm_ref(raw, i):
     """Validate one ref entry. Errors name the ref and the valid options."""
     where = f"ref {i + 1}"
@@ -172,6 +208,11 @@ def _norm_ref(raw, i):
     # A voice is a plain basename like a still: media.resolve refuses a
     # directory component, so a path here would only ever fail to load.
     voice = _basename(str(raw.get("voice") or "").strip())
+    voice_start = _seconds(raw.get("voice_start"), where, tag, "voice_start")
+    voice_end = _seconds(raw.get("voice_end"), where, tag, "voice_end")
+    if voice_end and voice_end <= voice_start:
+        _fail(f"{where} (@{tag}): voice_end {voice_end:g}s is not after "
+              f"voice_start {voice_start:g}s. Use 0 for the end of the file.")
 
     strength = raw.get("strength", 1.0)
     if strength in (None, ""):
@@ -257,6 +298,8 @@ def _norm_ref(raw, i):
         "source": source,
         "strength": strength,
         "voice": voice,
+        "voice_start": voice_start,
+        "voice_end": voice_end,
     }
 
 
@@ -750,7 +793,9 @@ def describe(plan):
         if r.get("voice"):
             # Always its own audio block now, a video mod included: fused as
             # a clip soundtrack, the model recited the recording.
-            line += "  + voice " + r["voice"] + " (beside)"
+            window = window_label(r.get("voice_start"), r.get("voice_end"))
+            line += ("  + voice " + r["voice"] + (" " + window if window else "")
+                     + " (beside)")
         out.append(line)
     return "\n".join(out)
 

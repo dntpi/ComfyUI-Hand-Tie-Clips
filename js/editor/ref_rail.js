@@ -21,6 +21,7 @@
 import { api } from "../../../scripts/api.js";
 import { el, button, select, vocab, onVocabRefresh } from "./widget_utils.js";
 import { createPicker } from "./media_picker.js";
+import { createTrimBar } from "./trim_bar.js";
 
 const MAX_SLOTS = 9;
 
@@ -54,6 +55,12 @@ function refmodRows() {
 }
 function refmodNames() {
     return refmodRows().then((rows) => rows.map((f) => f.name));
+}
+/** The voice a mod's header names, `{file, start, end}`, or null. A row that
+ *  cites the mod with no voice of its own inherits exactly this. */
+function refmodVoice(name) {
+    const row = (_refmods || []).find((f) => f.name === name);
+    return row?.voice?.file ? row.voice : null;
 }
 /** The caption stored in a mod's header, from the cached listing. */
 function refmodCaption(name) {
@@ -148,6 +155,8 @@ export function parseRefPlan(text) {
             source: r.source === "refmod" ? "refmod" : "image",
             strength: r.strength == null ? 1 : Number(r.strength),
             voice: r.voice || "",
+            voice_start: Number(r.voice_start) || 0,
+            voice_end: Number(r.voice_end) || 0,
         })),
         subjects,
     };
@@ -192,6 +201,9 @@ export function refPlanToJson(plan) {
         // Omitted when empty, so a plan written before row voices existed
         // round trips byte-identical.
         if (r.voice) out.voice = r.voice;
+        // Same rule for the trim: absent is the whole file.
+        if (r.voice_start) out.voice_start = Math.round(r.voice_start * 1000) / 1000;
+        if (r.voice_end) out.voice_end = Math.round(r.voice_end * 1000) / 1000;
         // Omitted on a still, and at strength 1, for the same reason.
         if (r.source === "refmod") {
             out.source = "refmod";
@@ -354,6 +366,10 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
             i.placeholder = placeholder;
             i.title = hint;
             i.addEventListener("input", () => { s[key] = i.value; setPlan(plan); onChange?.(); });
+            // Same as the row's desc: `input` writes the widget but does not
+            // re-render, so without this the JSON box kept the pre-edit text,
+            // and an edit made in that box wrote the stale subject back.
+            i.addEventListener("change", commit);
             return i;
         };
         box.appendChild(mk("name", "what to call them",
@@ -365,7 +381,12 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
         return box;
     }
 
+    // Each bar runs an animation frame and holds an <audio>; a render that
+    // drops the row has to let go of both.
+    const trimBars = [];
+
     function render() {
+        for (const b of trimBars.splice(0)) b.destroy();
         list.textContent = "";
         // Never while focused: it would reformat mid-keystroke and steal the caret.
         if (document.activeElement !== jsonArea) jsonArea.value = getRaw?.() ?? "";
@@ -603,11 +624,11 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                 get: () => r.voice || "",
                 set: (v) => { r.voice = v; },
                 onChange: () => queueMicrotask(() => commit()),
-                title: "Optional voice for this reference. On a video RefMod it "
-                    + "becomes that clip's soundtrack, so face and voice reach "
-                    + "the model as ONE reference. On a still it rides beside "
-                    + "the picture as its own <Audio N>. Either way it is cited "
-                    + "on the hops this row rides.",
+                title: "Optional voice for this reference. It rides beside the "
+                    + "picture or clip as its own <Audio N>, cited on the hops "
+                    + "this row rides. Empty on a RefMod row uses the mod's own "
+                    + "voice. Trim it below to one clean sentence: H3 encodes "
+                    + "the whole file, and a hop whose lines run out replays it.",
             });
             voice.root.classList.add("h3e-slot", "h3e-voice");
             row.appendChild(voice.root);
@@ -686,6 +707,41 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                 chips.appendChild(note);
             }
             row.appendChild(chips);
+
+            /* The voice's trim, under the row, for whichever recording will
+             * actually ride: the row's own, or the RefMod's. Core encodes a
+             * voice whole, and a 26 s take behind a 4 s exchange was recited
+             * into the frames the lines left over (2026-09-26). A window set
+             * here outranks the mod's own; both at 0 falls back to it. */
+            const modVoice = r.source === "refmod" && r.file && !r.voice
+                ? refmodVoice(r.file) : null;
+            const voiceFile = r.voice || modVoice?.file || "";
+            if (voiceFile) {
+                const trimRow = el("div", "h3e-trimrow h3e-ref-trim");
+                trimRow.appendChild(el("span", "h3e-media-label",
+                    modVoice ? "voice (from the RefMod)" : "voice"));
+                const ownWindow = () => Boolean(r.voice_start || r.voice_end);
+                const bar = createTrimBar({
+                    kind: "audio",
+                    name: () => voiceFile,
+                    get: () => (ownWindow() || !modVoice
+                        ? { start: r.voice_start || 0, end: r.voice_end || 0 }
+                        : { start: modVoice.start || 0, end: modVoice.end || 0 }),
+                    set: (a, b) => {
+                        r.voice_start = a || 0;
+                        r.voice_end = b || 0;
+                        setPlan(plan);
+                    },
+                    onChange: () => queueMicrotask(() => commit()),
+                });
+                trimBars.push(bar);
+                trimRow.appendChild(bar.root);
+                row.appendChild(trimRow);
+            } else if (r.source === "refmod" && r.file && _refmods === null) {
+                // The listing that says whether this mod has a voice is not
+                // in yet; draw again once it is.
+                refmodRows().then(() => render());
+            }
 
             list.appendChild(row);
             if (bad) {

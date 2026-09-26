@@ -494,6 +494,10 @@
     .h3e-ref .h3e-desc { grid-column: 1 / -1; }
 }
 
+/* A row voice's trim bar: full width under the chips, indented to match them.
+ * A waveform squeezed into one grid cell is a smear. */
+.h3e-ref .h3e-ref-trim { grid-column: 1 / -1; padding: 2px 0 0 26px; min-width: 0; }
+
 /* Per-hop schedule chips. */
 .h3e-chips { display: flex; flex-wrap: wrap; gap: 3px; grid-column: 1 / -1; padding: 2px 0 0 26px; }
 .h3e-chip {

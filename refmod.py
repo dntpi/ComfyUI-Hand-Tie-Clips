@@ -88,7 +88,9 @@ def parse_mod_plan(text):
     not encoded into the latent -- a RefMod holds pictures. It is recorded
     so a reference row citing this mod inherits the voice instead of the
     author having to name it twice, which is what makes the file a
-    character rather than a face.
+    character rather than a face. It may be written as `{"file", "start",
+    "end"}` to trim it; `voice_window` reads that window, and this returns
+    the name alone so every caller that only needs the file is unchanged.
 
     A still may be written as a bare string or as `{"file": ...}`; the panel
     writes the object form, a hand-typed plan is allowed either.
@@ -158,6 +160,7 @@ def parse_mod_plan(text):
         voice = _name(voice, "mod_plan voice")
         if _ext_kind(voice) != "audio":
             _fail(f"mod_plan voice {voice} is not a sound file")
+        voice_window(data)  # a reversed window fails here, before any encode
     else:
         voice = ""
     return stills, clip, voice
@@ -263,10 +266,28 @@ def listing():
                 meta = read_meta(full)
                 if isinstance(meta, dict):
                     kind = str(meta.get("kind") or "refmod")
-                rows.append((mtime, stem, kind, description_of(meta)))
+                rows.append((mtime, stem, kind, description_of(meta),
+                             _listed_voice(meta)))
     rows.sort(reverse=True)
-    return [{"name": n, "kind": k, "description": d}
-            for _m, n, k, d in rows]
+    # `voice` is what a row citing this mod inherits, so the rail can show
+    # and trim the recording that will actually ride.
+    return [{"name": n, "kind": k, "description": d, "voice": v}
+            for _m, n, k, d, v in rows]
+
+
+def _listed_voice(meta):
+    """The header's voice as `{"file", "start", "end"}`, or None."""
+    plan = (meta or {}).get("mod_plan") if isinstance(meta, dict) else None
+    if not isinstance(plan, dict):
+        return None
+    try:
+        _stills, _clip, voice = parse_mod_plan(plan)
+        start, end = voice_window(plan)
+    except ValueError:
+        return None
+    if not voice:
+        return None
+    return {"file": voice, "start": start, "end": end}
 
 
 def description_of(meta):
@@ -319,6 +340,31 @@ def read_meta(path):
     return data if isinstance(data, dict) else None
 
 
+def voice_window(plan):
+    """`(start, end)` seconds of the mod_plan's voice. `(0, 0)` is the whole file.
+
+    Same sentinel as `media.clip_window`: an end of 0 is the end of the file.
+    Only the object form of `voice` carries a window.
+    """
+    if not isinstance(plan, dict):
+        try:
+            plan = json.loads(plan) if str(plan or "").strip() else {}
+        except ValueError:
+            return 0.0, 0.0
+    entry = plan.get("voice") if isinstance(plan, dict) else None
+    if not isinstance(entry, dict):
+        return 0.0, 0.0
+    try:
+        start = max(0.0, float(entry.get("start") or 0.0))
+        end = max(0.0, float(entry.get("end") or 0.0))
+    except (TypeError, ValueError):
+        _fail("mod_plan voice window must be numbers of seconds")
+    if end and end <= start:
+        _fail(f"mod_plan voice window ends at {end:g}s, which is not after "
+              f"its {start:g}s start")
+    return start, end
+
+
 def stored_plan(name):
     """The `mod_plan` a saved RefMod was built from, or `{}`.
 
@@ -340,17 +386,30 @@ def stored_plan(name):
         return {}
     if not (stills or clip or voice):
         return {}
-    return {"stills": stills, "clip": clip, "voice": voice}
+    out = {"stills": stills, "clip": clip, "voice": voice}
+    if voice:
+        try:
+            start, end = voice_window(plan)
+        except ValueError:
+            start, end = 0.0, 0.0
+        if start or end:
+            out["voice_start"], out["voice_end"] = start, end
+    return out
 
 
 def stored_voice(name):
-    """The sound file a saved RefMod names, or `""`.
+    """`{"file", "start", "end"}` for the voice a saved RefMod names, or `{}`.
 
     A reference row that cites the mod and leaves its own voice empty
-    inherits this, so the character is assembled once in the builder and
-    the rail only has to point at it.
+    inherits this, window and all, so the character is assembled once in the
+    builder and the rail only has to point at it.
     """
-    return str(stored_plan(name).get("voice") or "")
+    plan = stored_plan(name)
+    if not plan.get("voice"):
+        return {}
+    return {"file": str(plan["voice"]),
+            "start": float(plan.get("voice_start") or 0.0),
+            "end": float(plan.get("voice_end") or 0.0)}
 
 
 def _load_tensor(path, key):

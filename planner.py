@@ -964,8 +964,10 @@ def _merge_register(base_text, patch_text, keep=None):
 # `source`, `strength` and `voice` are the same case: the writer is never
 # told they exist, so every written row came back an image row, and Accept
 # turned each RefMod on the rail into a still named after a file that is not
-# in h3_refs.
-RAIL_ONLY_FIELDS = ("mp", "source", "strength", "voice")
+# in h3_refs. `voice_start` / `voice_end` go with `voice`: a window the
+# writer cannot see is a window Accept would otherwise erase.
+RAIL_ONLY_FIELDS = ("mp", "source", "strength", "voice", "voice_start",
+                    "voice_end")
 
 
 def _restore_rail_only(ref_text, pinned):

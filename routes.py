@@ -66,6 +66,15 @@ MAX_UPLOAD_FILES = 32
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 
 
+def _secs_or_none(value):
+    """A positive trim point, or None for unset / 0 / junk."""
+    try:
+        out = float(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return out if out > 0 else None
+
+
 def _pinned_refs(raw, limit):
     """Rail rows from the Write-plan POST. Only rows with a tag and a file."""
     out = []
@@ -112,6 +121,10 @@ def _pinned_refs(raw, limit):
             "source": source,
             "strength": strength,
             "voice": str(r.get("voice") or "").strip() or None,
+            # None rather than 0, as for `mp`: 0 is "untrimmed", and an unset
+            # field must come back absent, not written as a zero.
+            "voice_start": _secs_or_none(r.get("voice_start")),
+            "voice_end": _secs_or_none(r.get("voice_end")),
         })
         if len(out) >= int(limit):
             break

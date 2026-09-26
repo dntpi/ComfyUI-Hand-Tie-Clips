@@ -253,7 +253,11 @@ class HTCRefModBuilder:
             if clip:
                 plan_used["clip"] = dict(clip)
             if voice:
-                plan_used["voice"] = voice
+                v_start, v_end = _refmod.voice_window(mod_plan)
+                # The object form only when trimmed, so an untrimmed mod
+                # writes the header it always has.
+                plan_used["voice"] = ({"file": voice, "start": v_start, "end": v_end}
+                                      if v_start or v_end else voice)
             if images is not None or video is not None:
                 print(f"[{TAG}] mod_plan names sources, so the images/video "
                       f"sockets are ignored", flush=True)

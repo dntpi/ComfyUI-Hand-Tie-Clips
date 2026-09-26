@@ -553,10 +553,29 @@ export function createTimeline(node, { editor, onChange } = {}) {
         inspector.dataset.shot = String(idx);
         const head = el("div", "h3e-tl-inspector-head");
         head.appendChild(el("span", "h3e-tl-dim", `editing shot ${idx + 1} -- the same card as SCRIPT`));
-        head.appendChild(button("×", "Close", () => {
+        const actions = el("span", "h3e-tl-inspector-actions");
+        // Words, not a second ×: the card below has its own × (delete), and
+        // two identical glyphs stacked is how "close" got clicked for "remove".
+        // Removing a shot that has a render is two clicks, the first arming it.
+        const rendered = Boolean(run()?.hops?.[idx]?.key);
+        const remove = button(`remove shot ${idx + 1}`,
+            rendered ? "Delete this shot from the plan. Its cached render stays until the "
+                + "cache sweeps it." : "Delete this shot from the plan.",
+            () => {
+                if (rendered && !remove.classList.contains("h3e-tl-armed")) {
+                    remove.classList.add("h3e-tl-armed");
+                    remove.textContent = `click again to remove shot ${idx + 1}`;
+                    return;
+                }
+                inspected = null;
+                editor.removeShot(idx);
+            }, "h3e-btn h3e-tl-remove");
+        actions.appendChild(remove);
+        actions.appendChild(button("close", "Close the editor", () => {
             inspected = null;
             render();
-        }, "h3e-btn h3e-x"));
+        }, "h3e-btn"));
+        head.appendChild(actions);
         inspector.appendChild(head);
         const card = editor.cardFor(idx);
         if (card) inspector.appendChild(card);

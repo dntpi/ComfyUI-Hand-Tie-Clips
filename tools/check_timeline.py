@@ -194,6 +194,10 @@ def test_wiring():
        and "editor.appendShot()" in tl)
     ck("a block opens the SCRIPT card itself, not a copy",
        "function cardFor(index)" in pe and "editor.cardFor(idx)" in tl)
+    ck("a shot is removed through the editor, the card's × included",
+       "function removeShot(index)" in pe and "() => removeShot(index)" in pe
+       and "editor.removeShot(idx)" in tl)
+    ck("removing a rendered shot takes two clicks", "h3e-tl-armed" in tl)
     ck("the inspector is not rebuilt under the caret",
        "inspector.contains(document.activeElement)" in tl)
     ck("pin_only's skipped last-hop refine is in that hop's key",

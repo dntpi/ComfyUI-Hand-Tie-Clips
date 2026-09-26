@@ -403,6 +403,13 @@ export function createPlanEditor(node, { onChange }) {
         return shots.length - 1;
     }
 
+    /** Delete shot `index` (0-based). The card's × and the timeline both call it. */
+    function removeShot(index) {
+        if (!shots[index]) return;
+        shots.splice(index, 1);
+        commit();
+    }
+
     /** The SCRIPT card for shot `index`, unfolded, for editing elsewhere.
      *  The same builder the list uses, so both write the same `shot_plan`. */
     function cardFor(index) {
@@ -526,10 +533,8 @@ export function createPlanEditor(node, { onChange }) {
             () => toggleLock(index), "h3e-btn h3e-lock");
         lock.classList.toggle("h3e-on", Boolean(shot.locked));
         bar.appendChild(lock);
-        bar.appendChild(button("×", "Delete this shot", () => {
-            shots.splice(index, 1);
-            commit();
-        }, "h3e-btn h3e-x"));
+        bar.appendChild(button("×", "Delete this shot", () => removeShot(index),
+                               "h3e-btn h3e-x"));
         card.appendChild(bar);
 
         card.addEventListener("dragover", (e) => { e.preventDefault(); card.classList.add("h3e-drop"); });
@@ -773,5 +778,5 @@ export function createPlanEditor(node, { onChange }) {
     // the same functions the cards use -- no second copy of either rule.
     return { root, render: renderCards, reload, mode, timing,
              shots: () => shots, renderRange, toggleSolo, toggleLock,
-             appendShot, cardFor };
+             appendShot, removeShot, cardFor };
 }

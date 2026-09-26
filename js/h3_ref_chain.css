@@ -1394,3 +1394,7 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 .h3e-tl-next { font-size: var(--h3-tl-fs); line-height: 24px; }
 .h3e-tl-extend-plus { font-size: 28px; }
 .h3e-tl-track { gap: 6px; }
+.h3e-tl-inspector-actions { display: inline-flex; gap: 4px; }
+.h3e-root .h3e-tl-remove:hover, .h3e-root .h3e-tl-remove.h3e-tl-armed {
+    border-color: var(--h3-error); color: var(--h3-error);
+}

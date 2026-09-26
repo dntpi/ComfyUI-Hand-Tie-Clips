@@ -772,6 +772,25 @@ hop that was never cached cannot be reused. It needs nothing installed --
 the lossless FFV1 encode runs in process through PyAV, which ComfyUI already
 ships.
 
+### The TIMELINE tab
+
+A retake board over the cache. Each shot is a block on a real time ruler, with
+its own ⏵ (render only this shot) and lock. Under each block is that hop's
+cached render: **hover to scrub it, click to play it** with its sound. Under
+each join is a mark: **click it to play the join** -- the last two seconds of
+one hop into the first two of the next, trimmed exactly as the master is. ▲
+marks a join that was never generated together (below).
+
+The bottom row is a **preview** of what the next queue would re-render, built
+from what you edited since the last run. It follows the rules in the next
+section, but it cannot see everything: a LoRA swapped on the MODEL wire, or a
+reference file replaced under the same name, only shows up when you queue.
+
+What it plays is the cache, not the delivered video: hops before tone
+correction, without the 40 ms audio crossfade at each join. And the cache lives
+in ComfyUI's temp folder, which is emptied every time ComfyUI starts -- after a
+restart the film row says "not in cache" until you queue again.
+
 ### Editing a hop invalidates that hop and everything after it
 
 Every hop is rendered from the previous hop's tail, so the cache key **chains**:

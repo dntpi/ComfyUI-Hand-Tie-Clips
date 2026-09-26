@@ -47,6 +47,15 @@ PLAN_ROUTE = "/h3_ref_chain/plan"
 SWAP_PLAN_ROUTE = "/h3_ref_chain/swap_plan"
 SWAP_DESCRIBE_ROUTE = "/h3_ref_chain/swap_describe"
 UNLOAD_ROUTE = "/h3_ref_chain/llm/unload"
+HOP_SPRITE_ROUTE = "/h3_ref_chain/hop_sprite"
+HOP_CLIP_ROUTE = "/h3_ref_chain/hop_clip"
+SEAM_CLIP_ROUTE = "/h3_ref_chain/seam_clip"
+
+# Scrub sheets for the timeline, keyed (hop key, n). A hop key names content,
+# so an entry can never go stale -- only the cache behind it can vanish, and
+# then the route says so. Cleared wholesale, like _PEAKS; ~90 KB each.
+_SPRITES = {}
+_SPRITES_MAX = 64
 
 # Decoded waveform summaries, keyed (name, mtime, n).
 #
@@ -888,5 +897,163 @@ def register():
             print(f"[{TAG}] SWAP wrote a 1-hop plan in {out.get('attempts')} "
                   f"attempt(s)", flush=True)
         return web.json_response(out)
+
+    # -- the retake timeline: pictures and playback of cached hops --------
+    #
+    # Read-only views of the hop store, shaped like /peaks: the decode and
+    # the encode run in an executor, never on the event loop. A key the store
+    # does not hold is a 404 with `missing: true` -- the cache lives in
+    # ComfyUI's temp folder, which is wiped on every start, so "not there" is
+    # the ordinary state after a restart, not an error.
+
+    def _hop_store():
+        import folder_paths
+        from . import store as _store
+
+        root = _os.path.join(folder_paths.get_temp_directory(), "h3_ref_chain_hops")
+        return _store.HopStore(root) if _os.path.isdir(root) else None
+
+    def _key_arg(request, name="key"):
+        key = str(request.query.get(name) or "").strip().lower()
+        # Hex only: the key becomes a filename, so nothing else gets near a path.
+        if not key or len(key) > 128 or any(c not in "0123456789abcdef" for c in key):
+            return None
+        return key
+
+    def _missing(what):
+        return web.json_response(
+            {"ok": False, "missing": True,
+             "error": f"{what} is not in the hop cache (ComfyUI restarted, the "
+                      f"cache was swept, or cache_hops is off). Queue once."},
+            status=404)
+
+    async def _run(work):
+        import asyncio
+
+        return await asyncio.get_running_loop().run_in_executor(None, work)
+
+    @instance.routes.get(HOP_SPRITE_ROUTE)
+    async def _hop_sprite(request):
+        """A hop's scrub sheet: `n` frames side by side, JPEG."""
+        from . import strip as _strip
+
+        key = _key_arg(request)
+        if key is None:
+            return web.json_response({"ok": False, "error": "bad key"}, status=400)
+        try:
+            n = max(1, min(64, int(request.query.get("n") or _strip.SPRITE_N)))
+        except ValueError:
+            n = _strip.SPRITE_N
+        hit = _SPRITES.get((key, n))
+        if hit is None:
+            hs = _hop_store()
+            if hs is None or not hs.has(key):
+                return _missing(f"hop {key[:8]}")
+
+            def work():
+                # Only the n frames the sheet shows, decoded small. `get()`
+                # would build a full-resolution float copy of the whole hop.
+                info = hs.meta(key)
+                if info is None:
+                    return None
+                total = int(info["frames"])
+                idx = [round(j * (total - 1) / max(1, n - 1)) for j in range(n)]
+                frames = hs.frames(key, _strip.SPRITE_H, idx)
+                return None if frames is None else _strip.sprite(frames, n)
+
+            try:
+                hit = await _run(work)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{TAG}] hop_sprite failed for {key[:8]}: {exc!r}", flush=True)
+                return web.json_response({"ok": False, "error": str(exc)}, status=500)
+            if hit is None:
+                return _missing(f"hop {key[:8]}")
+            if len(_SPRITES) >= _SPRITES_MAX:
+                _SPRITES.clear()
+            _SPRITES[(key, n)] = hit
+        return web.Response(body=hit[0], content_type="image/jpeg",
+                            headers={"X-Cells": str(hit[1]),
+                                     "Cache-Control": "max-age=3600"})
+
+    async def _serve_clip(name, build):
+        """Encode once into the store's preview folder, then serve the file.
+
+        A file response, because a browser `<video>` seeks with byte ranges.
+        The folder sits inside the hop store, so it is wiped with it.
+        """
+        hs = _hop_store()
+        if hs is None:
+            return None
+        out_dir = _os.path.join(hs.root, "previews")
+        _os.makedirs(out_dir, exist_ok=True)
+        path = _os.path.join(out_dir, name + ".mp4")
+        if not _os.path.exists(path):
+            ok = await _run(lambda: build(hs, path))
+            if not ok:
+                return None
+        return web.FileResponse(path, headers={"Content-Type": "video/mp4"})
+
+    @instance.routes.get(HOP_CLIP_ROUTE)
+    async def _hop_clip(request):
+        """One cached hop, whole, with its audio, as a small MP4."""
+        from . import strip as _strip
+
+        key = _key_arg(request)
+        if key is None:
+            return web.json_response({"ok": False, "error": "bad key"}, status=400)
+
+        def build(hs, path):
+            frames = hs.frames(key, _strip.CLIP_H)
+            sound = hs.audio(key)
+            if frames is None or sound is None:
+                return False
+            _strip.encode_clip(frames, sound[0], sound[1], path, fps=hs.fps)
+            return True
+
+        try:
+            resp = await _serve_clip("hop_" + key, build)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{TAG}] hop_clip failed for {key[:8]}: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        return resp or _missing(f"hop {key[:8]}")
+
+    @instance.routes.get(SEAM_CLIP_ROUTE)
+    async def _seam_clip(request):
+        """A join as the master delivers it: `a`'s tail, then `b` past the trim.
+
+        `trim` is the overlap in frames, 0 for a restart. The timeline passes
+        the value the run itself used, from the run record.
+        """
+        from . import strip as _strip
+
+        a = _key_arg(request, "a")
+        b = _key_arg(request, "b")
+        if a is None or b is None:
+            return web.json_response({"ok": False, "error": "bad key"}, status=400)
+        try:
+            trim = max(0, min(240, int(request.query.get("trim") or 0)))
+        except ValueError:
+            trim = 0
+
+        def build(hs, path):
+            ma, mb = hs.meta(a), hs.meta(b)
+            sa, sb = hs.audio(a), hs.audio(b)
+            if None in (ma, mb, sa, sb):
+                return False
+            ia, ib = _strip.seam_indices(ma["frames"], mb["frames"], trim, fps=hs.fps)
+            fa = hs.frames(a, _strip.CLIP_H, ia)
+            fb = hs.frames(b, _strip.CLIP_H, ib)
+            if fa is None or fb is None:
+                return False
+            imgs, wav = _strip.seam(fa, sa[0], fb, sb[0], sa[1], trim, fps=hs.fps)
+            _strip.encode_clip(imgs, wav, sa[1], path, fps=hs.fps)
+            return True
+
+        try:
+            resp = await _serve_clip(f"seam_{a}_{b}_{trim}", build)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{TAG}] seam_clip failed for {a[:8]}|{b[:8]}: {exc!r}", flush=True)
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        return resp or _missing(f"the {a[:8]}|{b[:8]} join")
 
     return True

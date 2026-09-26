@@ -503,3 +503,20 @@ export function isolateEvents(root) {
         canvasEl.dispatchEvent(new WheelEvent(e.type, e));
     }, { passive: false });
 }
+
+/** Mirrors getNodeByExecutionId (not exported); subgraph-aware. */
+export function findNodeByQualifiedId(rootGraph, qid) {
+    if (!rootGraph || qid == null) return null;
+    const parts = String(qid).split(":");
+    let graph = rootGraph;
+    for (let i = 0; i < parts.length - 1; i++) {
+        const parentId = parseInt(parts[i], 10);
+        if (!Number.isFinite(parentId)) return null;
+        const parentNode = graph?.getNodeById?.(parentId);
+        if (!parentNode?.subgraph) return null;
+        graph = parentNode.subgraph;
+    }
+    const leafId = parseInt(parts[parts.length - 1], 10);
+    if (!Number.isFinite(leafId)) return null;
+    return graph?.getNodeById?.(leafId) || null;
+}

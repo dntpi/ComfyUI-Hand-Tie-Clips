@@ -21,6 +21,7 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { findNodeByQualifiedId } from "./editor/widget_utils.js";
 
 /* Both ids. The pack registers the pre-rename id as a deprecated subclass so
  * workflows saved before 2026-08-29 still load. If this check knew only the
@@ -46,23 +47,6 @@ function el(tag, className, text) {
     if (className) n.className = className;
     if (text != null) n.textContent = text;
     return n;
-}
-
-/** Mirrors getNodeByExecutionId (not exported); subgraph-aware. */
-function findNodeByQualifiedId(rootGraph, qid) {
-    if (!rootGraph || qid == null) return null;
-    const parts = String(qid).split(":");
-    let graph = rootGraph;
-    for (let i = 0; i < parts.length - 1; i++) {
-        const parentId = parseInt(parts[i], 10);
-        if (!Number.isFinite(parentId)) return null;
-        const parentNode = graph?.getNodeById?.(parentId);
-        if (!parentNode?.subgraph) return null;
-        graph = parentNode.subgraph;
-    }
-    const leafId = parseInt(parts[parts.length - 1], 10);
-    if (!Number.isFinite(leafId)) return null;
-    return graph?.getNodeById?.(leafId) || null;
 }
 
 /**

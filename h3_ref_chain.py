@@ -4616,6 +4616,7 @@ class HandTieClips:
             # must show staleness before queuing or it reads as a bug.
             hop_key = None
             cached = None
+            locked_served = False
             # A restart outranks a forced `pin_mech`: it relays nothing, so
             # there is no mechanism left to pick. Asking for motion_context on
             # a restart hop is not a contradiction to raise on, it is a setting
@@ -4788,6 +4789,7 @@ class HandTieClips:
                                   f"pin hop {i}'s ending with last_frame_guide "
                                   f"or anchor=restart.", flush=True)
                         hop_key = pinned
+                        locked_served = True
                     else:
                         print(f"[{TAG}] hop {i + 1} is locked but has no cached "
                               f"render yet; rendering it once", flush=True)
@@ -5268,7 +5270,23 @@ class HandTieClips:
                       "seed": int(shot_seed) if cached is None else None,
                       "steps": int(hop_steps) if cached is None else None,
                       "tone": tone_note or None,
-                      "unpaired": (i + 1) in unpaired_joins})
+                      "unpaired": (i + 1) in unpaired_joins,
+                      # The retake timeline's run record: which render this
+                      # hop is, how it was obtained, and where it sits on the
+                      # master. Full key, because the timeline fetches the
+                      # hop's pictures and playback by it.
+                      "timeline": {
+                          "key": hop_key,
+                          "shot_id": str(shot.get("id") or f"s{i + 1}"),
+                          "status": ("locked" if locked_served
+                                     else "cached" if cached is not None
+                                     else "rendered"),
+                          "restart": bool(hop_is_start and i > 0),
+                          "start": int(write_pos - keep_n),
+                          "delivered": int(keep_n),
+                          "overlap": int(overlap_n),
+                          "fps": int(FPS),
+                      }})
             del imgs, wav, audio
             pbar.update(1)
 

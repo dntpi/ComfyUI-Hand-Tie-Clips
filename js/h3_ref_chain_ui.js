@@ -10,6 +10,7 @@ import { createRunPanel } from "./editor/run_panel.js";
 import { createWriterBar } from "./editor/writer_bar.js";
 import { createVideoSwap } from "./editor/video_swap.js";
 import { createMediaStrip, MEDIA_WIDGETS } from "./editor/media_strip.js";
+import { createTimeline } from "./editor/timeline.js";
 
 const VERSION = "v2.2.0";
 /* Both ids. The pack registers the pre-rename id as a deprecated subclass so
@@ -169,9 +170,14 @@ function mountEditor(node) {
             // Without this the box keeps the previous chain's width until
             // something else happens to rebuild the strip.
             mediaStrip?.render();
+            timeline?.render();
             node.graph?.setDirtyCanvas?.(true, true);
         },
     });
+
+    // Declared before the run panel because both panels' onChange redraw it:
+    // solo and lock are driven from here and from the cards and RUN alike.
+    let timeline = null;
 
     const runPanel = createRunPanel(node, {
         onChange: () => {
@@ -181,6 +187,8 @@ function mountEditor(node) {
             // and only ever on a user gesture.
             editor.render();
             syncRailHops();
+            timeline?.render();
+            syncBadges();
             node.graph?.setDirtyCanvas?.(true, true);
         },
         hopCount,
@@ -189,6 +197,16 @@ function mountEditor(node) {
         // in SHOTS_HIDDEN, so dropping them here leaves them hidden rather than
         // offering a control that does nothing.
         suppressed: () => (editor.mode() === "shots" ? ["chains", "hop_script"] : []),
+    });
+
+    timeline = createTimeline(node, {
+        editor,
+        // Badges only: a redraw of the timeline must never redraw the editor.
+        // A workflow saved on this tab draws it while the tabs are built,
+        // before syncBadges exists; the refresh after configure badges it.
+        onChange: () => {
+            try { syncBadges(); } catch { /* not mounted yet */ }
+        },
     });
 
     mediaStrip = createMediaStrip(node, {
@@ -269,6 +287,7 @@ function mountEditor(node) {
     const tabs = createTabs([
         { id: "script", label: "Script", title: "The shot list", body: editor.root },
         { id: "refs", label: "Refs", title: "Reference pictures and @tags", body: rail.root },
+        { id: "timeline", label: "Timeline", title: "Retake board: each hop's render, the joins, and what the next queue re-renders", body: timeline.root },
         { id: "media", label: "Media", title: "Start image, reference clip, voice, soundtrack", body: mediaStrip.root },
         { id: "write", label: "Write", title: "Draft a plan with a local model", body: writer.root },
         { id: "swap", label: "Swap", title: "One-hop identity swap from clip 1", body: videoSwap.root },
@@ -281,6 +300,7 @@ function mountEditor(node) {
             // opening it here keeps that laziness (nothing is fetched until you
             // visit the tab) while making the pane usable once you have.
             if (id === "write") writer.root.open = true;
+            if (id === "timeline") timeline.render();
             if (id === "swap") {
                 videoSwap.root.open = true;
                 videoSwap.render?.();
@@ -322,6 +342,7 @@ function mountEditor(node) {
         try {
             tabs.badge("script", hopCount());
             tabs.badge("refs", (refPlan.refs || []).length || "");
+            tabs.badge("timeline", timeline.badge());
         } catch (err) {
             // Decoration. A bad count must never take the refresh down with it.
             console.warn("[HandTieClips] tab badges:", err);
@@ -345,6 +366,7 @@ function mountEditor(node) {
             writer.restore();
             writer.syncHops();
             videoSwap.render?.();
+            timeline.render();
             applyVisibility();   // syncs the run panel on the way through
             syncBadges();
         },
@@ -353,6 +375,7 @@ function mountEditor(node) {
         runPanel,
         writer,
         swap: videoSwap,
+        timeline,
         tabs,
     };
 
@@ -387,6 +410,9 @@ function mountEditor(node) {
         }
         try { videoSwap.destroy?.(); } catch (err) {
             console.error("[HandTieClips] SWAP teardown failed:", err);
+        }
+        try { timeline.destroy(); } catch (err) {
+            console.error("[HandTieClips] timeline teardown failed:", err);
         }
         return prevRemoved?.apply(this, args);
     };

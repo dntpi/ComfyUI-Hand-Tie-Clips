@@ -372,6 +372,25 @@ export function createPlanEditor(node, { onChange }) {
         t.callback?.(t.value);
     }
 
+    /** Arm or clear "render only shot N". Shared by the card's ⏵ and the
+     *  timeline, so the two can never disagree about what solo means. */
+    function toggleSolo(shotNo) {
+        const now = renderRange();
+        const solo = now.from === shotNo && now.through === shotNo;
+        setRenderRange(solo ? 0 : shotNo, solo ? 0 : shotNo);
+        renderCards();
+        onChange?.();
+    }
+
+    /** Flip `locked` on shot `index` (0-based). Same path as the card's button. */
+    function toggleLock(index) {
+        const shot = shots[index];
+        if (!shot) return;
+        if (shot.locked) delete shot.locked;
+        else shot.locked = true;
+        commit();
+    }
+
     /** 1-based shot number against the range. 0 on either end means open. */
     function inRange(shotNo, { from, through }) {
         return (!from || shotNo >= from) && (!through || shotNo <= through);
@@ -473,13 +492,7 @@ export function createPlanEditor(node, { onChange }) {
         const only = button("⏵", `Render only shot ${shotNo}: everything before `
             + "it is replayed from the hop cache and everything after is left "
             + "alone. Needs cache_hops=on. Click again to clear.",
-            () => {
-                const now = renderRange();
-                const solo = now.from === shotNo && now.through === shotNo;
-                setRenderRange(solo ? 0 : shotNo, solo ? 0 : shotNo);
-                renderCards();
-                onChange?.();
-            }, "h3e-btn h3e-only");
+            () => toggleSolo(shotNo), "h3e-btn h3e-only");
         only.classList.toggle("h3e-on",
                               range.from === shotNo && range.through === shotNo);
         bar.appendChild(only);
@@ -489,11 +502,7 @@ export function createPlanEditor(node, { onChange }) {
         const lock = button("lock", "Reuse this shot's cached render even when "
             + "its inputs change -- freeze it while you work on the others. "
             + "Needs cache_hops=on.",
-            () => {
-                if (shot.locked) delete shot.locked;
-                else shot.locked = true;
-                commit();
-            }, "h3e-btn h3e-lock");
+            () => toggleLock(index), "h3e-btn h3e-lock");
         lock.classList.toggle("h3e-on", Boolean(shot.locked));
         bar.appendChild(lock);
         bar.appendChild(button("×", "Delete this shot", () => {
@@ -739,5 +748,8 @@ export function createPlanEditor(node, { onChange }) {
     // `timing` is exported so the master-audio window can be drawn the width
     // of the chain. It reads the LIVE card list, not the shot_plan widget, so
     // the box resizes as shots are added rather than on the next accept.
-    return { root, render: renderCards, reload, mode, timing };
+    // The timeline reads the live card list and drives solo and lock through
+    // the same functions the cards use -- no second copy of either rule.
+    return { root, render: renderCards, reload, mode, timing,
+             shots: () => shots, renderRange, toggleSolo, toggleLock };
 }

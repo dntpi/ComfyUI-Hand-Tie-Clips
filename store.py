@@ -405,6 +405,48 @@ class HopStore:
         os.utime(self._p(key, VIDEO_EXT), None)  # LRU touch
         return imgs, wav, int(info["sample_rate"]), self._get_latent(key)
 
+    def frames(self, key, height, indices=None):
+        """8-bit RGB frames of a cached hop, scaled to `height`, or None.
+
+        For the timeline's pictures and previews, never for rendering: `get()`
+        is the lossless path. Scaled while decoding and kept only at
+        `indices` (all frames when None), so a 24-frame scrub sheet of a 10 s
+        768p hop holds 24 small frames instead of the ~3 GB float copy `get()`
+        builds.
+        """
+        info = self.meta(key)
+        if info is None or not self.has(key):
+            return None
+        n = int(info["frames"])
+        hgt, wid = int(info["height"]), int(info["width"])
+        th = max(2, min(int(height), hgt) // 2 * 2)
+        tw = max(2, int(round(wid * th / float(hgt))) // 2 * 2)
+        want = None if indices is None else {int(i) for i in indices if 0 <= int(i) < n}
+        out = {}
+        container = av.open(self._p(key, VIDEO_EXT))
+        try:
+            for i, frame in enumerate(container.decode(container.streams.video[0])):
+                if i >= n:
+                    break
+                if want is not None and i not in want:
+                    continue
+                out[i] = frame.to_ndarray(width=tw, height=th, format="rgb24")
+                if want is not None and len(out) == len(want):
+                    break
+        finally:
+            container.close()
+        if not out:
+            return None
+        order = sorted(out) if indices is None else [int(i) for i in indices if int(i) in out]
+        return np.stack([out[i] for i in order])
+
+    def audio(self, key):
+        """`(waveform numpy, sample_rate)` of a cached hop, or None."""
+        info = self.meta(key)
+        if info is None or not self.has(key):
+            return None
+        return np.load(self._p(key, AUDIO_EXT)), int(info["sample_rate"])
+
     def meta(self, key):
         """The entry's meta JSON, or None. Reads no frames."""
         try:

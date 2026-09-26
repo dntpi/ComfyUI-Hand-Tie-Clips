@@ -1274,3 +1274,93 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 .h3e-voice {
     border-left: 2px solid var(--h3-accent);
 }
+
+
+/* -- TIMELINE: the retake board ------------------------------------------- */
+
+.h3e-tl-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.h3e-tl-zoom { display: inline-flex; align-items: center; gap: 3px; }
+.h3e-tl-dim { font-size: var(--h3-fs-xs); color: var(--h3-faint); margin-right: 2px; }
+.h3e-root .h3e-tl-zbtn { min-width: 26px; padding: 1px 5px; }
+.h3e-tl-status { font-size: var(--h3-fs-xs); color: var(--h3-muted); }
+
+/* Horizontal scroll inside the pane: a 20-hop plan scrolls rather than
+ * demanding a wider node. The label column stays put while it scrolls. */
+.h3e-tl-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+.h3e-tl-track { display: flex; flex-direction: column; gap: 3px; }
+.h3e-tl-row { display: flex; align-items: stretch; }
+.h3e-tl-label {
+    position: sticky; left: 0; z-index: 2;
+    flex: 0 0 44px; width: 44px;
+    font-size: var(--h3-fs-xs); color: var(--h3-faint); text-transform: uppercase;
+    letter-spacing: .06em; padding-top: 2px;
+    background: var(--h3-panel);
+}
+.h3e-tl-lane { position: relative; flex: 0 0 auto; }
+
+.h3e-tl-tick {
+    position: absolute; top: 0; height: 5px; border-left: 1px solid var(--h3-line);
+    font-size: var(--h3-fs-xs); color: var(--h3-faint); padding-left: 2px;
+    white-space: nowrap;
+}
+.h3e-tl-tick-major { height: 14px; border-left-color: var(--h3-muted); }
+
+.h3e-tl-block {
+    position: absolute; top: 0; bottom: 0; overflow: hidden;
+    border: 1px solid var(--h3-border-soft); border-radius: var(--h3-radius-sm);
+    background: var(--h3-sunken); padding: 3px 4px;
+    display: flex; flex-direction: column; gap: 2px;
+}
+.h3e-tl-block.h3e-tl-locked { border-color: color-mix(in srgb, var(--h3-accent) 60%, transparent); }
+.h3e-tl-block.h3e-tl-restart { border-left: 3px solid var(--h3-warn); }
+.h3e-tl-bhead { display: flex; align-items: center; gap: 3px; }
+.h3e-tl-no { font-weight: 700; margin-right: auto; }
+.h3e-root .h3e-tl-mini { padding: 0 4px; font-size: var(--h3-fs-xs); line-height: 14px; }
+.h3e-tl-peek, .h3e-tl-meta {
+    font-size: var(--h3-fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.h3e-tl-meta { color: var(--h3-muted); }
+
+.h3e-tl-filmwrap { position: absolute; top: 0; }
+.h3e-tl-film {
+    background-color: var(--h3-sunken); background-repeat: no-repeat;
+    border: 1px solid var(--h3-border-soft); border-radius: var(--h3-radius-sm);
+    cursor: pointer;
+}
+.h3e-tl-film.h3e-tl-film-empty {
+    cursor: default;
+    background-image: repeating-linear-gradient(45deg, transparent 0 6px,
+        color-mix(in srgb, var(--h3-faint) 18%, transparent) 6px 7px);
+}
+.h3e-tl-cap {
+    font-size: var(--h3-fs-xs); color: var(--h3-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.h3e-tl-seam {
+    position: absolute; top: 2px; font-size: var(--h3-fs-xs); color: var(--h3-muted);
+    white-space: nowrap;
+}
+.h3e-tl-seam.h3e-tl-click { cursor: pointer; }
+.h3e-tl-seam.h3e-tl-click:hover { color: var(--h3-accent); }
+.h3e-tl-seam.h3e-tl-bad { color: var(--h3-error); font-weight: 700; }
+
+.h3e-tl-next {
+    position: absolute; top: 0; bottom: 0; text-align: center;
+    font-size: var(--h3-fs-xs); line-height: 18px; border-radius: var(--h3-radius-sm);
+    border: 1px solid var(--h3-border-soft); color: var(--h3-muted);
+    white-space: nowrap; overflow: hidden;
+}
+.h3e-tl-next-render { color: var(--h3-warn); border-color: color-mix(in srgb, var(--h3-warn) 60%, transparent); }
+.h3e-tl-next-locked { color: var(--h3-accent); }
+.h3e-tl-next-skip { opacity: .5; }
+.h3e-tl-next-replay-miss { color: var(--h3-error); border-color: var(--h3-error); }
+
+.h3e-tl-why { margin-top: 4px; }
+.h3e-tl-warn { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+
+.h3e-tl-player { margin-top: 6px; border-top: 1px solid var(--h3-line); padding-top: 4px; }
+.h3e-tl-player[hidden] { display: none; }
+.h3e-tl-player-head { display: flex; align-items: center; justify-content: space-between; }
+.h3e-tl-player-title { font-size: var(--h3-fs-xs); color: var(--h3-muted); }
+.h3e-tl-video { width: 100%; max-height: 360px; background: #000; margin-top: 3px; }

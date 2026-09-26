@@ -31,6 +31,28 @@ CONTROL_HZ = 1000.0
 EPS = 1e-9
 
 
+def resample(x, sr, target_sr):
+    """Hann-windowed sinc resample, from whichever library this install has.
+
+    Core dropped torchaudio from its requirements (ComfyUI b16023b, 2026-09-21)
+    and ships `comfy.audio.resample` with the same signature and defaults, so a
+    fresh install has only the one and an older one only the other. Imported
+    lazily either way: this module stays free of ComfyUI imports at load time,
+    and a missing library costs nothing until a rate actually differs.
+    """
+    try:
+        from comfy.audio import resample as _rs  # noqa: PLC0415
+    except ImportError:
+        try:
+            from torchaudio.functional import resample as _rs  # noqa: PLC0415
+        except ImportError:
+            raise RuntimeError(
+                f"resampling {sr} Hz -> {target_sr} Hz needs either a ComfyUI "
+                "with comfy.audio (2026-09-21 or later) or torchaudio; this "
+                "install has neither") from None
+    return _rs(x, int(sr), int(target_sr))
+
+
 def _bcs(x):
     """Anything shaped like audio -> [B, C, S]. Samples are always last."""
     if x.dim() == 1:
@@ -68,8 +90,7 @@ def to_layout(wav, sr, target_sr, target_ch):
     x = x[:1]                                  # a bed is one item, never a batch
     sr, target_sr = int(sr), int(target_sr)
     if sr != target_sr and sr > 0 and target_sr > 0:
-        import torchaudio  # noqa: PLC0415
-        x = torchaudio.functional.resample(x, sr, target_sr)
+        x = resample(x, sr, target_sr)
     c = int(x.shape[1])
     target_ch = max(1, int(target_ch))
     if c != target_ch:

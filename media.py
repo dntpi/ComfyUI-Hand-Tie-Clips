@@ -526,8 +526,8 @@ def load_audio(name, start=0.0, end=0.0, kinds=("audio",)):
     dependency and is what core's own Load Audio decodes with, so a file picked
     in the panel now takes exactly the same path as one arriving down a wire.
 
-    `torchaudio` is still used for `functional.resample` in music.py; it is only
-    the *decoding* half of that library that is gone.
+    Resampling no longer needs torchaudio either: `music.resample` prefers
+    core's `comfy.audio.resample` and falls back to torchaudio on older cores.
 
     `start`/`end` are the trim window in seconds; see `clip_window`. This matters
     most for the voice: `MiniMaxH3ReferenceToVideo` hands the whole file to

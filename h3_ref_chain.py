@@ -1701,8 +1701,7 @@ def _resample_wav(wav, src_sr, dst_sr):
     src_sr, dst_sr = int(src_sr), int(dst_sr)
     if src_sr == dst_sr:
         return wav
-    import torchaudio
-    return torchaudio.functional.resample(wav, src_sr, dst_sr)
+    return _music.resample(wav, src_sr, dst_sr)
 
 
 def _prepare_master_audio(path, start_s=0.0):

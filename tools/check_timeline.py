@@ -188,6 +188,17 @@ def test_wiring():
     ck("solo and lock go through the plan editor's own functions",
        "editor.toggleSolo(" in tl and "editor.toggleLock(" in tl)
     ck("geometry comes from editor.timing()", "editor.timing()" in tl)
+    pe = open(os.path.join(HERE, "js", "editor", "plan_editor.js"), encoding="utf-8").read()
+    ck("extend appends through the editor, with a free id",
+       "function appendShot()" in pe and "shot.id = freeId();" in pe
+       and "editor.appendShot()" in tl)
+    ck("a block opens the SCRIPT card itself, not a copy",
+       "function cardFor(index)" in pe and "editor.cardFor(idx)" in tl)
+    ck("the inspector is not rebuilt under the caret",
+       "inspector.contains(document.activeElement)" in tl)
+    ck("pin_only's skipped last-hop refine is in that hop's key",
+       'hop_payload["refine"].append("skipped:last")' in src
+       and 'str(hop_refine) == "pin_only" and i >= n - 1' in src)
 
 
 def main():

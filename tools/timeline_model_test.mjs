@@ -93,4 +93,14 @@ ck("render_from past an edited hop needs a replay the cache will not match",
 fc = forecastPlan({ shots: base, rec: null, now });
 ck("no run recorded: everything renders", fc.state.every((s) => s === "render"));
 
+const extended = [...base, shot("s5", "e", { directives: { join: "continuous" } })];
+fc = forecastPlan({ shots: extended, rec, now: snapOf(extended) });
+ck("extend renders only the new shot",
+   fc.state.join() === "keeps,keeps,keeps,keeps,render" && fc.cause[4] === "not in the last run",
+   fc.state.join());
+const unseededExt = [...unseeded, { id: "s5", beat: "e", seed: null }];
+fc = forecastPlan({ shots: unseededExt, rec: recU, now: snapOf(unseededExt), seedCtl: "increment" });
+ck("extend under a moving seed re-renders every unseeded shot",
+   fc.state.every((st) => st === "render"), fc.state.join());
+
 process.exit(failed ? 1 : 0);

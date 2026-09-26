@@ -4752,6 +4752,14 @@ class HandTieClips:
                     # because it really does sample different sigmas.
                     if str(refine_align) != "denoise":
                         hop_payload["refine"].append(str(refine_align))
+                    # pin_only skips the refine on the LAST hop (nothing reads
+                    # its pin). That render is a different hop from the same
+                    # shot refined, and the key has to say so: extend the chain
+                    # and the old last hop is no longer last, so without this
+                    # the cache served its unrefined render and the new hop
+                    # pinned from a latent an uninterrupted run never makes.
+                    if str(hop_refine) == "pin_only" and i >= n - 1:
+                        hop_payload["refine"].append("skipped:last")
                 # Every hop, hop 1 included, and present only when on -- same
                 # byte-identical-when-off rule as the refine above. The LoRA
                 # names and strengths stand in for a fingerprint: the boost

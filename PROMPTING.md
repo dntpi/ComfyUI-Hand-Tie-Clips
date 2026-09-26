@@ -781,6 +781,18 @@ each join is a mark: **click it to play the join** -- the last two seconds of
 one hop into the first two of the next, trimmed exactly as the master is. ▲
 marks a join that was never generated together (below).
 
+**Click a block to edit that shot** right there. It is the SCRIPT card itself,
+not a copy, so SCRIPT changes with it.
+
+**`+ extend`** at the end of the plan row appends a shot that continues the
+chain and opens it for writing. Every shot before it keeps its cache key, so the
+next queue renders **only the new hop**, continuing from the cached last one.
+Two things make it cost more, and the tab says so when they apply: a seed set to
+change on every queue (`control_after_generate` not `fixed`) re-renders every
+shot without its own seed; and a last shot ending at rest (`tail: settle` /
+`hold`) means the new shot opens from rest -- change that tail to carry the
+motion on, and that shot re-renders too.
+
 The bottom row is a **preview** of what the next queue would re-render, built
 from what you edited since the last run. It follows the rules in the next
 section, but it cannot see everything: a LoRA swapped on the MODEL wire, or a

@@ -1364,3 +1364,16 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 .h3e-tl-player-head { display: flex; align-items: center; justify-content: space-between; }
 .h3e-tl-player-title { font-size: var(--h3-fs-xs); color: var(--h3-muted); }
 .h3e-tl-video { width: 100%; max-height: 360px; background: #000; margin-top: 3px; }
+
+.h3e-tl-block { cursor: pointer; }
+.h3e-tl-block.h3e-tl-selected { border-color: var(--h3-accent); background: var(--h3-accent-wash); }
+.h3e-tl-block.h3e-tl-extend {
+    border-style: dashed; align-items: center; justify-content: center;
+    color: var(--h3-muted);
+}
+.h3e-tl-block.h3e-tl-extend:hover { border-color: var(--h3-accent); color: var(--h3-accent); }
+.h3e-tl-extend-plus { font-size: 22px; line-height: 1; }
+
+.h3e-tl-inspector:empty { display: none; }
+.h3e-tl-inspector { margin-top: 6px; border-top: 1px solid var(--h3-line); padding-top: 4px; }
+.h3e-tl-inspector-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }

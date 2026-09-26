@@ -391,6 +391,27 @@ export function createPlanEditor(node, { onChange }) {
         commit();
     }
 
+    /** Append a shot that continues the chain; returns its 0-based index.
+     *  `freeId`, not `s${n}`: after a delete or a reorder `s${n}` can already
+     *  be taken, and two shots sharing an id share a cache pointer. */
+    function appendShot() {
+        const shot = blankShot(shots.length);
+        shot.id = freeId();
+        if (shots.length) shot.directives = { join: "continuous" };
+        shots.push(shot);
+        commit();
+        return shots.length - 1;
+    }
+
+    /** The SCRIPT card for shot `index`, unfolded, for editing elsewhere.
+     *  The same builder the list uses, so both write the same `shot_plan`. */
+    function cardFor(index) {
+        if (!shots[index]) return null;
+        const card = renderCard(shots[index], index);
+        card.classList.remove("h3e-collapsed");
+        return card;
+    }
+
     /** 1-based shot number against the range. 0 on either end means open. */
     function inRange(shotNo, { from, through }) {
         return (!from || shotNo >= from) && (!through || shotNo <= through);
@@ -751,5 +772,6 @@ export function createPlanEditor(node, { onChange }) {
     // The timeline reads the live card list and drives solo and lock through
     // the same functions the cards use -- no second copy of either rule.
     return { root, render: renderCards, reload, mode, timing,
-             shots: () => shots, renderRange, toggleSolo, toggleLock };
+             shots: () => shots, renderRange, toggleSolo, toggleLock,
+             appendShot, cardFor };
 }

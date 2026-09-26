@@ -62,6 +62,10 @@ export function createTimeline(node, { editor, onChange } = {}) {
     root.appendChild(forecastNote);
     const warnings = el("div", "h3e-tl-warn");
     root.appendChild(warnings);
+    // The selected shot's SCRIPT card, in place. The same builder SCRIPT uses
+    // (`editor.cardFor`), so an edit here is an edit there.
+    const inspector = el("div", "h3e-tl-inspector");
+    root.appendChild(inspector);
 
     const player = el("div", "h3e-tl-player");
     const playerHead = el("div", "h3e-tl-player-head");
@@ -82,6 +86,11 @@ export function createTimeline(node, { editor, onChange } = {}) {
     // Set by a zoom click, so the redraw keeps the same place in the chain
     // rather than the same pixel offset.
     let zoomed = false;
+
+    // The shot open in the inspector, by object rather than index: a delete or
+    // a reorder moves indices, and a stale index would open the wrong card.
+    let inspected = null;
+    const EXTEND_W = 96;
 
     // Keys the sprite route answered 404 for: gone from the cache.
     const missing = new Set();
@@ -320,7 +329,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         }
 
         const track = el("div", "h3e-tl-track");
-        track.style.width = `${W + 48}px`;
+        track.style.width = `${W + EXTEND_W + 48}px`;
 
         // Ruler.
         const ruler = lane("time", 16);
@@ -343,6 +352,13 @@ export function createTimeline(node, { editor, onChange } = {}) {
             const b = el("div", "h3e-tl-block");
             if (s.locked) b.classList.add("h3e-tl-locked");
             if (g.restart) b.classList.add("h3e-tl-restart");
+            if (s === inspected) b.classList.add("h3e-tl-selected");
+            b.title = "Click to edit this shot here.";
+            b.addEventListener("click", (e) => {
+                if (e.target.closest("button")) return;   // ⏵ and lock act on their own
+                inspected = inspected === s ? null : s;
+                render();
+            });
             const top = el("div", "h3e-tl-bhead");
             top.appendChild(el("span", "h3e-tl-no",
                 `${i + 1}${fc.state[i] === "render" && fc.cause[i]?.startsWith(`shot ${i + 1} `) ? " ✎" : ""}`));
@@ -365,6 +381,21 @@ export function createTimeline(node, { editor, onChange } = {}) {
                 `${clock(g.frames / fps)} ${g.frames}f${g.restart ? " · restart" : ""}${tags ? " · " + tags : ""}`));
             plan.body.appendChild(place(b, g.start * scale, g.frames * scale - 2));
         });
+        // Extend: append a shot that continues from the last one. Everything
+        // before it keeps its key, so a queue renders only the new hop.
+        const ext = el("div", "h3e-tl-block h3e-tl-extend");
+        ext.appendChild(el("div", "h3e-tl-extend-plus", "+"));
+        ext.appendChild(el("div", "h3e-tl-meta", "extend"));
+        ext.title = "Add a shot that continues from the last one. The shots before "
+            + "it stay cached, so the next queue renders only the new hop.";
+        ext.addEventListener("click", () => {
+            const idx = editor.appendShot();
+            inspected = editor.shots()[idx] || null;
+            render();
+            scroller.scrollLeft = scroller.scrollWidth;
+            inspector.querySelector("textarea.h3e-beat")?.focus();
+        });
+        plan.body.appendChild(place(ext, W + 4, EXTEND_W - 8));
         track.appendChild(plan.row);
 
         // Film.
@@ -480,7 +511,56 @@ export function createTimeline(node, { editor, onChange } = {}) {
                 + `${i}|${i + 1} join would be one nobody generated. Unlock shot ${i + 1}, or pin `
                 + `shot ${i}'s ending with last_frame_guide or anchor=restart.`);
         }
+
+        // An extension that would cost more than its own hop, said plainly.
+        const last = shots.length - 1;
+        const isNew = last > 0 && rec && !rec.hops?.[last]?.key && rec.hops?.[last - 1]?.key;
+        if (isNew) {
+            const seedCtl = String(widgetByName(node, "control_after_generate")?.value || "fixed");
+            if (fc.state.slice(0, last).some((st) => st === "render")
+                && fc.cause.some((c) => String(c || "").startsWith("seed is set to"))) {
+                warnings.appendChild(el("div", "h3e-note h3e-note-error",
+                    `The seed is set to ${seedCtl} each queue, so extending re-renders every `
+                    + "shot without its own seed. Set control_after_generate to fixed to "
+                    + "render only the new shot."));
+            }
+            const tail = String(shots[last - 1]?.directives?.tail || "");
+            if (tail === "settle" || tail === "hold") {
+                warnings.appendChild(el("div", "h3e-note h3e-note-hint",
+                    `Shot ${last} ends at rest (tail: ${tail}), so shot ${last + 1} opens from `
+                    + `rest. To carry the motion on, set shot ${last}'s tail to ongoing -- `
+                    + `that re-renders shot ${last} too.`));
+            }
+        }
+
+        renderInspector(shots);
         onChange?.();
+    }
+
+    function renderInspector(shots) {
+        const idx = inspected ? shots.indexOf(inspected) : -1;
+        if (idx < 0) {
+            inspected = null;
+            inspector.textContent = "";
+            return;
+        }
+        // Mid-edit, leave the card alone: rebuilding it would move the caret
+        // (a finished hop redraws the whole tab). It already shows its edit.
+        const typing = inspector.contains(document.activeElement)
+            && inspector.dataset.shot === String(idx);
+        if (typing) return;
+        inspector.textContent = "";
+        inspector.dataset.shot = String(idx);
+        const head = el("div", "h3e-tl-inspector-head");
+        head.appendChild(el("span", "h3e-tl-dim", `editing shot ${idx + 1} -- the same card as SCRIPT`));
+        head.appendChild(button("×", "Close", () => {
+            inspected = null;
+            render();
+        }, "h3e-btn h3e-x"));
+        inspector.appendChild(head);
+        const card = editor.cardFor(idx);
+        if (card) inspector.appendChild(card);
+        node._h3HeightGuard?.sync();
     }
 
     /** `⏵N` while a solo is armed, `⏵a–b` for any other range. */

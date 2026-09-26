@@ -712,6 +712,32 @@ def test_voice_window():
         secs = lambda a: a["waveform"].shape[-1] / float(a["sample_rate"])
         ck("the whole file loads whole", abs(secs(whole) - 10.0) < 0.05, str(secs(whole)))
         ck("a window loads only the window", abs(secs(cut) - 3.0) < 0.05, str(secs(cut)))
+        MED.resolve = lambda name, kinds=None: path
+        try:
+            v, auto = MED.load_voice("tone.wav")
+            ck("an untrimmed voice gets the default window",
+               auto and abs(secs(v) - MED.VOICE_DEFAULT_S) < 0.05, str(secs(v)))
+            v, auto = MED.load_voice("tone.wav", start=2.0, end=5.0)
+            ck("a set window outranks the default",
+               not auto and abs(secs(v) - 3.0) < 0.05, str(secs(v)))
+            v, auto = MED.load_voice("tone.wav", start=4.0)
+            ck("a start alone runs to the end of the file",
+               not auto and abs(secs(v) - 6.0) < 0.05, str(secs(v)))
+        finally:
+            MED.resolve = real
+        short = os.path.join(tmp, "short.wav")
+        with wave.open(short, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes(struct.pack("<" + "h" * (sr * 5), *([1000] * (sr * 5))))
+        MED.resolve = lambda name, kinds=None: short
+        try:
+            v, _auto = MED.load_voice("short.wav")
+            ck("a file shorter than the default is used whole",
+               abs(secs(v) - 5.0) < 0.05, str(secs(v)))
+        finally:
+            MED.resolve = real
 
 
 def test_voice_binding():

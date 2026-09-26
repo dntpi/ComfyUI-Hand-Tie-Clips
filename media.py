@@ -512,6 +512,27 @@ def load_video(name, max_frames=None, start=0.0, end=0.0,
         return None
 
 
+# A voice with no trim set uses its first VOICE_DEFAULT_S seconds. Core encodes
+# a reference voice whole, and a 26.4 s take went wrong twice on the same
+# two-person hop -- replayed into the leftover frames, then its lines given to
+# the other speaker -- while the same take cut to 4.9 s, and a 6.6 s one left
+# whole, spoke correctly (2026-09-26). 8 s sits just above the longest take
+# known good whole. A window the author sets always wins; a shorter file is
+# used whole, because `clip_window` reads an end past the file as the file.
+VOICE_DEFAULT_S = 8.0
+
+
+def load_voice(name, start=0.0, end=0.0, kinds=("audio",)):
+    """`load_audio` for a timbre reference: `(audio, auto)`.
+
+    `auto` is True when no window was set and the default one applied.
+    """
+    auto = not float(start or 0.0) and not float(end or 0.0)
+    audio = load_audio(name, start=start, end=VOICE_DEFAULT_S if auto else end,
+                       kinds=kinds)
+    return audio, auto
+
+
 def load_audio(name, start=0.0, end=0.0, kinds=("audio",)):
     """A take as ComfyUI's AUDIO dict, or None.
 

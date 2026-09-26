@@ -3582,8 +3582,8 @@ class HandTieClips:
             start=float(reference_video_start_s), end=float(reference_video_end_s),
             size=reference_video_size or _media.DEFAULT_VIDEO_SIZE)
             if reference_video_file else None)
-        voice = (_media.load_audio(voice_file,
-                                   start=float(voice_start_s), end=float(voice_end_s))
+        voice = (_media.load_voice(voice_file, start=float(voice_start_s),
+                                   end=float(voice_end_s))[0]
                  if voice_file else None)
         # Empty string is off. The lock is not entered, the cache key does
         # not grow a new field, delivered audio stays generated. That is
@@ -3603,7 +3603,7 @@ class HandTieClips:
                 if fname else None)
 
         def _more_voice(fname, t0, t1):
-            return (_media.load_audio(fname, start=float(t0), end=float(t1))
+            return (_media.load_voice(fname, start=float(t0), end=float(t1))[0]
                     if fname else None)
 
         reference_video_2 = _more_video(reference_video_2_file,
@@ -3740,9 +3740,9 @@ class HandTieClips:
             _vf = str(_r.get("voice") or "")
             if not _vf or _r["slot"] not in _wired_slots:
                 continue
-            _wav = _media.load_audio(_vf, start=float(_r.get("voice_start") or 0.0),
-                                     end=float(_r.get("voice_end") or 0.0),
-                                     kinds=("audio", "video"))
+            _wav, _vauto = _media.load_voice(
+                _vf, start=float(_r.get("voice_start") or 0.0),
+                end=float(_r.get("voice_end") or 0.0), kinds=("audio", "video"))
             if _wav is None:
                 # Fatal, like a missing picture: a row voice is the thing
                 # that says which face speaks, and rendering the chain with
@@ -3758,8 +3758,14 @@ class HandTieClips:
             # window moves the key and an untrimmed voice keeps its old one.
             _vsec = _wav["waveform"].shape[-1] / float(_wav["sample_rate"])
             _vwin = _refs.window_label(_r.get("voice_start"), _r.get("voice_end"))
-            print(f"[{TAG}] @{_r['tag']}: voice {_vsec:.1f}s"
-                  + (f" {_vwin}" if _vwin else " (whole file)"), flush=True)
+            if _vwin:
+                _vhow = f" {_vwin}"
+            elif _vauto and _vsec >= _media.VOICE_DEFAULT_S - 0.05:
+                _vhow = (f" (first {_media.VOICE_DEFAULT_S:g}s by default; "
+                         f"trim the row's voice to choose another sentence)")
+            else:
+                _vhow = " (whole file)"
+            print(f"[{TAG}] @{_r['tag']}: voice {_vsec:.1f}s{_vhow}", flush=True)
             if _vsec > _refs.VOICE_LONG_S:
                 print(f"[{TAG}] WARNING: @{_r['tag']}'s voice runs {_vsec:.1f}s, "
                       f"past the {_refs.VOICE_LONG_S:g}s H3 reference clips are "

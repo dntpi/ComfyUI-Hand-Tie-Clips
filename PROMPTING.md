@@ -829,6 +829,20 @@ moves if you reorder the plan.
 Locking a hop does not stop the hops after it re-rendering. They are still
 continuations of it, and if you edited them they still change.
 
+**Locking a hop *after* one you re-render makes a join nobody generated.** Lock
+shot 6, change shot 5, and shot 6 is served as it was -- but it was generated
+against the *old* shot 5. Different content, different last frame, same seam.
+`tone_compensate` can shift the brightness step there; it cannot fix the
+content, because the two sides were never rendered together. The run says so:
+
+```
+WARNING: hop 6 is locked, but hop 5 is not the render it was generated against.
+```
+
+and `info` gets an `unpaired joins: 5|6` line. That is only safe if shot 5 still
+lands where it used to -- which is what `last_frame_guide` and `anchor: restart`
+are for. Otherwise unlock shot 6 and let it re-render against the new shot 5.
+
 > **Two unrelated fields are called `locked`.** `subjects.N.locked` in the
 > *reference register* is identity text that rides every hop -- the face that
 > must not drift. `shots[].locked` in the *shot plan* is this cache pin. Same

@@ -58,6 +58,7 @@ CHECKS = [
     ("check_restart_trim.py", []),
     ("check_shot_refs.py", []),
     ("check_refmod.py", []),
+    ("check_timeline.py", []),
     ("check_planner.py", []),
     ("gen_schema.py", ["--check"]),
 ]

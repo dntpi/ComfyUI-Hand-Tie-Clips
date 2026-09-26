@@ -4175,6 +4175,9 @@ class HandTieClips:
             chain_salt["master_audio"] = locked["digest"]
         prev_key = None
         hop_keys = []
+        # Hops served by lock pointer against a different predecessor than
+        # they were generated with; see the locked branch below.
+        unpaired_joins = []
         # tone_compensate=anchor state. `anchor_ref` is the Lab look every hop
         # is eased back toward. A shot with tone="rebase" moves the reference
         # onto itself, which is how a scene that is genuinely darker from here
@@ -4769,6 +4772,21 @@ class HandTieClips:
                         if pinned != hop_key:
                             print(f"[{TAG}] hop {i + 1} is locked: reusing its "
                                   f"earlier render (inputs changed)", flush=True)
+                        # A locked hop generated against a different hop i
+                        # than the one this run has: the join between them
+                        # was never generated. Tone correction can shift its
+                        # brightness, not its content. Entries written before
+                        # `prev_key` was recorded are not judged.
+                        _pm = hop_store.meta(pinned) or {}
+                        if (not hop_restart and "prev_key" in _pm
+                                and _pm["prev_key"] != prev_key):
+                            unpaired_joins.append(i + 1)
+                            print(f"[{TAG}] WARNING: hop {i + 1} is locked, but "
+                                  f"hop {i} is not the render it was generated "
+                                  f"against. The hop {i}|{i + 1} join was never "
+                                  f"generated together. Unlock hop {i + 1}, or "
+                                  f"pin hop {i}'s ending with last_frame_guide "
+                                  f"or anchor=restart.", flush=True)
                         hop_key = pinned
                     else:
                         print(f"[{TAG}] hop {i + 1} is locked but has no cached "
@@ -5084,9 +5102,13 @@ class HandTieClips:
                           f"cache key says {pin_mech_pred}; not caching this hop",
                           flush=True)
                 elif hop_store is not None and hop_key is not None:
+                    # `prev_key` is the hop this one was generated against.
+                    # A locked hop is served by pointer whatever its key, so
+                    # this is the only record of which join it belongs to.
                     hop_store.put(hop_key, imgs, wav, sr,
                                   {"hop": i + 1, "of": n, "block": block[:400],
-                                   "pin_mech": pin_mech_used},
+                                   "pin_mech": pin_mech_used,
+                                   "prev_key": None if hop_restart else prev_key},
                                   latent=this_sampled)
                     hop_store.set_pointer(
                         str(shot.get("id") or f"shot{i + 1}"), hop_key)
@@ -5245,7 +5267,8 @@ class HandTieClips:
                       "frames": int(write_pos), "of_frames": int(total_frames),
                       "seed": int(shot_seed) if cached is None else None,
                       "steps": int(hop_steps) if cached is None else None,
-                      "tone": tone_note or None})
+                      "tone": tone_note or None,
+                      "unpaired": (i + 1) in unpaired_joins})
             del imgs, wav, audio
             pbar.update(1)
 
@@ -5301,6 +5324,9 @@ class HandTieClips:
         # since restart hops stopped being trimmed, wrong.
         if seam_marks:
             info += chr(10) + "seams: " + ", ".join(str(f) for f in seam_marks)
+        if unpaired_joins:
+            info += chr(10) + "unpaired joins: " + ", ".join(
+                f"{h - 1}|{h}" for h in unpaired_joins)
         print(f"[{TAG}] {info}", flush=True)
         # The assembled prompts being inspectable is the whole point of the
         # directive layer -- wire `info` to a Preview Text node to read exactly

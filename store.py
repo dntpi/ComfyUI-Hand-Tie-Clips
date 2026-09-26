@@ -405,6 +405,15 @@ class HopStore:
         os.utime(self._p(key, VIDEO_EXT), None)  # LRU touch
         return imgs, wav, int(info["sample_rate"]), self._get_latent(key)
 
+    def meta(self, key):
+        """The entry's meta JSON, or None. Reads no frames."""
+        try:
+            with open(self._p(key, META_EXT), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
     # -- shot locks -------------------------------------------------------
     # A locked shot reuses whatever it last rendered even when its inputs
     # change, so it needs a name that survives an edit -- the content key by

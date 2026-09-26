@@ -3691,8 +3691,14 @@ class HandTieClips:
                         print(f"[{TAG}] @{_r['tag']}: voice {_inherited} "
                               f"from the RefMod", flush=True)
                 _block = _refmod.visual_block(_loaded, _r["strength"])
+                # The kept photographs when the builder stored them, so Qwen
+                # reads a face at the resolution it was photographed, not a
+                # VAE decode of it. Keyed per hop through `looks_digest`.
+                _looks = _loaded.get("looks")
+                _r["looks_digest"] = _loaded.get("looks_digest")
                 _pixels = _refmod.presentation_pixels(
-                    vae, _loaded["latent"], _r.get("mp") or 0.0)
+                    vae, _loaded["latent"], _r.get("mp") or 0.0,
+                    looks=_looks, kind=_loaded["kind"])
                 if _loaded["kind"] == "image":
                     _pixels = _pixels[:1]
                     slot_images[_r["slot"]] = _pixels
@@ -3706,9 +3712,13 @@ class HandTieClips:
                             f"frames, or save it as an image mod.")
                     slot_videos[_r["slot"]] = _pixels
                     refmod_video_blocks[id(_pixels)] = _block
+                _view = (f"Qwen sees {int(_looks.shape[0])} kept photo"
+                         f"{'s' if int(_looks.shape[0]) != 1 else ''}"
+                         if _looks is not None else
+                         "Qwen sees a decode (no kept photos; rebuild to keep them)")
                 print(f"[{TAG}] @{_r['tag']}: RefMod {_loaded['kind']} "
-                      f"{_loaded['tokens']} tokens, strength {_r['strength']:g}",
-                      flush=True)
+                      f"{_loaded['tokens']} tokens, strength {_r['strength']:g}, "
+                      f"{_view}", flush=True)
                 continue
             _r["kind"] = "image"
             _im = _media.load_image(_r["file"], cap_mp=_r.get("mp") or 0.0)
@@ -4605,10 +4615,15 @@ class HandTieClips:
                     # hop keeps the key it had before RefMods existed. The
                     # pixel digest above is the Qwen view; this is the stored
                     # latent and the strength that actually reach the DiT.
+                    # `looks` only when the file keeps photographs: a video
+                    # mod's Qwen view is not in `refs`, and a mod without
+                    # looks keeps the key it had before they existed.
                     **({"refmods": [
                             {"tag": r["tag"],
                              "strength": round(float(r["strength"]), 4),
-                             "latent": r.get("latent_digest")}
+                             "latent": r.get("latent_digest"),
+                             **({"looks": r["looks_digest"]}
+                                if r.get("looks_digest") else {})}
                             for r in hop_active if r.get("source") == "refmod"
                         ]} if any(r.get("source") == "refmod" for r in hop_active)
                        else {}),

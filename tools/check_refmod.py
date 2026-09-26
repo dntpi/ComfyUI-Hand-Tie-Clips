@@ -529,7 +529,107 @@ def test_builder_mask():
         BM.isolate_subject = real
 
 
+def test_looks():
+    """Kept photos: stored beside the latent, shown to Qwen one frame each."""
+    stride = M.qwen_stride()
+    ck("the Qwen stride is core's 2 fps", stride == 12, str(stride))
+
+    # Core's own sampling of a reference clip, restated: snap down to 17k+5,
+    # then every stride-th frame. Every picture must be seen, in order.
+    def core_samples(n):
+        while n % 17 != 5:
+            n -= 1
+        return list(range(0, n, stride))
+
+    for n in (1, 2, 3, 5, 8, 12):
+        looks = torch.arange(n, dtype=torch.uint8).reshape(n, 1, 1, 1).expand(n, 2, 2, 3)
+        held = M.hold_looks(looks)
+        seen = [int(held[i, 0, 0, 0]) for i in core_samples(int(held.shape[0]))]
+        ck(f"{n} held looks reach Qwen once each, in order",
+           int(held.shape[0]) % 17 == 5 and sorted(set(seen)) == list(range(n))
+           and seen == sorted(seen), f"len {held.shape[0]} seen {seen}")
+
+    canvas = torch.rand(30, 4, 4, 3)
+    ck("a clip keeps the frames Qwen samples",
+       M.looks_from(canvas, clip=True).shape[0] == 3)
+    kept = M.looks_from(canvas[:1])
+    ck("a still keeps itself as uint8",
+       kept.dtype == torch.uint8 and kept.shape == (1, 4, 4, 3)
+       and torch.allclose(kept.float() / 255, canvas[:1], atol=1 / 255))
+
+    latent = torch.zeros(1, 24, 2, 2, 2)
+    looks = (torch.rand(2, 32, 32, 3) * 255).to(torch.uint8)
+    meta = M.metadata_for("duo", "video", latent, "encode", "images", "2x2x2",
+                          "encode", 0, looks=2)
+    ck("the header counts the looks", meta["looks"] == 2)
+    with tempfile.TemporaryDirectory() as tmp:
+        M.save_latent(tmp, "duo", latent, meta, looks=looks)
+        M.save_latent(tmp, "old", latent[:, :, :1],
+                      M.metadata_for("old", "image", latent[:, :, :1], "encode",
+                                     "image", "1x2x2", "encode", 0))
+        M.roots = lambda: [tmp]
+        got = M.load_visual("duo")
+        ck("looks round-trip byte for byte", torch.equal(got["looks"], looks))
+        ck("looks carry a digest", bool(got["looks_digest"]))
+        old = M.load_visual("old")
+        ck("a mod written without looks loads with none",
+           old["looks"] is None and old["looks_digest"] is None)
+
+        class NoVAE:
+            def decode(self, _z):
+                raise AssertionError("decoded a mod that keeps its photos")
+
+        view = M.presentation_pixels(NoVAE(), got["latent"], looks=looks, kind="video")
+        ck("a video mod with looks is shown them, not a decode",
+           view.shape[0] % 17 == 5 and view.shape[1:] == (32, 32, 3)
+           and torch.allclose(view[0], looks[0].float() / 255))
+        one = M.presentation_pixels(NoVAE(), got["latent"], looks=looks[:1], kind="image")
+        ck("an image mod with looks is one picture", one.shape == (1, 32, 32, 3))
+        big = torch.zeros(1, 256, 256, 3, dtype=torch.uint8)
+        capped = M.presentation_pixels(NoVAE(), got["latent"], cap_mp=0.01,
+                                       looks=big, kind="image")
+        ck("mp still caps the kept photo", capped.shape[1] < 256, str(tuple(capped.shape)))
+
+
+def test_builder_looks():
+    """The builder keeps each canvas as encoded, and writes it."""
+    import importlib
+    import types
+    pkg = types.ModuleType("htc_pack")
+    pkg.__path__ = [_PACK]
+    sys.modules.setdefault("htc_pack", pkg)
+    B = importlib.import_module("htc_pack.refmod_builder")
+    BM = sys.modules["htc_pack.refmod"]
+
+    class VAE:
+        def encode(self, px):
+            t = 1 + (px.shape[0] - 1) // 4
+            return torch.ones(1, 24, t, px.shape[1] // 16, px.shape[2] // 16)
+
+    written = {}
+    real_save, real_folder = BM.save_latent, BM.register_folder
+    BM.register_folder = lambda: "unused"
+    BM.save_latent = lambda d, n, lat, meta, looks=None: (
+        written.update(meta=meta, looks=looks), n)[1]
+    try:
+        still = torch.rand(1, 256, 320, 3)
+        B.HTCRefModBuilder().build(VAE(), "m", "encode", images=still, build="start",
+                                   mask=torch.ones(1, 256, 320),
+                                   background_retention=0.0)
+        ck("the builder writes the still it encoded",
+           written["looks"].shape == (1, 256, 320, 3) and written["meta"]["looks"] == 1)
+        clip = torch.rand(39, 64, 64, 3)
+        B.HTCRefModBuilder().build(VAE(), "m", "encode", video=clip, build="start")
+        ck("a clip keeps its 2 fps frames",
+           written["looks"].shape[0] == 4 and written["meta"]["looks"] == 4,
+           str(tuple(written["looks"].shape)))
+    finally:
+        BM.save_latent, BM.register_folder = real_save, real_folder
+
+
 if __name__ == "__main__":
+    test_looks()
+    test_builder_looks()
     test_subject_mask()
     test_builder_mask()
     test_schedule()

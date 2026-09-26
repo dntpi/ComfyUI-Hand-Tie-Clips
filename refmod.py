@@ -6,8 +6,9 @@ written here is a file her loader can open, and a file she wrote is a file
 the rail can read.
 
 The stored tensor is the VAE latent. Decoding it and encoding it again is a
-different reference: the pooled latent would be gone. Callers show Qwen a
-decode and hand the DiT `visual_block()`.
+different reference: the pooled latent would be gone. Callers hand the DiT
+`visual_block()`, and show Qwen the pictures the builder encoded when the
+file keeps them (`looks`), or a decode of the latent when it does not.
 """
 from __future__ import annotations
 
@@ -22,6 +23,10 @@ import torch.nn.functional as F
 TAG = "HandTieClips"
 META_KEY = "refmod_meta"
 FORMAT_VERSION = 4
+# The pictures the builder encoded, uint8 [N,H,W,3] beside `latent`. Luisa's
+# loader reads `latent` by key and her bundle writer carries unknown tensors
+# through, so the extra key does not cost the file its portability.
+LOOKS_KEY = "looks"
 SKIP_DIRS = {".git", "__pycache__", "graph_presets"}
 
 
@@ -355,6 +360,22 @@ def _load_tensor(path, key):
     return load_file(path, device="cpu")[key].clone()
 
 
+def _load_looks(path):
+    """The kept pictures, or None for a file written without them."""
+    from safetensors import safe_open
+
+    with safe_open(path, framework="pt", device="cpu") as handle:
+        if LOOKS_KEY not in handle.keys():
+            return None
+        looks = handle.get_tensor(LOOKS_KEY).clone()
+    if looks.ndim != 4 or looks.shape[-1] != 3 or looks.shape[0] < 1:
+        print(f"[{TAG}] {os.path.basename(path)}: looks tensor is "
+              f"{tuple(looks.shape)}, not [N,H,W,3]. Showing Qwen a decode.",
+              flush=True)
+        return None
+    return looks
+
+
 def _as_visual(meta, latent, where):
     kind = str(meta.get("kind") or "")
     if kind not in ("image", "video"):
@@ -411,9 +432,16 @@ def load_visual(name):
             print(f"[{TAG}] {name}: using visual member {index} "
                   f"({member.get('name') or member.get('kind')})", flush=True)
         latent = _load_tensor(path, f"ref_{index}")
-        return _as_visual(member, latent, name)
+        loaded = _as_visual(member, latent, name)
+        loaded["looks"] = None
+        loaded["looks_digest"] = None
+        return loaded
     latent = _load_tensor(path, "latent")
-    return _as_visual(meta, latent, name)
+    loaded = _as_visual(meta, latent, name)
+    looks = _load_looks(path)
+    loaded["looks"] = looks
+    loaded["looks_digest"] = tensor_digest(looks) if looks is not None else None
+    return loaded
 
 
 def _blur_latent(z, factor=8):
@@ -603,8 +631,56 @@ def visual_block(loaded, strength):
     return block
 
 
-def presentation_pixels(vae, latent, cap_mp=0.0):
-    """Decode a stored latent into IMAGE pixels for the text encoder.
+def qwen_stride():
+    """Frames between the samples core shows Qwen of a reference video.
+
+    Core's `FPS // 2`: a reference clip reaches the text encoder at 2 fps.
+    Read from core so a change there moves this with it.
+    """
+    try:
+        from comfy_extras.nodes_minimax_h3 import FPS
+    except Exception:
+        FPS = 24
+    return max(1, int(FPS) // 2)
+
+
+def looks_from(canvas, clip=False):
+    """The pictures to keep for Qwen from one encoded source, as uint8.
+
+    A still keeps itself. A clip keeps the frames core would sample for Qwen
+    anyway, so a mod does not carry a whole clip's pixels to show two a
+    second of it.
+    """
+    frames = canvas[::qwen_stride()] if clip else canvas
+    return (frames[..., :3].float().clamp(0, 1) * 255.0).round().to(torch.uint8).cpu()
+
+
+def hold_looks(looks):
+    """Lay the kept pictures out as a reference clip Qwen sees one each of.
+
+    Core snaps a reference video down to 17k+5 frames and samples it every
+    `qwen_stride()` frames, so each picture is held for one stride and the
+    last is held until the snapped length still reaches it. The last picture
+    may be sampled twice; no earlier one is skipped.
+    """
+    stride = qwen_stride()
+    n = int(looks.shape[0])
+    need = max(5, stride * (n - 1) + 1)
+    length = 5
+    while length < need:
+        length += 17
+    idx = torch.clamp(torch.arange(length) // stride, max=n - 1)
+    return looks[idx]
+
+
+def presentation_pixels(vae, latent, cap_mp=0.0, looks=None, kind="image"):
+    """IMAGE pixels for the text encoder.
+
+    With `looks`, the pictures the builder encoded: sharp, one Qwen frame per
+    picture. Without them, a decode of the stored latent -- the only view a
+    mod written elsewhere, or before looks existed, can give. A decode of a
+    stacked multi-still latent is also a clip the VAE invents between the
+    stills, which is not what anybody photographed.
 
     Image mods come back `[1,H,W,C]`. Video mods come back `[T,H,W,C]`.
     `cap_mp` shrinks this view only. The latent handed to the DiT is the
@@ -615,6 +691,9 @@ def presentation_pixels(vae, latent, cap_mp=0.0):
     except ImportError:
         import media as _media
 
+    if looks is not None:
+        view = looks[:1] if kind == "image" else hold_looks(looks)
+        return _cap(view.float() / 255.0, cap_mp, _media)
     pixels = vae.decode(latent)
     if pixels.ndim == 5 and pixels.shape[0] == 1 and pixels.shape[1] == 1:
         pixels = pixels[:, 0]
@@ -625,6 +704,10 @@ def presentation_pixels(vae, latent, cap_mp=0.0):
     if pixels.ndim != 4 or pixels.shape[-1] != 3:
         _fail(f"VAE decode of a RefMod came back as {tuple(pixels.shape)}, "
               f"which is not an image batch")
+    return _cap(pixels, cap_mp, _media)
+
+
+def _cap(pixels, cap_mp, _media):
     h, w = int(pixels.shape[1]), int(pixels.shape[2])
     tw, th = _media._mp_cap_size(w, h, cap_mp)
     if (tw, th) != (w, h):
@@ -779,7 +862,7 @@ def fit_token_budget(latent, budget, label):
 
 
 def metadata_for(name, kind, latent, mode, source, source_shape, pool, steps,
-                 plan=None, description="", mask=None):
+                 plan=None, description="", mask=None, looks=0):
     t, h, w = (int(latent.shape[2]), int(latent.shape[3]), int(latent.shape[4]))
     return {
         "name": name,
@@ -805,12 +888,15 @@ def metadata_for(name, kind, latent, mode, source, source_shape, pool, steps,
         # How the background was suppressed, if it was: `{"source":
         # "auto"|"wired", "background_retention": r}`. Empty is unmasked.
         "subject_mask": mask if isinstance(mask, dict) else {},
+        # How many pictures the `looks` tensor holds. 0: Qwen is shown a
+        # decode of the latent.
+        "looks": int(looks or 0),
         "_format_version": FORMAT_VERSION,
         "sample_rate": 32000,
     }
 
 
-def save_latent(directory, name, latent, meta):
+def save_latent(directory, name, latent, meta, looks=None):
     """Atomic write. Returns the stem the rail stores in `file`."""
     from safetensors.torch import save_file
 
@@ -824,8 +910,10 @@ def save_latent(directory, name, latent, meta):
                                      dir=os.path.dirname(dest) or ".")
     os.close(fd)
     try:
-        save_file({"latent": latent.detach().cpu().contiguous()}, temporary,
-                  metadata={META_KEY: json.dumps(meta)})
+        tensors = {"latent": latent.detach().cpu().contiguous()}
+        if looks is not None:
+            tensors[LOOKS_KEY] = looks.to(torch.uint8).cpu().contiguous()
+        save_file(tensors, temporary, metadata={META_KEY: json.dumps(meta)})
         os.replace(temporary, dest)
     finally:
         if os.path.exists(temporary):

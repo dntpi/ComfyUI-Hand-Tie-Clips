@@ -17,6 +17,8 @@ panel existed. A non-empty `mod_plan` outranks them.
 """
 from __future__ import annotations
 
+import torch
+
 from . import media as _media
 from . import refmod as _refmod
 
@@ -137,7 +139,12 @@ class HTCRefModBuilder:
         return _refmod.isolate_subject(canvas, m, masking["retention"])
 
     def _encode_plan(self, vae, stills, clip, masking=None):
-        """Every source onto one canvas, encoded, stacked along time."""
+        """Every source onto one canvas, encoded, stacked along time.
+
+        Returns the latent and the pictures to keep for Qwen: each canvas as
+        it went into the VAE, mask and all, so the text encoder and the DiT
+        are shown the same subject.
+        """
         first = _media.load_image(stills[0]) if stills else None
         if first is None:
             first = _media.load_video(clip["file"], max_frames=1,
@@ -145,7 +152,7 @@ class HTCRefModBuilder:
             if first is None:
                 _refmod._fail(_refmod.source_problem(clip['file'], ("video",)) or f"mod_plan source {clip['file']} could not be read")
         tw, th = _refmod.canvas_size(first)
-        parts, shapes = [], []
+        parts, shapes, looks = [], [], []
         count = len(stills) + (1 if clip else 0)
         for i, name in enumerate(stills):
             px = _media.load_image(name)
@@ -155,6 +162,7 @@ class HTCRefModBuilder:
             z = vae.encode(canvas)
             self._check_encode(z, name)
             parts.append(z)
+            looks.append(_refmod.looks_from(canvas[:1]))
             shapes.append(f"{name} 1f")
         if clip:
             px = _media.load_video(clip["file"], max_frames=clip["frames"] or None,
@@ -167,10 +175,11 @@ class HTCRefModBuilder:
             z = vae.encode(canvas)
             self._check_encode(z, clip["file"])
             parts.append(z)
+            looks.append(_refmod.looks_from(canvas, clip=True))
             shapes.append(f"{clip['file']} {int(px.shape[0])}f")
         print(f"[{TAG}] RefMod sources on a {tw}x{th} canvas: "
               f"{', '.join(shapes)}", flush=True)
-        return _refmod.stack_latents(parts, "mod_plan")
+        return _refmod.stack_latents(parts, "mod_plan"), torch.cat(looks, dim=0)
 
     def _check_encode(self, z, where):
         if z.ndim != 5:
@@ -248,7 +257,7 @@ class HTCRefModBuilder:
             if images is not None or video is not None:
                 print(f"[{TAG}] mod_plan names sources, so the images/video "
                       f"sockets are ignored", flush=True)
-            full = self._encode_plan(vae, stills, clip, masking)
+            full, looks = self._encode_plan(vae, stills, clip, masking)
             source = "video" if clip else ("image" if len(stills) == 1 else "images")
         else:
             if images is None and video is None:
@@ -266,6 +275,7 @@ class HTCRefModBuilder:
             canvas = self._isolated(_refmod.fit_canvas(frames), 0, 1, masking)
             full = vae.encode(canvas)
             self._check_encode(full, stem)
+            looks = _refmod.looks_from(canvas, clip=video is not None)
 
         source_shape = "x".join(str(int(n)) for n in full.shape[2:])
         steps = 0
@@ -288,12 +298,14 @@ class HTCRefModBuilder:
                   * (int(latent.shape[4]) // 2))
         meta = _refmod.metadata_for(
             stem, kind, latent, mode, source, source_shape, pool_label, steps,
-            plan=plan_used, description=description, mask=mask_meta)
+            plan=plan_used, description=description, mask=mask_meta,
+            looks=int(looks.shape[0]))
         if save:
             root = _refmod.register_folder()
-            written = _refmod.save_latent(root, stem, latent, meta)
+            written = _refmod.save_latent(root, stem, latent, meta, looks=looks)
             print(f"[{TAG}] wrote RefMod {written} ({kind}, {meta['latent_t']}x"
-                  f"{meta['latent_h']}x{meta['latent_w']}, {mode}, {tokens} tokens"
+                  f"{meta['latent_h']}x{meta['latent_w']}, {mode}, {tokens} tokens, "
+                  f"{meta['looks']} kept for Qwen"
                   + (f", voice {voice}" if voice else "") + ")",
                   flush=True)
             return (written,)

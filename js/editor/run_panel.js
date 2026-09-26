@@ -81,12 +81,13 @@ const GROUPS = [
                 // widget itself is declared last so a saved workflow keeps its
                 // indices. It belongs beside the schedule it replaces.
                 "refine_align"]],
-    // Its own group, not part of refine: boost changes how the hop is sampled,
-    // and run() refuses it beside hop_refine. The two LoRAs are combos on this
-    // node rather than loader nodes on the canvas -- deliberately, to keep the
-    // graph short; the speed stack itself stays drawn upstream.
+    // Its own group, not part of refine: boost changes how the hop is sampled.
+    // The three LoRAs are combos on this node rather than loader nodes on the
+    // canvas -- deliberately, to keep the graph short; the speed stack itself
+    // stays drawn upstream.
     ["realism boost", ["realism_boost", "boost_lora_1", "boost_lora_1_strength",
-                       "boost_lora_2", "boost_lora_2_strength"]],
+                       "boost_lora_2", "boost_lora_2_strength",
+                       "boost_lora_3", "boost_lora_3_strength"]],
     ["cache",["cache_hops", "cache_budget_gb"]],
     // Added 2026-08-30. 0.4.0 shipped these five on the Python side and never
     // touched js/, so all five fell through to native dials -- the documented

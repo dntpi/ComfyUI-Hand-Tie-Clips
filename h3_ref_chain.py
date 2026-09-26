@@ -2139,10 +2139,12 @@ def _refine_sampled(sampled, *, model, guider, sampler, scheduler,
 BOOST_EXTEND = 2
 BOOST_SPLIT = 2
 # (file, strength) per slot, from the original's Final stack: LMS 0.5 under
-# People 1.0. A default only lands when the file is actually installed.
+# People 1.0. A default only lands when the file is actually installed. Slot 3
+# is not in the original and ships empty.
 BOOST_LORA_DEFAULTS = (
     ("minimax_h3_lms_v1.0_r64.safetensors", 0.5),
     ("h3-realism-people-t2v-i2v-r2v.safetensors", 1.0),
+    ("None", 1.0),
 )
 # One Core loader per slot, kept for the process, so a re-queue re-uses the
 # LoRA it already read instead of going back to disk. Core caches per instance.
@@ -2806,6 +2808,16 @@ class HandTieClips:
                     "default": BOOST_LORA_DEFAULTS[1][1],
                     "min": -4.0, "max": 4.0, "step": 0.05,
                 }),
+                # APPENDED 2026-09-28, LAST, same positional reason.
+                "boost_lora_3": (_boost_lora_choices(), {
+                    "default": "None",
+                    "tooltip": ("Third boost LoRA, applied on top of the first two. Not in the recipe. "
+                                "None skips it."),
+                }),
+                "boost_lora_3_strength": ("FLOAT", {
+                    "default": BOOST_LORA_DEFAULTS[2][1],
+                    "min": -4.0, "max": 4.0, "step": 0.05,
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2907,7 +2919,8 @@ class HandTieClips:
             refine_head="refine", speed_mode="regular",
             realism_boost="off", boost_lora_1="None",
             boost_lora_1_strength=0.5, boost_lora_2="None",
-            boost_lora_2_strength=1.0,
+            boost_lora_2_strength=1.0, boost_lora_3="None",
+            boost_lora_3_strength=1.0,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -3478,7 +3491,8 @@ class HandTieClips:
         # the boost model, so it can pull the boost's look back -- said once.
         boost_on = str(realism_boost) == "on"
         boost_loras = [(str(boost_lora_1), float(boost_lora_1_strength)),
-                       (str(boost_lora_2), float(boost_lora_2_strength))]
+                       (str(boost_lora_2), float(boost_lora_2_strength)),
+                       (str(boost_lora_3), float(boost_lora_3_strength))]
         if boost_on:
             if str(hop_refine) != "off":
                 print(f"[{TAG}] realism_boost + hop_refine={hop_refine}: each "
@@ -3493,7 +3507,7 @@ class HandTieClips:
             if all(nm == "None" or s == 0.0 for nm, s in boost_loras):
                 raise RuntimeError(
                     f"{TAG}: realism_boost is on with no boost LoRA set -- "
-                    "pick boost_lora_1 and/or boost_lora_2.")
+                    "pick at least one of boost_lora_1..3.")
 
         sampler = base_sigmas = None
         boost_model = None

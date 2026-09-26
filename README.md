@@ -497,8 +497,10 @@ Safe when no shot authors a framing; visibly wrong when they do.
 each hop's sampler, with no extra nodes on the graph. The hop's schedule is
 doubled and then split after its first base step. At `steps=6` that means
 2 steps on the MODEL wire set the composition, and the boost model then paints
-the remaining 10 with no fresh noise. The boost model is the same model with
-`boost_lora_1` / `boost_lora_2` applied.
+the remaining 10 with no fresh noise. The boost model is the MODEL wire as it
+arrives -- the LoRAs on your loader (turbo included) stay on -- with
+`boost_lora_1` / `boost_lora_2` / `boost_lora_3` applied on top. The first two
+are the original's; the third ships empty.
 
 The picture is re-noised from the first stage's denoised estimate, and the
 audio carries on from the first stage's output, the same as in the original.

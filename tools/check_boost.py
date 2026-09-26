@@ -166,14 +166,18 @@ def main():
     opt = H3.HandTieClips.INPUT_TYPES().get("optional") or {}
     sig = inspect.signature(H3.HandTieClips.run).parameters
     for name in ("realism_boost", "boost_lora_1", "boost_lora_1_strength",
-                 "boost_lora_2", "boost_lora_2_strength"):
+                 "boost_lora_2", "boost_lora_2_strength",
+                 "boost_lora_3", "boost_lora_3_strength"):
         ck(f"{name} declared and accepted by run()",
            name in opt and name in sig)
     ck("realism_boost ships off",
        opt["realism_boost"][1].get("default") == "off"
        and sig["realism_boost"].default == "off")
     ck("the LoRA combos always offer None",
-       "None" in opt["boost_lora_1"][0] and "None" in opt["boost_lora_2"][0])
+       all("None" in opt[f"boost_lora_{k}"][0] for k in (1, 2, 3)))
+    ck("boost_lora_3 ships empty",
+       opt["boost_lora_3"][1].get("default") == "None"
+       and sig["boost_lora_3"].default == "None")
     src = inspect.getsource(H3.HandTieClips.run)
     ck("run() allows boost beside hop_refine and says so",
        "realism_boost and hop_refine are both on" not in src

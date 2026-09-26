@@ -17,9 +17,26 @@ const NODE_WIDTH = 720;
 const NODE_HEIGHT = 560;
 const PANEL_MIN_H = 420;
 const NODE_MIN_WIDTH = 520;
-// Layout before `mod_plan` was added, and where it went in.
-const OLD_WIDGET_COUNT = 9;
-const MOD_PLAN_INDEX = 2;
+/* Every saved widget layout this node has had, oldest first. `widgets_values`
+ * is positional, so a layout change moves every later value; a saved graph is
+ * repaired by name before the frontend applies it. */
+const LAYOUTS = [
+    ["name", "mode", "pool", "latent_frames", "refine_steps", "max_tokens",
+     "subfolder", "save", "build"],
+    ["name", "mode", "mod_plan", "pool", "latent_frames", "refine_steps",
+     "max_tokens", "subfolder", "save", "build"],
+    ["name", "mode", "mod_plan", "pool", "latent_frames", "refine_steps",
+     "max_tokens", "subfolder", "save", "build", "description"],
+    ["name", "mode", "mod_plan", "pool", "latent_frames", "refine_steps",
+     "max_tokens", "subfolder", "save", "build", "description", "subject_mask",
+     "background_retention"],
+];
+// Today's: training mode and its three dials removed (2026-09-27).
+const CURRENT = ["name", "mod_plan", "max_tokens", "subfolder", "save", "build",
+                 "description", "subject_mask", "background_retention"];
+const DEFAULTS = { mod_plan: "", max_tokens: 0, subfolder: "", save: true,
+                   build: "stop", description: "", subject_mask: "off",
+                   background_retention: 0 };
 
 const _cssUrl = new URL("./h3_ref_chain.css", import.meta.url).href;
 
@@ -34,20 +51,23 @@ function ensureStyles() {
     document.head.appendChild(link);
 }
 
-/* `widgets_values` is positional, so inserting `mod_plan` ahead of `pool`
- * shifted every saved value one slot right -- a graph saved before it
- * existed loads with latent_frames in pool (out of range) and subfolder in
- * max_tokens (wrong type). Repair the array before the frontend applies it,
- * because afterwards the original values are gone.
+/* Repair a saved graph's values before the frontend applies them, because
+ * afterwards the original values are gone.
  *
- * Detection is the length plus the type at the insertion point: the current
- * layout always holds mod_plan, a string, at index 2. */
+ * Detection is by content, not length: every old layout holds `mode` --
+ * "encode" or "training" -- at index 1, and today's holds `mod_plan` there,
+ * which is never either. Length alone collides: the first layout and
+ * today's both have nine values. */
 function migrateWidgetValues(info) {
     const v = info?.widgets_values;
-    if (!Array.isArray(v) || v.length !== OLD_WIDGET_COUNT) return;
-    if (typeof v[MOD_PLAN_INDEX] === "string") return;
-    v.splice(MOD_PLAN_INDEX, 0, "");
-    console.log("[HandTieClips] migrated a pre-mod_plan RefMod builder's widget values");
+    if (!Array.isArray(v) || !["encode", "training"].includes(v[1])) return;
+    const old = LAYOUTS.find((l) => l.length === v.length);
+    if (!old) return;
+    const byName = Object.fromEntries(old.map((n, i) => [n, v[i]]));
+    const next = CURRENT.map((n) => (n in byName ? byName[n] : DEFAULTS[n]));
+    v.splice(0, v.length, ...next);
+    console.log("[HandTieClips] migrated a RefMod builder's saved values"
+        + (byName.mode === "training" ? " -- it was set to training, which is gone; it now encodes" : ""));
 }
 
 function mountBuilder(node) {

@@ -844,50 +844,6 @@ def splice_blocks(cond, hop_images, hop_videos, image_ids, video_ids):
 
 # -- builder math ----------------------------------------------------------
 
-def pool_grid(pool, latent_h, latent_w):
-    """Even grid. The long edge follows `pool`; the short edge keeps aspect."""
-    long_edge = max(2, int(pool) // 2 * 2)
-    aspect = float(latent_h) / float(max(1, latent_w))
-    if aspect >= 1.0:
-        h, w = long_edge, long_edge / aspect
-    else:
-        w, h = long_edge, long_edge * aspect
-    return max(2, round(h / 2) * 2), max(2, round(w / 2) * 2)
-
-
-def pool_latent(z, latent_t, latent_h, latent_w):
-    if latent_h % 2 or latent_w % 2:
-        _fail(f"pool grid must be even, got {latent_h}x{latent_w}")
-    if z.shape[2] == latent_t and z.shape[3] == latent_h and z.shape[4] == latent_w:
-        return z
-    pooled = F.adaptive_avg_pool3d(z.float(), (int(latent_t), int(latent_h), int(latent_w)))
-    return pooled.to(dtype=z.dtype)
-
-
-def refine_latent(z_small, z_full, steps):
-    """MSE of the upsampled small latent against the frozen encode."""
-    steps = int(steps or 0)
-    if steps <= 0:
-        return z_small
-    import torch.nn as nn
-
-    device = z_full.device
-    with torch.inference_mode(False), torch.set_grad_enabled(True):
-        target = z_full.detach().float().to(device)
-        param = nn.Parameter(z_small.detach().float().to(device))
-        opt = torch.optim.Adam([param], lr=0.02)
-        size = tuple(target.shape[2:])
-        for i in range(steps):
-            opt.zero_grad()
-            up = F.interpolate(param, size=size, mode="trilinear", align_corners=False)
-            loss = F.mse_loss(up, target)
-            loss.backward()
-            opt.step()
-            if (i + 1) % 50 == 0 or i + 1 == steps:
-                print(f"[{TAG}] refmod refine {i + 1}/{steps}", flush=True)
-        return param.detach().to(dtype=z_small.dtype)
-
-
 def fit_token_budget(latent, budget, label):
     """Drop near-duplicate frames, then resample time, until tokens fit."""
     budget = int(budget or 0)

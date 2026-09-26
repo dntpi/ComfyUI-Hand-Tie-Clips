@@ -27,12 +27,8 @@ const ESTIMATE_URL = "/h3_ref_chain/refmod_estimate";
 const PLAN_URL = "/h3_ref_chain/refmod_plan";
 
 /** Dials the panel draws, so the mount hides exactly these. */
-const DIALS = ["name", "mode", "pool", "latent_frames", "refine_steps",
-    "max_tokens", "subfolder", "save", "build", "description",
+const DIALS = ["name", "max_tokens", "subfolder", "save", "build", "description",
     "subject_mask", "background_retention"];
-
-/** Drawn only when mode is training; pooling is what they configure. */
-const POOL_ONLY = new Set(["pool", "latent_frames", "refine_steps"]);
 
 export const BUILDER_WIDGETS = ["mod_plan"].concat(DIALS);
 
@@ -318,25 +314,15 @@ export function createModBuilder(node, { onChange } = {}) {
     const owned = [];
     const readers = [];
 
-    function modeValue() {
-        return String(widgetByName(node, "mode")?.value || "encode");
-    }
-
     function renderDials() {
         dialGrid.textContent = "";
         owned.length = 0;
         readers.length = 0;
-        const pooled = modeValue() === "training";
         const rejected = [];
         for (const name of DIALS) {
-            if (!pooled && POOL_ONLY.has(name)) continue;
             const w = widgetByName(node, name);
             if (!w) continue;
             const f = fieldFor(node, w, () => {
-                // mode decides whether the pooling dials exist at all, so a
-                // change to it rebuilds this column rather than leaving three
-                // inert controls on screen.
-                if (name === "mode") renderDials();
                 paintSummary();
                 onChange?.();
             });
@@ -366,12 +352,6 @@ export function createModBuilder(node, { onChange } = {}) {
             () => loadStoredPlan());
         load.classList.add("h3e-run-wide");
         dialGrid.appendChild(load);
-        if (!pooled) {
-            dialGrid.appendChild(el("div", "h3e-note h3e-note-hint h3e-run-wide",
-                "encode keeps the full VAE latent. pool, latent_frames and "
-                + "refine_steps belong to training and are hidden here because "
-                + "they would not be applied."));
-        }
     }
 
     /* -- summary ---------------------------------------------------------- */
@@ -503,10 +483,6 @@ export function createModBuilder(node, { onChange } = {}) {
         // or unreadable, and "not in h3_refs" was wrong for two of the three.
         if (est?.problems?.length) {
             setSummary("error", `${line} — ${est.problems.join("; ")}`);
-            return;
-        }
-        if (modeValue() === "training") {
-            setSummary("", `${line} — training pools this down; a face needs encode.`);
             return;
         }
         setSummary("hint", line);

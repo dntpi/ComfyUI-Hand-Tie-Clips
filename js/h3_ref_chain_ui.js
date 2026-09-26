@@ -57,6 +57,25 @@ const SIMPLE_HIDDEN = ["shot_plan", "ref_plan"].concat(MEDIA_WIDGETS);
 
 const _cssUrl = new URL("./h3_ref_chain.css", import.meta.url).href;
 
+/* Combo values that were removed from a menu. A saved graph still holds them,
+ * and ComfyUI refuses to queue a value that is not in the list, so they are
+ * mapped on load -- to the setting that is closest in effect -- and logged. */
+const RETIRED = {
+    // `sigma` corrected the wrong statistic (total spread falls as a chain
+    // bakes); `on` is what it was saved as before 0.5. Neither did any good.
+    pin_renorm: { sigma: "off", on: "off" },
+};
+
+function migrateRetired(node) {
+    for (const [name, map] of Object.entries(RETIRED)) {
+        const w = widgetByName(node, name);
+        if (w && Object.hasOwn(map, w.value)) {
+            console.log(`[HandTieClips] ${name}=${w.value} was retired; set to ${map[w.value]}`);
+            w.value = map[w.value];
+        }
+    }
+}
+
 /* External stylesheet, not a template literal. The old inline sheet hardcoded
  * every colour, so a light ComfyUI theme rendered the panel as dark islands on
  * a light node; the CSS file derives everything from the host theme's own
@@ -448,6 +467,7 @@ app.registerExtension({
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const r = onConfigure?.apply(this, arguments);
+            migrateRetired(this);
             mountEditor(this);
             // Widget values arrive with the workflow, after the mount, so the
             // panel has to re-read them or a loaded graph shows an empty editor.

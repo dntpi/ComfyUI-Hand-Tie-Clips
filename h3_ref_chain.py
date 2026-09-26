@@ -2474,7 +2474,7 @@ class HandTieClips:
                         "follows the overlap widget."
                     ),
                 }),
-                "pin_renorm": (["off", "sigma", "band"], {
+                "pin_renorm": (["off", "band"], {
                     "default": "off",
                     "tooltip": (
                         "Rescale each pinned latent back toward the first pinned "
@@ -4093,9 +4093,10 @@ class HandTieClips:
 
         hop_store = None
         # "on" is what pre-0.5 workflows saved for what is now "sigma".
-        pin_renorm_mode = {"on": "sigma"}.get(str(pin_renorm), str(pin_renorm))
-        if pin_renorm_mode not in ("sigma", "band"):
-            pin_renorm_mode = "off"
+        # `sigma` (saved as `on` before 0.5) matched total spread, which falls
+        # across a chain whose picture is baking, so it corrected the wrong
+        # way. Removed from the menu; the editor migrates old graphs to off.
+        pin_renorm_mode = "band" if str(pin_renorm) == "band" else "off"
         pin_noise_v = max(0.0, min(0.10, float(pin_noise)))
         audio_ctx = int(audio_pin_frames) if int(audio_pin_frames) > 0 else int(overlap_n)
         pin_anchor = None   # the first pinned hop sets what 3+ match

@@ -508,17 +508,17 @@ def test_builder_mask():
     try:
         still = torch.rand(1, 256, 320, 3)
         name, = B.HTCRefModBuilder().build(
-            VAE(), "m", "encode", images=still, save=False, build="start",
+            VAE(), "m", images=still, save=False, build="start",
             mask=torch.ones(1, 128, 160), background_retention=0.25)
         ck("a wired mask reaches the pixels on the canvas, with its retention",
            seen == [((1, 256, 320), 0.25)], repr(seen))
         seen.clear()
-        B.HTCRefModBuilder().build(VAE(), "m", "encode", images=still,
+        B.HTCRefModBuilder().build(VAE(), "m", images=still,
                                    save=False, build="start")
         ck("no mask, no masking", seen == [])
         try:
             B.HTCRefModBuilder().build(
-                VAE(), "m", "encode", build="start", save=False,
+                VAE(), "m", build="start", save=False,
                 mod_plan=json.dumps({"stills": ["a.png", "b.png", "c.png"]}),
                 mask=torch.ones(2, 64, 64))
             ck("a mask batch that fits no source count is refused", False)
@@ -613,13 +613,13 @@ def test_builder_looks():
         written.update(meta=meta, looks=looks), n)[1]
     try:
         still = torch.rand(1, 256, 320, 3)
-        B.HTCRefModBuilder().build(VAE(), "m", "encode", images=still, build="start",
+        B.HTCRefModBuilder().build(VAE(), "m", images=still, build="start",
                                    mask=torch.ones(1, 256, 320),
                                    background_retention=0.0)
         ck("the builder writes the still it encoded",
            written["looks"].shape == (1, 256, 320, 3) and written["meta"]["looks"] == 1)
         clip = torch.rand(39, 64, 64, 3)
-        B.HTCRefModBuilder().build(VAE(), "m", "encode", video=clip, build="start")
+        B.HTCRefModBuilder().build(VAE(), "m", video=clip, build="start")
         ck("a clip keeps its 2 fps frames",
            written["looks"].shape[0] == 4 and written["meta"]["looks"] == 4,
            str(tuple(written["looks"].shape)))
@@ -826,7 +826,47 @@ def test_rail_keeps_voice_window():
        got.get("voice_start") == 1.5 and "voice_end" not in got, repr(got))
 
 
+def test_builder_migration():
+    """Saved builder graphs from every earlier layout land on today's widgets."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        print("skip builder migration: Node is not on PATH")
+        return
+    src = open(os.path.join(_PACK, "js", "h3_refmod_ui.js"), encoding="utf-8").read()
+    a = src.index("const LAYOUTS = [")
+    b = src.index("};", src.index("const DEFAULTS")) + 2
+    c = src.index("function migrateWidgetValues(info) {")
+    d = src.index("\n}\n", c) + 3
+    cases = [
+        (["hero", "encode", 16, 16, 0, 0, "", True, "stop"],
+         ["hero", "", 0, "", True, "stop", "", "off", 0]),
+        (["hero", "training", "{}", 16, 16, 0, 5000, "people", False, "start",
+          "a face", "auto", 0.3],
+         ["hero", "{}", 5000, "people", False, "start", "a face", "auto", 0.3]),
+        (["hero", "encode", "", 16, 16, 0, 0, "", True, "stop", "cap"],
+         ["hero", "", 0, "", True, "stop", "cap", "off", 0]),
+        (["hero", "", 0, "", True, "stop", "", "off", 0],
+         ["hero", "", 0, "", True, "stop", "", "off", 0]),
+    ]
+    body = src[a:b] + "\n" + src[c:d] + "\nconsole.log = () => {};\nconst out = [];\n"
+    body += "for (const v of " + json.dumps([c[0] for c in cases]) + ") {"
+    body += " const i = {widgets_values: v}; migrateWidgetValues(i); out.push(i.widgets_values); }\n"
+    body += "process.stdout.write(JSON.stringify(out));\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "mig.mjs")
+        open(path, "w", encoding="utf-8").write(body)
+        got = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    ck("the builder migration runs", got.returncode == 0, got.stderr[-300:])
+    outs = json.loads(got.stdout)
+    names = ["pre-mod_plan", "last (training)", "description", "today (untouched)"]
+    for name, (_old, want), have in zip(names, cases, outs):
+        ck(f"builder layout {name} migrates", have == want, repr(have))
+
+
 if __name__ == "__main__":
+    test_builder_migration()
     test_voice_binding()
     test_voice_window()
     test_rail_keeps_voice_window()

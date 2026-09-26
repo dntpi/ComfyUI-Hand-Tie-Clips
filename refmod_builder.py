@@ -34,11 +34,6 @@ class HTCRefModBuilder:
                 "name": ("STRING", {"default": "hero",
                     "tooltip": "File name under models/refmods, without .safetensors. "
                                "This is what a reference row stores in file."}),
-                "mode": (["encode", "training"], {"default": "encode",
-                    "tooltip": "encode keeps the VAE latent, which is what holds a "
-                               "face. training pools it onto a small grid, which "
-                               "averages that detail away; refine_steps then fits "
-                               "the grid back toward the full latent."}),
             },
             "optional": {
                 "mod_plan": ("STRING", {"default": "", "multiline": True,
@@ -47,12 +42,6 @@ class HTCRefModBuilder:
                                "frame; the clip's frames follow them."}),
                 "images": ("IMAGE", {"tooltip": "Legacy socket. One still, first frame of a batch. Ignored when mod_plan names sources."}),
                 "video": ("IMAGE", {"tooltip": "Legacy socket. A clip, at least 5 frames. Ignored when mod_plan names sources."}),
-                "pool": ("INT", {"default": 16, "min": 2, "max": 64, "step": 2,
-                    "tooltip": "Long-edge latent grid for training mode. Even. Ignored by encode."}),
-                "latent_frames": ("INT", {"default": 16, "min": 1, "max": 64,
-                    "tooltip": "How many latent frames training mode keeps. Ignored by encode."}),
-                "refine_steps": ("INT", {"default": 0, "min": 0, "max": 2000,
-                    "tooltip": "MSE steps that fit the pooled latent to the full encode. 0 pools only."}),
                 "max_tokens": ("INT", {"default": 0, "min": 0, "max": 1048576,
                     "tooltip": "VRAM headroom guard, not a fidelity limit -- 24k-token "
                                "mods are known to run. Above this, near-duplicate "
@@ -187,10 +176,12 @@ class HTCRefModBuilder:
                 f"H3 VAE encode of {where} returned {tuple(z.shape)}, expected "
                 f"[1,24,T,H,W]. Connect the H3 video VAE.")
 
-    def build(self, vae, name, mode, mod_plan="", images=None, video=None, pool=16,
-              latent_frames=16, refine_steps=0, max_tokens=0,
+    def build(self, vae, name, mod_plan="", images=None, video=None, max_tokens=0,
               subfolder="", save=True, build="stop", description="",
-              subject_mask="off", background_retention=0.0, mask=None):
+              subject_mask="off", background_retention=0.0, mask=None, **_retired):
+        # `_retired` takes `mode`, `pool`, `latent_frames` and `refine_steps`
+        # from a prompt saved before training mode was removed. Pooling
+        # averaged a face away; encode is the only mode that ever worked.
         stem = name
         folder = (subfolder or "").strip().replace("\\", "/").strip("/")
         if folder:
@@ -282,33 +273,19 @@ class HTCRefModBuilder:
             looks = _refmod.looks_from(canvas, clip=video is not None)
 
         source_shape = "x".join(str(int(n)) for n in full.shape[2:])
-        steps = 0
-        if mode == "training":
-            t = min(int(latent_frames), int(full.shape[2]))
-            gh, gw = _refmod.pool_grid(pool, int(full.shape[3]), int(full.shape[4]))
-            small = _refmod.pool_latent(full, t, gh, gw)
-            steps = int(refine_steps or 0)
-            latent = _refmod.refine_latent(small, full, steps) if steps else small
-            pool_label = f"{t}x{gh}x{gw}"
-        else:
-            latent = full
-            pool_label = "encode"
-            if int(refine_steps or 0) or int(pool) != 16:
-                print(f"[{TAG}] refmod mode=encode, so pool and refine_steps "
-                      f"are not applied", flush=True)
-        latent = _refmod.fit_token_budget(latent, max_tokens, name)
+        latent = _refmod.fit_token_budget(full, max_tokens, name)
         kind = "image" if int(latent.shape[2]) == 1 else "video"
         tokens = (int(latent.shape[2]) * (int(latent.shape[3]) // 2)
                   * (int(latent.shape[4]) // 2))
         meta = _refmod.metadata_for(
-            stem, kind, latent, mode, source, source_shape, pool_label, steps,
+            stem, kind, latent, "encode", source, source_shape, "encode", 0,
             plan=plan_used, description=description, mask=mask_meta,
             looks=int(looks.shape[0]))
         if save:
             root = _refmod.register_folder()
             written = _refmod.save_latent(root, stem, latent, meta, looks=looks)
             print(f"[{TAG}] wrote RefMod {written} ({kind}, {meta['latent_t']}x"
-                  f"{meta['latent_h']}x{meta['latent_w']}, {mode}, {tokens} tokens, "
+                  f"{meta['latent_h']}x{meta['latent_w']}, {tokens} tokens, "
                   f"{meta['looks']} kept for Qwen"
                   + (f", voice {voice}" if voice else "") + ")",
                   flush=True)

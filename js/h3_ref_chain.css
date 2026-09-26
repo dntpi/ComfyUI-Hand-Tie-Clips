@@ -1377,3 +1377,20 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 .h3e-tl-inspector:empty { display: none; }
 .h3e-tl-inspector { margin-top: 6px; border-top: 1px solid var(--h3-line); padding-top: 4px; }
 .h3e-tl-inspector-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+
+/* Sized for 100% zoom on a normal node: the first cut used 9px text and a
+ * 54px film row and left most of the pane empty. */
+.h3e-tl { --h3-tl-fs: 11px; }
+.h3e-tl-status, .h3e-tl-dim { font-size: var(--h3-tl-fs); }
+.h3e-tl-label { flex-basis: 52px; width: 52px; font-size: 10px; }
+.h3e-tl-tick { font-size: 10px; }
+.h3e-tl-no { font-size: 13px; }
+.h3e-root .h3e-tl-mini { font-size: 10px; line-height: 16px; padding: 0 5px; }
+.h3e-tl-meta, .h3e-tl-cap, .h3e-tl-seam { font-size: var(--h3-tl-fs); }
+.h3e-tl-peek {
+    font-size: 12px; line-height: 1.3; white-space: normal;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+}
+.h3e-tl-next { font-size: var(--h3-tl-fs); line-height: 24px; }
+.h3e-tl-extend-plus { font-size: 28px; }
+.h3e-tl-track { gap: 6px; }

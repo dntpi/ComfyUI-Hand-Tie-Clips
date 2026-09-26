@@ -35,7 +35,7 @@ const PENDING_PROP = "h3_timeline_pending";
 const ZOOM_PROP = "h3_timeline_pps";
 const ZOOMS = [6, 12, 24];
 const SPRITE_N = 24;
-const FILM_H = 54;
+const FILM_H = 120;
 
 const SPRITE_URL = "/h3_ref_chain/hop_sprite";
 const CLIP_URL = "/h3_ref_chain/hop_clip";
@@ -332,7 +332,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         track.style.width = `${W + EXTEND_W + 48}px`;
 
         // Ruler.
-        const ruler = lane("time", 16);
+        const ruler = lane("time", 20);
         ruler.body.style.width = `${W}px`;
         const every = pps() >= 24 ? 2 : pps() >= 12 ? 5 : 10;
         for (let s = 0; s * fps <= f; s += 1) {
@@ -345,7 +345,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
 
         // Plan blocks.
         const range = editor.renderRange();
-        const plan = lane("plan", 74);
+        const plan = lane("plan", 104);
         plan.body.style.width = `${W}px`;
         shots.forEach((s, i) => {
             const g = geo[i];
@@ -373,7 +373,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
             top.append(solo, lock);
             b.appendChild(top);
             const beat = String(s.beat || "").replace(/\s+/g, " ").trim();
-            const peek = el("div", "h3e-tl-peek", beat.length > 48 ? beat.slice(0, 46) + "…" : beat);
+            const peek = el("div", "h3e-tl-peek", beat.length > 160 ? beat.slice(0, 158) + "…" : beat);
             peek.title = beat;
             b.appendChild(peek);
             const tags = [...new Set((beat.match(/@[A-Za-z0-9_]+/g) || []))].join(" ");
@@ -399,7 +399,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         track.appendChild(plan.row);
 
         // Film.
-        const film = lane("film", FILM_H + 14);
+        const film = lane("film", FILM_H + 18);
         film.body.style.width = `${W}px`;
         shots.forEach((s, i) => {
             const g = geo[i];
@@ -424,7 +424,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         track.appendChild(film.row);
 
         // Seams.
-        const seamRow = lane("seam", 30);
+        const seamRow = lane("seam", 26);
         seamRow.body.style.width = `${W}px`;
         for (let i = 1; i < shots.length; i++) {
             const g = geo[i];
@@ -462,7 +462,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
             render: "h3e-tl-next-render", locked: "h3e-tl-next-locked",
             skip: "h3e-tl-next-skip", "replay-miss": "h3e-tl-next-replay-miss",
         };
-        const next = lane("next", 20);
+        const next = lane("next", 26);
         next.body.style.width = `${W}px`;
         shots.forEach((s, i) => {
             const g = geo[i];

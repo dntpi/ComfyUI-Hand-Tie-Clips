@@ -33,7 +33,7 @@ import torch
 
 FPS = 24
 SPRITE_N = 24          # frames in a scrub sheet
-SPRITE_H = 96          # scrub cell height, px
+SPRITE_H = 144         # scrub cell height, px
 CLIP_H = 360           # preview clip height, px
 SEAM_SECONDS = 2.0     # each side of a join
 AUDIO_RATE = 48000     # AAC-friendly; the cache's own rate is resampled

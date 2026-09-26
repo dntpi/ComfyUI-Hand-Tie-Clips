@@ -3980,11 +3980,23 @@ class HandTieClips:
                       + ", ".join(f"{nm} {s:g}" for nm, s in boost_loras
                                   if nm != "None" and s != 0.0), flush=True)
 
+        # The steps each hop will really run. A shot's own `steps` outranks the
+        # widget, and printing only the widget made a plan pinned to 8 look
+        # like it was obeying a widget set to 2 -- and the boost split with it.
+        _hop_steps = [int((sh or {}).get("steps") or steps) for sh in shots]
+        _steps_txt = (f"{_hop_steps[0]} steps" if len(set(_hop_steps)) == 1
+                      else "steps " + "/".join(str(v) for v in _hop_steps))
+        if _hop_steps and all((sh or {}).get("steps") for sh in shots) \
+                and set(_hop_steps) != {int(steps)}:
+            _steps_txt += f" (set per shot; the steps widget's {int(steps)} is unused)"
+        if boost_on:
+            _steps_txt += " -> realism boost " + ", ".join(sorted(
+                {f"{BOOST_SPLIT} + {BOOST_EXTEND * v - BOOST_SPLIT}" for v in _hop_steps}))
         print(
             f"[{TAG}] {n} hop(s), {length}f ({length / FPS:.1f}s) @ {width}x{height} "
             f"({resolution}, {aspect}), overlap {overlap_n}f, "
             f"hop_script={hop_script}, pin_to_qwen={pin_to_qwen}, "
-            f"{unique} authored block(s), {steps} steps {sampler_name}/{scheduler}",
+            f"{unique} authored block(s), {_steps_txt} {sampler_name}/{scheduler}",
             flush=True,
         )
 

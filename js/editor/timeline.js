@@ -79,6 +79,10 @@ export function createTimeline(node, { editor, onChange } = {}) {
     player.hidden = true;
     root.appendChild(player);
 
+    // Set by a zoom click, so the redraw keeps the same place in the chain
+    // rather than the same pixel offset.
+    let zoomed = false;
+
     // Keys the sprite route answered 404 for: gone from the cache.
     const missing = new Set();
     const sprites = new Map();   // key -> {cells, w, h} once loaded
@@ -250,6 +254,11 @@ export function createTimeline(node, { editor, onChange } = {}) {
         // either way, and the tab redraws when it is shown.
         if (root.hidden) return;
         const shots = (editor.mode?.() === "shots" && editor.shots?.()) || [];
+        // Clearing the track collapses the scroller to zero width, which
+        // clamps scrollLeft to 0 -- and every finished hop redraws. Keep the
+        // position, as a fraction when the zoom changes the width under it.
+        const keepX = scroller.scrollLeft;
+        const keepW = scroller.scrollWidth || 1;
         scroller.textContent = "";
         warnings.textContent = "";
         forecastNote.textContent = "";
@@ -259,6 +268,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         for (const z of ZOOMS) {
             const b = button(String(z), `${z} px per second`, () => {
                 props()[ZOOM_PROP] = z;
+                zoomed = true;
                 render();
             }, "h3e-btn h3e-tl-zbtn");
             b.classList.toggle("h3e-on", z === pps());
@@ -433,6 +443,10 @@ export function createTimeline(node, { editor, onChange } = {}) {
         track.appendChild(next.row);
 
         scroller.appendChild(track);
+        scroller.scrollLeft = zoomed
+            ? keepX / keepW * scroller.scrollWidth
+            : keepX;
+        zoomed = false;
 
         // Why, in one line: the first cause, and where it stops.
         const firstMove = fc.state.findIndex((st) => st === "render" || st === "replay-miss");

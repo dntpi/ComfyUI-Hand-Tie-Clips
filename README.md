@@ -521,6 +521,21 @@ If `H3AdaLNLoRAFix` is installed, the node runs it on the boost model itself.
 - Switching it on changes every hop's cache key, hop 1 included. With it off,
   the keys are exactly what they were.
 
+**`boost_upscale` / `boost_upscale_by`: the recipe's latent upscale.** Pick a
+file from `models/latent_upscale_models` (LBH-123-AI's
+[H3 latent upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler),
+or its LMS fine-tune) and stage 1 composes on your canvas, then its picture is
+upscaled in latent space before stage 3 paints. It sits where the original has
+its "Optional Latent Upscaler", at the original's ×1.25. Nothing else in the
+recipe changes. No other node pack is needed: the node runs the weights itself.
+
+This is the lower-VRAM way to a bigger picture. Set a small canvas (0.5 MP),
+`steps=3` with turbo (2 + 4), and let stage 3 finish at 1.25× that size. The
+delivered video, the join pin and the cache all live at the upscaled size;
+the references and the prompt encode stay at the canvas. On hop 2+, stage 1
+pins on the previous hop shrunk to the canvas, and stage 3 on it at full size.
+`None` (the default) renders at the canvas, and leaves the keys as they were.
+
 ---
 
 ## Reference
@@ -615,6 +630,7 @@ Set `locked: true` on a shot to pin it to its last render regardless.
 | voice_every_hop | `off` (voice 1–3 ride hop 1 only). **Recommended `speaking`** when one voice has to hold across the chain |
 | quality | final |
 | realism_boost | `off`. Use it with `steps=6` |
+| boost_upscale | `None`. `boost_upscale_by` 1.25, the recipe's |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master.
 

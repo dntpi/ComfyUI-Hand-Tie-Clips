@@ -20,6 +20,11 @@ from .refmod_builder import (
     NODE_CLASS_MAPPINGS as _REFMOD_NODES,
     NODE_DISPLAY_NAME_MAPPINGS as _REFMOD_NAMES,
 )
+from .latent_upscale import (
+    NODE_CLASS_MAPPINGS as _LUP_NODES,
+    NODE_DISPLAY_NAME_MAPPINGS as _LUP_NAMES,
+    register_folder as _lup_register_folder,
+)
 from . import refmod as _refmod
 
 NODE_CLASS_MAPPINGS.update(_PREVIEW_NODES)
@@ -32,7 +37,10 @@ NODE_CLASS_MAPPINGS.update(_CACHE_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_CACHE_NAMES)
 NODE_CLASS_MAPPINGS.update(_REFMOD_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_REFMOD_NAMES)
+NODE_CLASS_MAPPINGS.update(_LUP_NODES)
+NODE_DISPLAY_NAME_MAPPINGS.update(_LUP_NAMES)
 _refmod.register_folder()
+_lup_register_folder()
 
 # The editor's dropdowns are served from directives.VOCAB rather than copied
 # into JS. A failure here costs the dropdowns their tooltips, not the node, so

@@ -82,6 +82,7 @@ from . import latents as _latents
 from . import audio_lock as _alock
 from . import planner as _planner
 from . import refine_blend as _rblend
+from . import latent_upscale as _lup
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -2208,8 +2209,43 @@ def _boost_sigmas(hop_sigmas, sigma_cache, hop_steps):
     return sigma_cache[key]
 
 
+def _pin_on_canvas(pin, like):
+    """`pin` with its video shrunk to `like`'s grid, audio untouched. -> dict.
+
+    For the realism boost's latent upscale: the previous hop was delivered at
+    the upscaled size, and stage 1 of this one composes on the smaller canvas,
+    where Motion-Context will only take a pin of its own size.
+    """
+    if pin is None:
+        return None
+    p, ref = _latents.from_dict(pin), _latents.from_dict(like)
+    if not p or not ref:
+        return pin
+    h, w = int(ref[0].shape[-2]), int(ref[0].shape[-1])
+    out = {k: v for k, v in pin.items() if k != "noise_mask"}
+    out["samples"] = _latents.rebuild(
+        pin["samples"], [_lup.shrink(p[0], h, w)] + p[1:])
+    return out
+
+
+def _latent_resized(latent, h, w):
+    """An empty hop latent like `latent`, video grid (h, w). Audio unchanged.
+
+    Only its shape is read -- by AddGuide and Motion-Context, which size a
+    keyframe from the latent they are handed.
+    """
+    parts = _latents.from_dict(latent)
+    v = parts[0]
+    out = {k: val for k, val in latent.items() if k != "noise_mask"}
+    out["samples"] = _latents.rebuild(
+        latent["samples"],
+        [v.new_zeros(v.shape[:-2] + (int(h), int(w)))] + parts[1:])
+    return out
+
+
 def _boost_sampled(latent, *, model, guider, boost_guider, sampler,
-                   hop_sigmas, sigma_cache, hop_steps, seed, hop_no, label):
+                   hop_sigmas, sigma_cache, hop_steps, seed, hop_no, label,
+                   upscale=None):
     """One hop, sampled on the realism-boost spine. -> the sampler output dict.
 
     Stage 2 is the original's "Second Sampling Pass": a SamplerCustomAdvanced on
@@ -2226,6 +2262,12 @@ def _boost_sampled(latent, *, model, guider, boost_guider, sampler,
     Video re-noises from stage 1's DENOISED estimate; audio passes on from its
     OUTPUT, which is already noised at the hand-off sigma. Same wiring as the
     original.
+
+    `upscale`, when given, is the original's "Optional Latent Upscaler": a
+    function taking stage 1's denoised video to the bigger canvas. It runs
+    between stage 1 and the re-noise, exactly where the original has it, so
+    the noise is drawn at the new size and `boost_guider` must carry
+    conditioning built for that size.
     """
     hi, lo = _boost_sigmas(hop_sigmas, sigma_cache, hop_steps)
     n1 = int(hi.shape[-1]) - 1
@@ -2249,6 +2291,11 @@ def _boost_sampled(latent, *, model, guider, boost_guider, sampler,
         raise RuntimeError(f"{TAG}: hop {hop_no}: realism boost could not "
                            "read the stage-1 latent.")
     x0 = den_parts[0]
+    if upscale is not None:
+        before = tuple(x0.shape[-2:])
+        x0 = upscale(x0)
+        print(f"[{TAG}] hop {hop_no}: latent upscale {before} -> "
+              f"{tuple(x0.shape[-2:])} (h, w cells)", flush=True)
     n = noise.generate_noise({"samples": x0}).to(x0.device, x0.dtype)
     ms = model.get_model_object("model_sampling")
     v = ms.inverse_noise_scaling(s, ms.noise_scaling(s, n, x0))
@@ -2818,6 +2865,19 @@ class HandTieClips:
                     "default": BOOST_LORA_DEFAULTS[2][1],
                     "min": -4.0, "max": 4.0, "step": 0.05,
                 }),
+                # APPENDED 2026-09-28, LAST, same positional reason.
+                "boost_upscale": (_lup.choices(), {
+                    "default": "None",
+                    "tooltip": ("Latent upscaler for the boost, as in the original recipe: stage 1 "
+                                "composes at the canvas, stage 3 paints at the larger size. Lets a "
+                                "small canvas finish bigger. From models/latent_upscale_models. "
+                                "None renders at the canvas."),
+                }),
+                "boost_upscale_by": ("FLOAT", {
+                    "default": 1.25, "min": 1.0, "max": 2.0, "step": 0.05,
+                    "tooltip": ("How much bigger stage 3 paints than the canvas. The recipe uses "
+                                "1.25. Snapped to a 32 px grid."),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2920,7 +2980,8 @@ class HandTieClips:
             realism_boost="off", boost_lora_1="None",
             boost_lora_1_strength=0.5, boost_lora_2="None",
             boost_lora_2_strength=1.0, boost_lora_3="None",
-            boost_lora_3_strength=1.0,
+            boost_lora_3_strength=1.0, boost_upscale="None",
+            boost_upscale_by=1.25,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -3508,6 +3569,23 @@ class HandTieClips:
                 raise RuntimeError(
                     f"{TAG}: realism_boost is on with no boost LoRA set -- "
                     "pick at least one of boost_lora_1..3.")
+        # The recipe's latent upscale: stage 1 composes on the canvas, stage 3
+        # paints at out_w x out_h. Everything the chain DELIVERS is at the
+        # upscaled size -- master, pin, cache -- and everything it GENERATES
+        # FROM (references, the Ref2VA encode) stays at the canvas.
+        boost_up = (boost_on and str(boost_upscale) != "None"
+                    and float(boost_upscale_by) > 1.0)
+        out_w, out_h = width, height
+        if boost_up:
+            out_w, out_h = _lup.upscaled_canvas(width, height,
+                                                float(boost_upscale_by))
+            print(f"[{TAG}] realism boost upscale: stage 1 at {width}x{height}"
+                  f", stage 3 and the delivered video at {out_w}x{out_h} "
+                  f"(x{float(boost_upscale_by):g}, {boost_upscale})",
+                  flush=True)
+        elif str(boost_upscale) != "None" and not boost_on:
+            print(f"[{TAG}] boost_upscale is set but realism_boost is off; "
+                  "not upscaling.", flush=True)
 
         sampler = base_sigmas = None
         boost_model = None
@@ -3555,7 +3633,7 @@ class HandTieClips:
             _steps_txt += " -> realism boost " + ", ".join(sorted(
                 {f"{BOOST_SPLIT} + {BOOST_EXTEND * v - BOOST_SPLIT}" for v in _hop_steps}))
         print(
-            f"[{TAG}] {n} hop(s), {length}f ({length / FPS:.1f}s) @ {width}x{height} "
+            f"[{TAG}] {n} hop(s), {length}f ({length / FPS:.1f}s) @ {out_w}x{out_h} "
             f"({resolution}, {aspect}), overlap {overlap_n}f, "
             f"hop_script={hop_script}, pin_to_qwen={pin_to_qwen}, "
             f"{unique} authored block(s), {_steps_txt} {sampler_name}/{scheduler}",
@@ -3632,7 +3710,7 @@ class HandTieClips:
         # A dry run must not allocate the master. At 8 x 15 s and 1280x736 that
         # is 2742 full float frames -- ~31 GB -- for a feature whose entire
         # point is that it costs seconds.
-        master_imgs = None if dry else _alloc_master(total_frames, height, width)
+        master_imgs = None if dry else _alloc_master(total_frames, out_h, out_w)
         write_pos = 0
         # Where each join actually landed. Recorded rather than derived,
         # because it can no longer BE derived: `seam.seam_positions()` solves
@@ -4344,6 +4422,12 @@ class HandTieClips:
                     hop_payload["boost"] = [
                         [[nm, round(s, 4)] for nm, s in boost_loras],
                         BOOST_EXTEND, BOOST_SPLIT]
+                    # Appended only when on, so a boost without the upscale
+                    # keys exactly as it did before the upscale existed.
+                    if boost_up:
+                        hop_payload["boost"].append(
+                            [str(boost_upscale), round(float(boost_upscale_by), 4),
+                             int(out_w), int(out_h)])
                 hop_key = _store.hop_key(
                     None if hop_restart else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
@@ -4445,55 +4529,90 @@ class HandTieClips:
                 # every branch below rebinds `cond`.
                 base_cond = cond
 
-                if (i == 0 or hop_restart) and start_image is not None:
-                    # A restart hop is a chain start. It gets the photograph as
-                    # its frame-0 anchor exactly as hop 1 does, and NOTHING from
-                    # the previous hop reaches it -- no sampler latent, no
-                    # decoded tail. That is the entire point: every hop
-                    # otherwise inherits its predecessor's end state, and a
-                    # clip's end is its most settled moment, so motion and
-                    # lighting response decay hop over hop. A restart bounds
-                    # that accumulation to the distance between restarts
-                    # instead of letting it run the length of the chain.
-                    cond = _result(_core_call(
-                        MiniMaxH3AddGuide,
-                        "the restart anchor" if hop_restart else "the hop-1 start image",
-                        positive=cond, latent=latent, frame_idx=0,
-                        vae=vae, audio_vae=None,
-                        image=start_image[:1], audio=None,
-                    ))[0]
-                elif i > 0 and not hop_restart:
+                # One set of guides per canvas the hop samples on. With the
+                # boost's latent upscale that is two: stage 1 on the canvas,
+                # stage 3 at out_w x out_h. H3 lays a keyframe on the target's
+                # own grid and Motion-Context refuses a pin of another size,
+                # so each stage gets its own copy. The pin is conditioned once,
+                # at the size it was sampled, and area-shrunk for stage 1.
+                pin_latent = None
+                if i > 0 and not hop_restart:
                     pin_latent = prev_sampled
                     if pin_latent is not None:
                         pin_latent, pin_anchor = _condition_pin_latent(
                             pin_latent, pin_anchor,
                             mode=pin_renorm_mode, noise=pin_noise_v,
                             seed=(int(seed) + i))
-                    cond, pin_mech_used = _pin_continue(
-                        cond, latent, vae, audio_vae, overlap_n,
-                        pin_latent, prev_imgs, prev_audio,
-                        audio_ctx=audio_ctx, mode=str(pin_mech),
-                    )
+                targets = [(latent, _pin_on_canvas(pin_latent, latent)
+                            if boost_up else pin_latent)]
+                if boost_up:
+                    targets.append((_latent_resized(
+                        latent, out_h // _lup.SPATIAL, out_w // _lup.SPATIAL),
+                        pin_latent))
+                built = []
+                for _k, (_lat, _pin) in enumerate(targets):
+                    _c, _mech = base_cond, None
+                    if (i == 0 or hop_restart) and start_image is not None:
+                        # A restart hop is a chain start. It gets the
+                        # photograph as its frame-0 anchor exactly as hop 1
+                        # does, and NOTHING from the previous hop reaches it --
+                        # no sampler latent, no decoded tail. That is the
+                        # entire point: every hop otherwise inherits its
+                        # predecessor's end state, and a clip's end is its most
+                        # settled moment, so motion and lighting response decay
+                        # hop over hop. A restart bounds that accumulation to
+                        # the distance between restarts instead of letting it
+                        # run the length of the chain.
+                        _c = _result(_core_call(
+                            MiniMaxH3AddGuide,
+                            "the restart anchor" if hop_restart else "the hop-1 start image",
+                            positive=_c, latent=_lat, frame_idx=0,
+                            vae=vae, audio_vae=None,
+                            image=start_image[:1], audio=None,
+                        ))[0]
+                    elif i > 0 and not hop_restart:
+                        _c, _mech = _pin_continue(
+                            _c, _lat, vae, audio_vae, overlap_n,
+                            _pin, prev_imgs, prev_audio,
+                            audio_ctx=audio_ctx, mode=str(pin_mech),
+                        )
 
-                if (_guides_last_frame(last_frame_guide, i, shots)
-                        and start_image is not None):
-                    # Conservative half: pin the still at the last PIXEL
-                    # frame. Does NOT become the next hop's frame 0 -- that
-                    # is keyframe chaining, a v3 conversation. After the
-                    # frame-0 / Motion-Context pin so both keyframes sit
-                    # on `cond`; before the audio lock, which mutates the
-                    # latent not the conditioning.
-                    _end = _last_pixel_guide_idx()
-                    cond = _result(_core_call(
-                        MiniMaxH3AddGuide,
-                        "the last-frame guide",
-                        positive=cond, latent=latent, frame_idx=_end,
-                        vae=vae, audio_vae=None,
-                        image=start_image[:1], audio=None,
-                    ))[0]
-                    print(f"[{TAG}] hop {i + 1}: last-frame guide "
-                          f"(still at pixel frame_idx={_end})",
-                          flush=True)
+                    if (_guides_last_frame(last_frame_guide, i, shots)
+                            and start_image is not None):
+                        # Conservative half: pin the still at the last PIXEL
+                        # frame. Does NOT become the next hop's frame 0 -- that
+                        # is keyframe chaining, a v3 conversation. After the
+                        # frame-0 / Motion-Context pin so both keyframes sit
+                        # on `cond`; before the audio lock, which mutates the
+                        # latent not the conditioning.
+                        _end = _last_pixel_guide_idx()
+                        _c = _result(_core_call(
+                            MiniMaxH3AddGuide,
+                            "the last-frame guide",
+                            positive=_c, latent=_lat, frame_idx=_end,
+                            vae=vae, audio_vae=None,
+                            image=start_image[:1], audio=None,
+                        ))[0]
+                        if _k == 0:
+                            print(f"[{TAG}] hop {i + 1}: last-frame guide "
+                                  f"(still at pixel frame_idx={_end})",
+                                  flush=True)
+                    built.append((_c, _mech))
+                cond, _mech = built[0]
+                if _mech is not None:
+                    pin_mech_used = _mech
+                cond_hi = None
+                if boost_up:
+                    cond_hi, _mech_hi = built[1]
+                    # Stage 3 paints the pixels the join is judged on, so its
+                    # mechanism is the one the cache key has to agree with.
+                    if _mech_hi is not None:
+                        if _mech_hi != _mech:
+                            print(f"[{TAG}] hop {i + 1}: stage 1 pinned by "
+                                  f"{_mech}, stage 3 by {_mech_hi}",
+                                  flush=True)
+                        pin_mech_used = _mech_hi
+                del targets, built, pin_latent
 
                 if locked is not None:
                     # AFTER the pin: Motion-Context may rewrite this hop's
@@ -4540,19 +4659,35 @@ class HandTieClips:
                     noise_seed=shot_seed))[0]
                 if boost_model is not None:
                     # Same conditioning on both guiders, so the pin and the
-                    # guides reach the boost stage too. The latent that comes
-                    # out is an ordinary hop latent on the hop canvas: the
-                    # decode, the next hop's pin and the cache take it as is.
+                    # guides reach the boost stage too -- rebuilt at the
+                    # upscaled size when the upscale is on. The latent that
+                    # comes out is an ordinary hop latent on the delivered
+                    # canvas: the decode, the next hop's pin and the cache
+                    # take it as is.
                     boost_guider = _result(_core_call(
                         BasicGuider, "the boost guider",
-                        model=boost_model, conditioning=cond))[0]
+                        model=boost_model,
+                        conditioning=(cond_hi if cond_hi is not None
+                                      else cond)))[0]
                     sampled = _boost_sampled(
                         latent, model=model, guider=guider,
                         boost_guider=boost_guider, sampler=sampler,
                         hop_sigmas=hop_sigmas, sigma_cache=sigma_cache,
                         hop_steps=hop_steps, seed=shot_seed, hop_no=i + 1,
-                        label=f"{sampler_name}/{scheduler}")
+                        label=f"{sampler_name}/{scheduler}",
+                        upscale=((lambda x0: _lup.upscale(
+                            x0, str(boost_upscale), out_h // _lup.SPATIAL,
+                            out_w // _lup.SPATIAL, float(boost_upscale_by)))
+                            if boost_up else None))
                     del boost_guider
+                    if cond_hi is not None:
+                        # From here the hop lives at the upscaled size: the
+                        # refine samples `sampled`, so its default guider has
+                        # to carry the stage-3 guides, not stage 1's.
+                        cond = cond_hi
+                        guider = _result(_core_call(
+                            BasicGuider, "the guider (upscaled)",
+                            model=model, conditioning=cond))[0]
                 else:
                     sampled = _result(_core_call(
                         SamplerCustomAdvanced, "the sampler",
@@ -4678,7 +4813,7 @@ class HandTieClips:
                 # base_cond is deleted with cond because it is usually the
                 # same object: keeping the name alive would hold one hop's
                 # conditioning resident until the next hop overwrites it.
-                del sampled, latent, cond, base_cond, guider, noise
+                del sampled, latent, cond, cond_hi, base_cond, guider, noise
                 mm.soft_empty_cache()
 
                 if (hop_store is not None and hop_key is not None
@@ -4879,7 +5014,7 @@ class HandTieClips:
             head = (f"DRY RUN - {n} hop(s) compiled, nothing rendered. "
                     f"{_span}f each, overlap {overlap_n}, "
                     f"would deliver {total_frames} frames "
-                    f"({total_frames / FPS:.1f}s) at {int(width)}x{int(height)}.")
+                    f"({total_frames / FPS:.1f}s) at {int(out_w)}x{int(out_h)}.")
             print(f"[{TAG}] {head}", flush=True)
             _sep = chr(10) * 2
             info = head + _sep + _sep.join(
@@ -4899,7 +5034,7 @@ class HandTieClips:
             # frame at the real resolution both encodes cleanly and shows the
             # dimensions the plan resolved to. One frame is not the master --
             # the 31 GB allocation this mode exists to avoid is untouched.
-            return (_sheet.placeholder(width, height),
+            return (_sheet.placeholder(out_w, out_h),
                     {"waveform": torch.zeros((1, 2, 1024), dtype=torch.float32),
                      "sample_rate": 44100},
                     info,

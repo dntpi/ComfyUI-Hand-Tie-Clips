@@ -132,6 +132,18 @@ def main():
         c = walk_wire(CLIP_PATH, "CLIP")
         ck("CLIP reaches the chain through the LoRA loader", c == CLIP_PATH,
            " -> ".join(c))
+        # PlagueKind's loader rebuilds its stack on load from
+        # properties.stack_data and ignores the widget value, so a stack saved
+        # only in widgets_values loads EMPTY: the turbo LoRA silently drops and
+        # every hop renders 8-10 steps on the base model.
+        lora = next(n for n in nodes if n["type"] == "LTX_lora_loader")
+        props = (lora.get("properties") or {}).get("stack_data") or "[]"
+        try:
+            names = [d.get("lora") for d in json.loads(props) if d.get("on")]
+        except ValueError:
+            names = []
+        ck("turbo LoRA survives a load (properties.stack_data)",
+           any("turbo" in str(x) for x in names), str(names))
         ins = [i["name"] for i in chain["inputs"]]
         dead = [i for i in ins
                 if i.startswith("ref_image_") and i != "ref_image_size"

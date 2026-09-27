@@ -1068,7 +1068,8 @@
       "title": "LoRA Loader Stack (turbo)",
       "properties": {
         "htc_speed": "lora",
-        "Node name for S&R": "LTX_lora_loader"
+        "Node name for S&R": "LTX_lora_loader",
+        "stack_data": "[{\"on\":true,\"lora\":\"minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors\",\"str\":1,\"v\":1,\"a\":1,\"t\":1}]"
       },
       "widgets_values": [
         "minimax",

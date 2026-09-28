@@ -54,6 +54,7 @@ CHECKS = [
     ("check_refine_audio.py", []),
     ("check_refine_keys.py", []),
     ("check_boost.py", []),
+    ("check_tiled_upsampler.py", []),
     ("check_speed_mode.py", []),
     ("check_restart_trim.py", []),
     ("check_shot_refs.py", []),

@@ -655,6 +655,17 @@ guide and compounds, so it is not a per-hop cost. Implementation by
 PlagueKind's cache node, use one or the other: two on one wire corrupt each
 other, and this one refuses rather than let that happen silently.
 
+**H3 Tiled Upsampler** — `IMAGE` + `AUDIO` out. Makes a finished clip bigger
+and sharper: wire in the model, the conditioning and the latent the clip was
+made with, a sampler, and both VAEs. It upscales the video latent with
+LBH-123-AI's H3 latent upscaler, one ~4 s time chunk at a time, then redraws it
+with one light step (denoise 0.2) in tiles that are stepped together, so there
+are no tile seams. Audio passes through untouched. The recipe is fixed; the
+only setting is `megapixels` (4 by default, aspect kept). Needs
+`minimax_h3_latent_upscaler_3d_bf16.safetensors` from
+[LBH-123-AI/Minimax_h3_latent_Upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
+in `models/latent_upscale_models`.
+
 **H3 Continuity State** — `continuity_state` (STRING) out. **Setting only**:
 `setting_locked` / `setting_context` / `setting_mutable`. Characters belong in
 `ref_plan`.
@@ -715,6 +726,12 @@ The turbo stack in the shipped workflows is
 [KJNodes](https://github.com/kijai/ComfyUI-KJNodes).
 The realism boost follows The AI Brief's *MiniMax H3 Singularity Dual Sampling*
 workflow.
+The **H3 Tiled Upsampler** runs
+[LBH-123-AI](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler)'s
+latent upscaler weights, and its recipe is the one proven in bbaudio-2025's
+[Comfyui-MMH3-UltimateUpscale](https://github.com/bbaudio-2025/Comfyui-MMH3-UltimateUpscale);
+the code is this pack's own (see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)).
 
 ## Docs
 

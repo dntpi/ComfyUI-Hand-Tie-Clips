@@ -87,8 +87,7 @@ const GROUPS = [
     // stays drawn upstream.
     ["realism boost", ["realism_boost", "boost_lora_1", "boost_lora_1_strength",
                        "boost_lora_2", "boost_lora_2_strength",
-                       "boost_lora_3", "boost_lora_3_strength",
-                       "boost_upscale", "boost_upscale_by"]],
+                       "boost_lora_3", "boost_lora_3_strength"]],
     ["cache",["cache_hops", "cache_budget_gb"]],
     // Added 2026-08-30. 0.4.0 shipped these five on the Python side and never
     // touched js/, so all five fell through to native dials -- the documented

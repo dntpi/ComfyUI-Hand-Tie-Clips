@@ -1,7 +1,7 @@
 # Third-party notices
 
-Hand Tie Clips is MIT (see `LICENSE`). Two files in it carry other people's
-work, and this document exists so that is impossible to miss.
+Hand Tie Clips is MIT (see `LICENSE`). One file in it is not this pack's work,
+and this document exists so that is impossible to miss.
 
 ## `h3_cache.py` — MiniMax-H3 block-stack residual cache
 
@@ -64,22 +64,3 @@ calling into it, a Core change to `MiniMaxH3Model._forward` desyncs this file
 **silently** — wrong output, not an exception. `tools/check_h3_cache.py` runs
 on every `check_all.py` sweep to make that failure loud. Vendoring moved that
 watch from PlagueKind's repo to this one; it is now this pack's job.
-
-## `latent_upscale.py` — the H3 latent upscaler's layout and statistics
-
-**Original author: [LBH-123-AI](https://github.com/LBH-123-AI).**
-Code: [`Comfyui_Minimax_h3_latent_Upscaler`](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler),
-MIT. Weights: [`Minimax_h3_latent_Upscaler`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler),
-Apache-2.0. No weights ship with this pack; the user downloads them.
-
-A network only loads into the module layout it was trained in, so two things
-in this file are theirs: the layout (a conv-in, residual blocks with a scale
-embedding, depthwise temporal convs, a trilinear resize, a conv-out, under
-their key names) and the 24 means and 24 standard deviations the weights were
-trained against. Verified identical on both installed checkpoints: the same
-input through this module and through theirs, in float32, differs by 0.0.
-
-The runner around it is this pack's: memory through ComfyUI's
-`free_memory` rather than unloading every model, the whole clip in one pass
-when it fits, the block list read from the checkpoint's keys, and
-safetensors only.

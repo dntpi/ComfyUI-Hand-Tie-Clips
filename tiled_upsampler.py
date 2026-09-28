@@ -24,7 +24,8 @@ MMH3 Ultimate Upscale graph (bbaudio-2025's Comfyui-MMH3-UltimateUpscale,
 MIT), which is where this recipe was proven: 102-frame chunks with a 17-frame
 overlap, anchor 0.999, auto tiling at 70,000 tokens per forward with 128 px
 overlaps and a 256 px floor, joint steps on, one `simple` step at denoise 0.2,
-seed 444, upscaler in fp16. Only the size is a widget. This file is HTC's own
+seed 444, upscaler in fp16. Only the size is a widget; it defaults to 2 MP
+(the proving run used 4, a stress test). This file is HTC's own
 code; tools/check_tiled_upsampler.py runs it against that pack, when it is
 installed, and requires identical output.
 
@@ -45,7 +46,7 @@ TAG = "HTCTiledUpsampler"
 
 # --- the recipe -------------------------------------------------------------
 UPSCALER_FILE = "minimax_h3_latent_upscaler_3d_bf16.safetensors"
-MEGAPIXELS = 4.0            # 1 MP = 1024 x 1024 px, the only widget
+MEGAPIXELS = 2.0            # 1 MP = 1024 x 1024 px, the only widget
 SIZE_ALIGN = 32             # both edges snap to this, aspect held
 CHUNK_FRAMES = 102          # pixel frames per time chunk (a multiple of 17)
 CHUNK_OVERLAP = 17          # pixel frames shared by neighbouring chunks
@@ -814,7 +815,7 @@ class HTCTiledUpsampler:
                 "megapixels": ("FLOAT", {
                     "default": MEGAPIXELS, "min": 0.1, "max": 16.0, "step": 0.05,
                     "tooltip": "Output size as area, aspect kept (1 MP = 1024x1024). "
-                               "4 is the recipe."}),
+                               "1.5-2 is the usual range."}),
             },
         }
 

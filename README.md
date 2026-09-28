@@ -661,7 +661,7 @@ made with, a sampler, and both VAEs. It upscales the video latent with
 LBH-123-AI's H3 latent upscaler, one ~4 s time chunk at a time, then redraws it
 with one light step (denoise 0.2) in tiles that are stepped together, so there
 are no tile seams. Audio passes through untouched. The recipe is fixed; the
-only setting is `megapixels` (4 by default, aspect kept). Needs
+only setting is `megapixels` (2 by default, aspect kept; 1.5-2 is the usual range). Needs
 `minimax_h3_latent_upscaler_3d_bf16.safetensors` from
 [LBH-123-AI/Minimax_h3_latent_Upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
 in `models/latent_upscale_models`.

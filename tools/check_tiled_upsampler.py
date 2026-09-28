@@ -270,10 +270,92 @@ def weights_check(tu, mm):
        f"max diff {float((a - b).abs().max()):.2e}")
 
 
+def chain_checks(tu):
+    """The whole-film stage inside HandTieClips."""
+    print("inside the chain")
+    torch.manual_seed(3)
+    # One continuous "film" latent, cut into hops the way the chain delivers
+    # them: every hop is 57 steps (192 f); a continuation re-generates the
+    # previous hop's last 22 frames (7 steps) as its head, which the master
+    # drops. Stitching must give the film back exactly.
+    film_v = torch.randn(1, 24, 57 + 50 + 50, 4, 4)
+    film_a = torch.randn(1, 32, 2, 1000)
+    hops, at_step, at_frame = [], 0, 0
+    for n in range(3):
+        if n == 0:
+            v = film_v[:, :, 0:57]
+            a = film_a[..., 0:320]
+            k_from, frames = 0, 192
+        else:
+            k_from = at_step - 7
+            v = film_v[:, :, k_from:k_from + 57]
+            a0 = round(tu.frames_in(k_from) * tu.FRAME_RESCALE)
+            a = film_a[..., a0:a0 + 320]
+            frames = 170
+        hops.append({"hop": n + 1, "video": v.clone(), "audio": a.clone(),
+                     "cond": [[torch.zeros(1), {"hop": n + 1}]],
+                     "start": n == 0, "drop": 0 if n == 0 else 22,
+                     "frames": frames})
+        at_step = k_from + 57
+        at_frame += frames
+    sv, sa = tu.stitch(hops)
+    ck("stitched hops give back the continuous film latent",
+       torch.equal(sv, film_v[:, :, :sv.shape[2]]) and sv.shape[2] == 157,
+       f"{sv.shape[2]} steps, {tu.frames_in(sv.shape[2])} f "
+       f"(delivered {at_frame})")
+    ck("stitched latent's frame count equals what the chain delivered",
+       tu.frames_in(sv.shape[2]) == at_frame)
+
+    bad = dict(hops[1], drop=20)
+    try:
+        tu.stitch([hops[0], bad])
+        ck("an off-grid overlap is refused", False)
+    except ValueError as e:
+        ck("an off-grid overlap is refused", "whole number" in str(e))
+
+    segs = tu.segments([dict(hops[0]), dict(hops[1]), dict(hops[2], start=True)])
+    ck("a restart opens a new run", [len(s) for s in segs] == [2, 1])
+
+    pick = tu.cond_by_frame(hops)
+    ck("each chunk takes the conditioning of the hop at its middle",
+       pick(0, 102)[0][1]["hop"] == 1 and pick(170, 272)[0][1]["hop"] == 2
+       and pick(420, 532)[0][1]["hop"] == 3)
+
+    up = torch.rand(5, 8, 8, 3) * 0.5
+    ref = torch.rand(5, 4, 4, 3) * 0.5 + 0.3
+    got = tu.match_levels(up, ref, chunk=2)
+    ck("levels follow the corrected master frame by frame",
+       torch.allclose(got.mean(dim=(1, 2)), ref.mean(dim=(1, 2)), atol=1e-5))
+
+    # The stage end to end, with the recipe and the decode stubbed: one run
+    # per restart segment, frames concatenated in order, count checked.
+    calls = []
+
+    def fake_upsample(model, cond_at, lat, sampler, name, mp):
+        v = lat["samples"].tensors[0]
+        calls.append(int(v.shape[2]))
+        return {"samples": lat["samples"]}
+
+    saved, saved_free = tu.upsample, tu._free
+    tu.upsample, tu._free = fake_upsample, (lambda m: None)
+    try:
+        def decode(v):
+            return torch.zeros(tu.frames_in(v.shape[2]), 16, 16, 3)
+        three = [dict(hops[0]), dict(hops[1]),
+                 dict(hops[2], start=True, drop=0, frames=192)]
+        frames, note = tu.upsample_chain(None, None, None, three, 2.0,
+                                         decode=decode)
+        ck("one pass per run between restarts, frames in order",
+           calls == [107, 57] and frames.shape[0] == 192 + 170 + 192, note)
+    finally:
+        tu.upsample, tu._free = saved, saved_free
+
+
 def main():
     torch.set_grad_enabled(False)
     tu = load(os.path.join(HERE, "tiled_upsampler.py"), "htc_tiled_upsampler")
     self_checks(tu)
+    chain_checks(tu)
     mm_path = os.path.join(CUSTOM, "Comfyui-MMH3-UltimateUpscale", "nodes.py")
     sz_path = os.path.join(CUSTOM, "ComfyUI-H3-UpscaleSize", "upscale_size.py")
     if os.path.isfile(mm_path):

@@ -62,7 +62,8 @@ RELEASED = [
 
 # A widget appended since v2.0 may ship with any default that reproduces the
 # old behaviour. Only the ones that CHANGE a render need pinning here.
-INERT = {"hop_refine": "off", "speed_mode": "regular", "realism_boost": "off"}
+INERT = {"hop_refine": "off", "speed_mode": "regular", "realism_boost": "off",
+         "upsample": "off"}
 
 SOCKET_TYPES = {"MODEL", "CLIP", "VAE", "IMAGE", "AUDIO", "LATENT",
                 "CONDITIONING", "VIDEO"}

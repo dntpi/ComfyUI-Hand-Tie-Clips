@@ -82,6 +82,7 @@ from . import latents as _latents
 from . import audio_lock as _alock
 from . import planner as _planner
 from . import refine_blend as _rblend
+from . import tiled_upsampler as _tu
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -2818,6 +2819,20 @@ class HandTieClips:
                     "default": BOOST_LORA_DEFAULTS[2][1],
                     "min": -4.0, "max": 4.0, "step": 0.05,
                 }),
+                # APPENDED 2026-09-29, LAST, same positional reason.
+                "upsample": (["off", "on"], {
+                    "default": "off",
+                    "tooltip": ("After the last hop, make the finished film bigger and sharper: the H3 "
+                                "latent upscaler, then one light re-draw, over the whole film at once. "
+                                "Changes only the delivered video, never what a hop continues from. "
+                                "Needs minimax_h3_latent_upscaler_3d_bf16.safetensors in "
+                                "models/latent_upscale_models."),
+                }),
+                "upsample_megapixels": ("FLOAT", {
+                    "default": _tu.MEGAPIXELS, "min": 0.1, "max": 16.0, "step": 0.05,
+                    "tooltip": ("Output size for upsample, as area with the aspect kept "
+                                "(1 MP = 1024x1024). 1.5-2 is the usual range."),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -2921,6 +2936,7 @@ class HandTieClips:
             boost_lora_1_strength=0.5, boost_lora_2="None",
             boost_lora_2_strength=1.0, boost_lora_3="None",
             boost_lora_3_strength=1.0,
+            upsample="off", upsample_megapixels=_tu.MEGAPIXELS,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -3508,6 +3524,26 @@ class HandTieClips:
                 raise RuntimeError(
                     f"{TAG}: realism_boost is on with no boost LoRA set -- "
                     "pick at least one of boost_lora_1..3.")
+
+        # Upsample: the tiled upsampler's recipe once over the finished film,
+        # after the last hop. Refused NOW if the upscaler file is missing,
+        # rather than after every hop has rendered.
+        upsample_on = str(upsample) == "on" and not dry
+        upsample_hops = []
+        if upsample_on:
+            import folder_paths  # noqa: PLC0415
+            _tu.register_folder()
+            if not folder_paths.get_full_path(_tu.FOLDER, _tu.UPSCALER_FILE):
+                raise RuntimeError(
+                    f"{TAG}: upsample is on but {_tu.UPSCALER_FILE} is not in "
+                    f"models/{_tu.FOLDER} "
+                    "(huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler).")
+            _uw, _uh = _tu.target_size(int(width), int(height),
+                                       float(upsample_megapixels))
+            print(f"[{TAG}] upsample on: after the last hop the film goes "
+                  f"{int(width)}x{int(height)} -> {_uw}x{_uh} "
+                  f"({float(upsample_megapixels):g} MP). Delivery only; no "
+                  "hop's pin changes.", flush=True)
 
         sampler = base_sigmas = None
         boost_model = None
@@ -4392,21 +4428,7 @@ class HandTieClips:
                         f"Render hops 1-{replay_before} first, or set "
                         "render_from back to 0.")
 
-            this_sampled = None
-            if cached is not None:
-                imgs, wav, sr, cached_latent = cached
-                audio = {"waveform": wav, "sample_rate": sr}
-                # Carry the stored sampler latent forward exactly as a render
-                # would. Without this the next hop sees no latent, predicts the
-                # AddGuide fallback, and its key stops matching what is on disk
-                # -- so nothing past hop 1 could ever hit, and the hop after a
-                # hit was joined by the weaker mechanism.
-                this_sampled = cached_latent
-                print(f"[{TAG}] hop {i + 1}: loaded from cache "
-                      f"({int(imgs.shape[0])}f, key {hop_key[:8]}"
-                      f"{'' if cached_latent is not None else ', no latent'})",
-                      flush=True)
-            else:
+            def _hop_ref2va():
                 # Every argument by NAME, none by position. Passing the first
                 # seven positionally worked here and broke for a user on a
                 # different ComfyUI build: their core orders the parameters
@@ -4431,13 +4453,39 @@ class HandTieClips:
                     # citations above were written against.
                     ref_audios=hop_ref_audios,
                 )
-                cond, latent = _result(packed)[0], _result(packed)[1]
+                c, lat = _result(packed)[0], _result(packed)[1]
                 if refmod_image_blocks or refmod_video_blocks:
                     # ReferenceToVideo encoded the decode. Put the stored
-                    # latent back in that slot before anything else copies cond.
-                    cond = _refmod.splice_blocks(
-                        cond, hop_images, hop_videos,
+                    # latent back in that slot before anything else copies it.
+                    c = _refmod.splice_blocks(
+                        c, hop_images, hop_videos,
                         refmod_image_blocks, refmod_video_blocks)
+                return c, lat
+
+            this_sampled = None
+            # What upsample needs from this hop: the latent it DELIVERED and
+            # the conditioning that made it.
+            up_latent = up_cond = None
+            if cached is not None:
+                imgs, wav, sr, cached_latent = cached
+                audio = {"waveform": wav, "sample_rate": sr}
+                # Carry the stored sampler latent forward exactly as a render
+                # would. Without this the next hop sees no latent, predicts the
+                # AddGuide fallback, and its key stops matching what is on disk
+                # -- so nothing past hop 1 could ever hit, and the hop after a
+                # hit was joined by the weaker mechanism.
+                this_sampled = cached_latent
+                print(f"[{TAG}] hop {i + 1}: loaded from cache "
+                      f"({int(imgs.shape[0])}f, key {hop_key[:8]}"
+                      f"{'' if cached_latent is not None else ', no latent'})",
+                      flush=True)
+                if upsample_on:
+                    # A cached hop kept its latent but not its conditioning;
+                    # the upsampler's re-draw wants the one that made it.
+                    up_latent = cached_latent
+                    up_cond = _hop_ref2va()[0]
+            else:
+                cond, latent = _hop_ref2va()
                 # The conditioning as Ref2VA built it, before any pin or guide
                 # is added to it. `refine_cond=base` pulls the second pass
                 # toward this -- the references and the text, nothing about the
@@ -4674,6 +4722,12 @@ class HandTieClips:
                     audio = {"waveform": wav, "sample_rate": sr}
                 this_sampled = (refined_for_pin if refined_for_pin is not None
                                 else _latent_cpu(sampled))
+                if upsample_on:
+                    # `sampled`, not `this_sampled`: under pin_only those
+                    # differ, and the upsampler redraws what was delivered.
+                    up_latent = (this_sampled if refined_for_pin is None
+                                 else _latent_cpu(sampled))
+                    up_cond = base_cond
 
                 # base_cond is deleted with cond because it is usually the
                 # same object: keeping the name alive would hold one hop's
@@ -4805,6 +4859,22 @@ class HandTieClips:
                 )
                 del trimmed
 
+            if upsample_on:
+                _up = _latents.from_dict(up_latent) if up_latent is not None else None
+                upsample_hops.append({
+                    "hop": i + 1,
+                    "video": (_up[0] if _up and len(_up) == 2 else None),
+                    "audio": (_up[1] if _up and len(_up) == 2 else None),
+                    "cond": up_cond,
+                    "start": bool(hop_is_start),
+                    "drop": 0 if hop_is_start else int(overlap_n),
+                    "frames": int(keep_n),
+                    # pin_only caches the REFINED latent, not the delivered one
+                    "stand_in": bool(cached is not None
+                                     and str(hop_refine) == "pin_only"),
+                })
+                del _up
+
             if want_sheet:
                 # The frames this hop actually CONTRIBUTES: a chain start
                 # (hop 1 or a restart) gives all of them, a continuation
@@ -4911,6 +4981,33 @@ class HandTieClips:
             master_imgs = master_imgs[:write_pos]
         if hop_store is not None:
             hop_store.sweep(keep=hop_keys)
+
+        # Upsample, once, over the whole film. After every hop, so it cannot
+        # reach a pin; before `info` and the preview, so both describe what is
+        # actually delivered. A failure here keeps the canvas film rather than
+        # losing a render that has already cost every hop -- and says so.
+        upsample_note = ""
+        if upsample_on and upsample_hops:
+            if any(h["stand_in"] for h in upsample_hops):
+                print(f"[{TAG}] upsample: hop_refine=pin_only cached the "
+                      "refined latent, not the delivered one; cached hops are "
+                      "upsampled from the refined version", flush=True)
+            _push_preview(unique_id, "upsampling", hop=n, total=n, frac=1.0)
+            try:
+                _up_imgs, upsample_note = _tu.upsample_chain(
+                    model, sampler, vae, upsample_hops,
+                    float(upsample_megapixels),
+                    master=(master_imgs if (tone_on or anchor_on) else None))
+                master_imgs = _up_imgs
+                del _up_imgs
+                print(f"[{TAG}] {upsample_note}", flush=True)
+            except mm.InterruptProcessingException:
+                raise
+            except Exception as _ue:  # noqa: BLE001
+                upsample_note = f"upsample skipped, canvas film delivered: {_ue}"
+                print(f"[{TAG}] WARNING: {upsample_note}", flush=True)
+            upsample_hops = []
+            mm.soft_empty_cache()
         # lengths[0], not `length`: when every shot overrides duration to the
         # same value the set is still size 1, but `length` is the chain default.
         span = str(lengths[0]) if len(set(lengths)) == 1 else "/".join(str(v) for v in lengths)
@@ -4928,6 +5025,8 @@ class HandTieClips:
         if unpaired_joins:
             info += chr(10) + "unpaired joins: " + ", ".join(
                 f"{h - 1}|{h}" for h in unpaired_joins)
+        if upsample_note:
+            info += chr(10) + upsample_note
         print(f"[{TAG}] {info}", flush=True)
         # The assembled prompts being inspectable is the whole point of the
         # directive layer -- wire `info` to a Preview Text node to read exactly

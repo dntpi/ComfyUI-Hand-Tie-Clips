@@ -88,6 +88,10 @@ const GROUPS = [
     ["realism boost", ["realism_boost", "boost_lora_1", "boost_lora_1_strength",
                        "boost_lora_2", "boost_lora_2_strength",
                        "boost_lora_3", "boost_lora_3_strength"]],
+    // After the last hop, over the whole film: it changes what is delivered,
+    // never what a hop is generated from, so it sits after every group that
+    // does.
+    ["upsample", ["upsample", "upsample_megapixels"]],
     ["cache",["cache_hops", "cache_budget_gb"]],
     // Added 2026-08-30. 0.4.0 shipped these five on the Python side and never
     // touched js/, so all five fell through to native dials -- the documented

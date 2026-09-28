@@ -382,6 +382,10 @@ def main():
     ck("audio is silent, not None", out[1]["waveform"].abs().max() == 0)
     ck("info carries every compiled prompt", out[2].count("===== hop") == 8)
     ck("contact sheet is built on a dry run", out[3].shape[1] > 100)
+    ou, log_u = run(upsample="on", upsample_megapixels=2.0)
+    ck("upsample does nothing on a dry run",
+       ou[2].count("===== hop") == 8 and tuple(ou[0].shape) == (1, 736, 1280, 3)
+       and "upsample on" not in log_u)
 
     for rt, want in ((0, 8), (3, 3), (8, 8), (12, 8)):
         o, _ = run(render_through=rt)

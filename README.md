@@ -521,6 +521,31 @@ If `H3AdaLNLoRAFix` is installed, the node runs it on the boost model itself.
 - Switching it on changes every hop's cache key, hop 1 included. With it off,
   the keys are exactly what they were.
 
+### Upsample — a bigger, sharper film at the end
+
+`upsample: on` runs the **H3 Tiled Upsampler** recipe once over the whole film,
+after the last hop: the H3 latent upscaler, then one light re-draw (denoise
+0.2) in ~4 s chunks that crossfade into each other, so the re-draw also runs
+across the joins instead of adding a step at each one. `upsample_megapixels`
+sets the size (2 by default; 1.5-2 is the usual range).
+
+- **Delivery only.** It starts after every hop has handed its pin on, so it
+  cannot change what any hop is generated from, and it is in no hop's cache
+  key. Changing `upsample_megapixels` on a cached chain re-runs only the
+  upsample.
+- Each chunk is re-drawn with the prompt and references of the hop it falls
+  in. A restart is a cut, so the film is upsampled in separate runs between
+  restarts.
+- With `tone_compensate` on, each upsampled frame's level is matched to the
+  corrected frame it replaces, so the correction survives. Contrast shaping
+  (`lut`, `gain_bias`) is carried over only as that level.
+- Needs `minimax_h3_latent_upscaler_3d_bf16.safetensors` from
+  [LBH-123-AI/Minimax_h3_latent_Upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
+  in `models/latent_upscale_models`; the run is refused before hop 1 if it is
+  missing.
+- Memory: the delivered frames are the big cost. 460 frames at 2 MP are about
+  11 GB of RAM.
+
 ---
 
 ## Reference
@@ -615,6 +640,7 @@ Set `locked: true` on a shot to pin it to its last render regardless.
 | voice_every_hop | `off` (voice 1–3 ride hop 1 only). **Recommended `speaking`** when one voice has to hold across the chain |
 | quality | final |
 | realism_boost | `off`. Use it with `steps=6` |
+| upsample | `off`. `upsample_megapixels` 2 |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master.
 

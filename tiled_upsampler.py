@@ -755,7 +755,12 @@ def _free(model):
 
 
 def upsample(model, conditioning, latent, sampler, upscaler, megapixels):
-    """The whole recipe on an H3 AV latent. -> the upsampled AV latent dict."""
+    """The whole recipe on an H3 AV latent. -> the upsampled AV latent dict.
+
+    `conditioning` is one conditioning for the whole clip, or a callable
+    `(f0, f1) -> conditioning` giving each chunk its own -- the chain passes
+    the latter, because each hop was generated from its own prompt.
+    """
     import comfy.nested_tensor as nt
 
     samples = latent["samples"]
@@ -767,7 +772,8 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels):
     video, audio = samples.tensors
     if video.shape[0] != 1:
         raise RuntimeError(f"{TAG}: one clip at a time (batch 1).")
-    cond = clean_refs(conditioning)
+    per_chunk = callable(conditioning)
+    cond = None if per_chunk else clean_refs(conditioning)
     tv, ta = video.shape[2], audio.shape[-1]
     w_px, h_px = target_size(video.shape[4] * SPATIAL, video.shape[3] * SPATIAL,
                              megapixels)
@@ -785,13 +791,146 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels):
         if _device().type == "cuda":
             _free(model)            # never H3 and the upscaler resident at once
         cv = upscale_chunk(cv, upscaler, w_px, h_px)
-        ccond = cond_for_chunk(cond, f0, f1, cv.shape[3], cv.shape[4])
+        ccond = cond_for_chunk(clean_refs(conditioning(f0, f1)) if per_chunk
+                               else cond, f0, f1, cv.shape[3], cv.shape[4])
         if i > 0:
             ccond = pin_chunk_start(ccond, done_v, f0)
         out_v = redraw_chunk(model, ccond, sampler, sigmas, cv, ca, SEED)
         done_v, done_a = join_chunk(done_v, done_a, out_v, ca, k0, f0)
     _free(model)
     return {"samples": nt.NestedTensor((done_v, done_a))}
+
+
+# --- inside the chain -------------------------------------------------------
+#
+# HandTieClips runs the recipe once over the WHOLE film after its last hop,
+# not per hop: a hop re-drawn on its own would put a fresh texture step at
+# every join, while one pass over the joined film lets the recipe's own
+# 17-frame chunk crossfades run across the joins. It is delivery-only -- the
+# chain has handed every pin on before this starts, so nothing here can reach
+# what a hop inherits.
+
+def segments(hops):
+    """Split the chain's hops at restarts. A restart is a cut by design and
+    opens on frame 0 of its own VAE cycle, so it cannot be joined to what came
+    before on the latent grid -- each run between restarts is upsampled alone.
+    `hops` are dicts with a `start` flag. -> [[hop, ...], ...]"""
+    out = []
+    for h in hops:
+        if h["start"] or not out:
+            out.append([])
+        out[-1].append(h)
+    return out
+
+
+def stitch(seg):
+    """One continuous latent for a run of hops. -> (video, audio).
+
+    Each hop after the first drops the `drop` frames the master dropped (its
+    regenerated overlap). That only joins cleanly on the latent grid when the
+    drop is a whole number of latent steps AND the first kept step sits at the
+    phase the running latent is at -- otherwise a 1-frame key step would be
+    read as a 4-frame one and the timing would slip. Every H3 hop is 17k+5
+    frames and every shipped overlap (5 / 22 / 39) meets both, but it is
+    checked rather than assumed, with a message instead of wrong frames.
+    """
+    vids, auds, steps = [], [], 0
+    for n, h in enumerate(seg):
+        v, a = h["video"], h["audio"]
+        if v is None or a is None:
+            raise ValueError(f"hop {h['hop']} has no stored sampler latent "
+                             "(a cache entry from an older build)")
+        v = v if v.ndim == 5 else v.unsqueeze(0)
+        a = a if a.ndim == 4 else a.unsqueeze(0)
+        drop = 0 if n == 0 else int(h["drop"])
+        k = tokens_to_reach(drop)
+        if frames_in(k) != drop:
+            raise ValueError(f"hop {h['hop']}: an overlap of {drop} frames is not "
+                             "a whole number of latent steps")
+        if n and k % 5 != steps % 5:
+            raise ValueError(f"hop {h['hop']}: its kept frames start at VAE "
+                             f"phase {k % 5}, the joined latent is at "
+                             f"{steps % 5}")
+        kept = v[:, :, k:]
+        vids.append(kept)
+        auds.append(a[..., round(drop * FRAME_RESCALE):])
+        steps += int(kept.shape[2])
+    return torch.cat(vids, dim=2), torch.cat(auds, dim=-1)
+
+
+def cond_by_frame(seg):
+    """`(f0, f1) -> conditioning`: the conditioning of the hop that holds the
+    chunk's middle frame, on the joined run's frame axis."""
+    spans, at = [], 0
+    for h in seg:
+        spans.append((at, at + int(h["frames"]), h["cond"]))
+        at += int(h["frames"])
+
+    def pick(f0, f1):
+        mid = (int(f0) + int(f1)) // 2
+        for a, b, c in spans:
+            if a <= mid < b:
+                return c
+        return spans[-1][2]
+    return pick
+
+
+def match_levels(frames, ref, chunk=16):
+    """Each upsampled frame's per-channel mean moved onto the matching frame
+    of `ref` (the chain's tone-corrected master at the canvas size), clamped
+    to 0..1.
+
+    `tone_compensate` corrects decoded pixels, and the upsampler decodes its
+    own. Every mode's correction is (or is dominated by) a per-frame level
+    shift, which does not depend on resolution, so a mean match carries it
+    over -- and also takes back any level the light re-draw moved. It is not
+    a contrast match: lut / gain_bias slopes are not reproduced.
+    """
+    out = torch.empty_like(frames)
+    for s in range(0, int(frames.shape[0]), chunk):
+        up = frames[s:s + chunk].float()
+        rf = ref[s:s + chunk].float()
+        shift = rf.mean(dim=(1, 2), keepdim=True) - up.mean(dim=(1, 2), keepdim=True)
+        out[s:s + chunk] = (up + shift).clamp_(0.0, 1.0).to(frames.dtype)
+    return out
+
+
+def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
+                   upscaler=UPSCALER_FILE, decode=None):
+    """The recipe over a finished chain. -> (IMAGE [N,H,W,3], note).
+
+    `hops` are per-hop dicts: video/audio (the hop's delivered sampler
+    latent), cond, start, drop, frames, hop. `master`, when given, is the
+    tone-corrected canvas master to match levels against. `decode` turns a
+    video latent into frames (the chain passes its VAE); left None it uses
+    `vae.decode`.
+    """
+    import comfy.nested_tensor as nt
+    if decode is None:
+        def decode(v):
+            img = vae.decode(v)
+            return img.reshape(-1, img.shape[-3], img.shape[-2], img.shape[-1])
+    parts = []
+    for seg in segments(hops):
+        v, a = stitch(seg)
+        lat = {"samples": nt.NestedTensor((v, a))}
+        out = upsample(model, cond_by_frame(seg), lat, sampler, upscaler,
+                       megapixels)
+        vid = out["samples"].tensors[0]
+        _free(model)
+        parts.append(decode(vid).float().cpu())
+        del out, vid
+    frames = torch.cat(parts, dim=0) if len(parts) > 1 else parts[0]
+    want = sum(int(h["frames"]) for h in hops)
+    if int(frames.shape[0]) != want:
+        raise ValueError(f"the upsampled film is {int(frames.shape[0])} frames, "
+                         f"the chain delivered {want}")
+    if master is not None:
+        frames = match_levels(frames, master)
+    note = (f"upsampled {int(frames.shape[2])}x{int(frames.shape[1])} "
+            f"({frames.shape[1] * frames.shape[2] / 1048576.0:.2f} MP), "
+            f"{len(parts)} run(s)")
+    return frames, note
 
 
 class HTCTiledUpsampler:

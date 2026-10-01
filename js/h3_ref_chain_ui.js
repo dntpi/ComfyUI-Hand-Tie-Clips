@@ -53,7 +53,8 @@ const STYLE_ID = "h3rc-style";
 // text boxes inviting you to type a path that would not resolve.
 const SHOTS_HIDDEN = ["prompt", "chains", "hop_script", "shot_plan", "ref_plan"]
     .concat(MEDIA_WIDGETS);
-const SIMPLE_HIDDEN = ["shot_plan", "ref_plan"].concat(MEDIA_WIDGETS);
+// `prompt` is hidden in Simple too: the SCRIPT tab draws it as its own box.
+const SIMPLE_HIDDEN = ["prompt", "shot_plan", "ref_plan"].concat(MEDIA_WIDGETS);
 
 const _cssUrl = new URL("./h3_ref_chain.css", import.meta.url).href;
 

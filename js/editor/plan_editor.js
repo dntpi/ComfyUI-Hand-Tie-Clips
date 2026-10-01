@@ -203,10 +203,38 @@ export function createPlanEditor(node, { onChange }) {
         }
     }
 
-    const simpleNote = el("div", "h3e-empty",
-        "Simple mode: the prompt widget below drives the run, repeated across `chains` hops "
-        + "(set under RUN). Switch to Shots to write one beat per hop with camera and "
-        + "join directives.");
+    /* Simple mode: the `prompt` widget, drawn here instead of as a raw native
+     * text box above the panel. The widget stays the only store -- this box
+     * reads it and writes straight back, so a workflow typed here and one
+     * typed into the widget are the same file. */
+    const simpleNote = el("div", "h3e-simple");
+    const simpleArea = el("textarea", "h3e-beat h3e-simple-prompt");
+    simpleArea.placeholder =
+        "Write the prompt for the clip. A plain description, or a full H3 prompt "
+        + "(subject_definitions: ... non_diegetic_music:). Put a line with only --- "
+        + "between blocks to give each hop its own text.";
+    function writePrompt() {
+        if (!promptWidget) return;
+        promptWidget.value = simpleArea.value;
+        try {
+            promptWidget.callback?.(simpleArea.value, node.graph?.canvas, node);
+        } catch (err) {
+            console.error("[HandTieClips] prompt widget callback failed:", err);
+        }
+        node.graph?.setDirtyCanvas?.(true, true);
+    }
+    // Every keystroke, not "change": a textarea only fires "change" on blur,
+    // and saving with the caret still in the box would drop the last edit.
+    simpleArea.addEventListener("input", writePrompt);
+    simpleArea.addEventListener("change", () => { writePrompt(); onChange?.(); });
+    simpleNote.appendChild(simpleArea);
+    simpleNote.appendChild(el("div", "h3e-simple-help",
+        "Simple mode: this prompt drives the whole run. One block is repeated across "
+        + "`chains` hops (set under RUN); separate blocks with a line of --- to give "
+        + "hops their own text. `hop_script` decides what hop 2+ receives: verbatim "
+        + "sends each block exactly as written, next wraps it as a continuation. "
+        + "@tags from REFS resolve here too. For one beat per hop with camera and "
+        + "join directives, switch to Shots."));
     root.appendChild(simpleNote);
 
     const list = el("div", "h3e-shots");
@@ -734,6 +762,11 @@ export function createPlanEditor(node, { onChange }) {
         }
 
         if (m === "simple") {
+            // Re-read the widget unless the caret is in the box: a loaded or
+            // pasted workflow changes `prompt` underneath us.
+            if (document.activeElement !== simpleArea) {
+                simpleArea.value = String(promptWidget?.value ?? "");
+            }
             summary.textContent = `${chainsWidget?.value || 1} hop(s)`;
             return;
         }

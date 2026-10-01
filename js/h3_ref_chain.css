@@ -302,6 +302,24 @@
 
 .h3e-beat { width: 100%; background: var(--h3-sunken); }
 
+/* -- Simple mode: the prompt widget drawn in the SCRIPT tab ---------------- */
+
+.h3e-simple { display: flex; flex-direction: column; gap: var(--h3-gap-sm); }
+.h3e-simple-prompt {
+    min-height: 320px;
+    resize: vertical;
+    box-sizing: border-box;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    line-height: 1.5;
+}
+.h3e-simple-help {
+    color: var(--h3-muted);
+    line-height: 1.6;
+    padding: 8px 10px;
+    border: 1px dashed var(--h3-border-soft);
+    border-radius: var(--h3-radius-sm);
+}
+
 /* -- directive row: grid, not fixed-width flex ---------------------------- */
 
 .h3e-dirs {

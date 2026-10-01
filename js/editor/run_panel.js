@@ -87,11 +87,16 @@ const GROUPS = [
     // stays drawn upstream.
     ["realism boost", ["realism_boost", "boost_lora_1", "boost_lora_1_strength",
                        "boost_lora_2", "boost_lora_2_strength",
-                       "boost_lora_3", "boost_lora_3_strength"]],
+                       "boost_lora_3", "boost_lora_3_strength",
+                    "boost_lora_4", "boost_lora_4_strength"]],
     // After the last hop, over the whole film: it changes what is delivered,
     // never what a hop is generated from, so it sits after every group that
     // does.
-    ["upsample", ["upsample", "upsample_megapixels"]],
+    ["upsample", ["upsample", "upsample_model", "upsample_megapixels",
+                  "upsample_denoise"]],
+    // Wrap every hop's finished prompt: LoRA trigger words first, a trailing
+    // camera/body clause last, outside everything the chain adds.
+    ["prompt wrap", ["prompt_prefix", "prompt_suffix"]],
     ["cache",["cache_hops", "cache_budget_gb"]],
     // Added 2026-08-30. 0.4.0 shipped these five on the Python side and never
     // touched js/, so all five fell through to native dials -- the documented

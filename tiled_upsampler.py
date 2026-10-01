@@ -624,10 +624,17 @@ def upscale_chunk(video, name, w_px, h_px):
 
 # --- sampling ---------------------------------------------------------------
 
-def recipe_sigmas(model):
-    """One `simple` step at denoise 0.2, exactly as Core's BasicScheduler."""
+def recipe_sigmas(model, denoise=DENOISE):
+    """One `simple` step at `denoise`, exactly as Core's BasicScheduler.
+
+    The recipe's 0.2 is a fraction of the SCHEDULE, not of the noise: under
+    H3's video shift (12) the step starts at sigma 0.75. Below it the re-draw
+    repaints less; at 0 there is no re-draw and this returns None.
+    """
     import comfy.samplers
-    total = int(STEPS / DENOISE)
+    if float(denoise) <= 0.0:
+        return None
+    total = int(STEPS / float(denoise))
     sig = comfy.samplers.calculate_sigmas(
         model.get_model_object("model_sampling"), SCHEDULER, total).cpu()
     return sig[-(STEPS + 1):]
@@ -754,7 +761,8 @@ def _free(model):
         mm.soft_empty_cache()
 
 
-def upsample(model, conditioning, latent, sampler, upscaler, megapixels):
+def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
+             denoise=DENOISE):
     """The whole recipe on an H3 AV latent. -> the upsampled AV latent dict.
 
     `conditioning` is one conditioning for the whole clip, or a callable
@@ -777,11 +785,13 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels):
     tv, ta = video.shape[2], audio.shape[-1]
     w_px, h_px = target_size(video.shape[4] * SPATIAL, video.shape[3] * SPATIAL,
                              megapixels)
-    sigmas = recipe_sigmas(model)
+    sigmas = recipe_sigmas(model, denoise)
     plan = chunks(tv)
     print(f"[{TAG}] {video.shape[4] * SPATIAL}x{video.shape[3] * SPATIAL} -> "
           f"{w_px}x{h_px} ({w_px * h_px / 1048576.0:.2f} MP), {len(plan)} "
-          f"chunk(s), sigmas {[round(float(s), 4) for s in sigmas]}", flush=True)
+          f"chunk(s), "
+          + (f"sigmas {[round(float(s), 4) for s in sigmas]}" if sigmas is not None
+             else "no re-draw (denoise 0)"), flush=True)
 
     done_v = done_a = None
     for i, (k0, f0, k1, f1) in enumerate(plan):
@@ -791,6 +801,9 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels):
         if _device().type == "cuda":
             _free(model)            # never H3 and the upscaler resident at once
         cv = upscale_chunk(cv, upscaler, w_px, h_px)
+        if sigmas is None:
+            done_v, done_a = join_chunk(done_v, done_a, cv, ca, k0, f0)
+            continue
         ccond = cond_for_chunk(clean_refs(conditioning(f0, f1)) if per_chunk
                                else cond, f0, f1, cv.shape[3], cv.shape[4])
         if i > 0:
@@ -896,7 +909,7 @@ def match_levels(frames, ref, chunk=16):
 
 
 def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
-                   upscaler=UPSCALER_FILE, decode=None):
+                   upscaler=UPSCALER_FILE, decode=None, denoise=DENOISE):
     """The recipe over a finished chain. -> (IMAGE [N,H,W,3], note).
 
     `hops` are per-hop dicts: video/audio (the hop's delivered sampler
@@ -915,7 +928,7 @@ def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
         v, a = stitch(seg)
         lat = {"samples": nt.NestedTensor((v, a))}
         out = upsample(model, cond_by_frame(seg), lat, sampler, upscaler,
-                       megapixels)
+                       megapixels, denoise)
         vid = out["samples"].tensors[0]
         _free(model)
         parts.append(decode(vid).float().cpu())

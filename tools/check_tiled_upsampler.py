@@ -214,7 +214,7 @@ def end_to_end(tu, mm):
     saved = (tu.load_upscaler, tu._device, tu.recipe_sigmas, tu.sample_tile)
     tu.load_upscaler = lambda name: net
     tu._device = lambda: torch.device("cpu")
-    tu.recipe_sigmas = lambda model: sigmas
+    tu.recipe_sigmas = lambda model, denoise=0.2: sigmas
     tu.sample_tile = (lambda model, c, sampler, sg, v, a, noise, seed:
                       fake_draw(v, noise[0], sg, c))
     try:
@@ -331,7 +331,7 @@ def chain_checks(tu):
     # per restart segment, frames concatenated in order, count checked.
     calls = []
 
-    def fake_upsample(model, cond_at, lat, sampler, name, mp):
+    def fake_upsample(model, cond_at, lat, sampler, name, mp, denoise=0.2):
         v = lat["samples"].tensors[0]
         calls.append(int(v.shape[2]))
         return {"samples": lat["samples"]}

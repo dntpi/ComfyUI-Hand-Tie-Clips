@@ -2230,6 +2230,12 @@ BOOST_LORA_DEFAULTS = (
 # LoRA it already read instead of going back to disk. Core caches per instance.
 _BOOST_LOADERS = {}
 
+# The chain's upsample re-draw, below the tiled upsampler recipe's 0.2. Picked
+# by eye on a boosted single hop (2026-09-30): 0.2 (sigma 0.75 at shift 12)
+# repaints skin texture, 0.075 smeared mid-distance faces, 0.1 textured least
+# while still sharp. The side node keeps the recipe's 0.2.
+UPSAMPLE_DENOISE = 0.1
+
 
 def _boost_lora_choices():
     try:
@@ -2913,6 +2919,43 @@ class HandTieClips:
                     "tooltip": ("Output size for upsample, as area with the aspect kept "
                                 "(1 MP = 1024x1024). 1.5-2 is the usual range."),
                 }),
+                # APPENDED 2026-09-30, LAST, same positional reason.
+                "upsample_denoise": ("FLOAT", {
+                    "default": UPSAMPLE_DENOISE, "min": 0.0, "max": 1.0, "step": 0.005,
+                    "tooltip": ("How hard upsample re-draws after enlarging. 0.1 (sigma 0.57 under the "
+                                "video shift) textures the least while still cleaning up the enlarge. "
+                                "0.2 is the original recipe (sigma 0.75) and repaints skin texture; "
+                                "below ~0.075 faces start to smear. 0 skips the re-draw."),
+                }),
+                # APPENDED 2026-09-30, LAST, same positional reason.
+                "prompt_prefix": ("STRING", {
+                    "default": "", "multiline": False,
+                    "tooltip": ("Text put at the very start of every hop's prompt, before anything the "
+                                "chain adds. For LoRA trigger words, which work best first. Not "
+                                "tag-resolved: write it as the encoder should read it."),
+                }),
+                "prompt_suffix": ("STRING", {
+                    "default": "", "multiline": False,
+                    "tooltip": ("Text put at the very end of every hop's prompt, after the chain's own "
+                                "closing lines. For LoRAs that want a camera angle or similar last."),
+                }),
+                # APPENDED 2026-10-01, LAST, same positional reason.
+                "upsample_model": (_tu.choices(), {
+                    "default": _tu.UPSCALER_FILE,
+                    "tooltip": ("The latent upscaler upsample enlarges with, from "
+                                "models/latent_upscale_models. h3_upscaler_lms_v0.1 is the same network "
+                                "fine-tuned on Alissonerdx's sharpness data: a sharper enlarge, which "
+                                "needs less re-draw (try a lower upsample_denoise)."),
+                }),
+                # APPENDED 2026-10-01, LAST, same positional reason.
+                "boost_lora_4": (_boost_lora_choices(), {
+                    "default": "None",
+                    "tooltip": ("Fourth boost LoRA, applied on top of the other three. Not in the "
+                                "recipe. None skips it."),
+                }),
+                "boost_lora_4_strength": ("FLOAT", {
+                    "default": 1.0, "min": -4.0, "max": 4.0, "step": 0.05,
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -3017,7 +3060,9 @@ class HandTieClips:
             boost_lora_2_strength=1.0, boost_lora_3="None",
             boost_lora_3_strength=1.0,
             upsample="off", upsample_megapixels=_tu.MEGAPIXELS,
-            unique_id=None):
+            upsample_denoise=UPSAMPLE_DENOISE, prompt_prefix="",
+            prompt_suffix="", upsample_model=_tu.UPSCALER_FILE,
+            boost_lora_4="None", boost_lora_4_strength=1.0, unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
         # right trade everywhere except here -- a 27B and an H3 render do not
@@ -3623,6 +3668,11 @@ class HandTieClips:
         boost_loras = [(str(boost_lora_1), float(boost_lora_1_strength)),
                        (str(boost_lora_2), float(boost_lora_2_strength)),
                        (str(boost_lora_3), float(boost_lora_3_strength))]
+        # Slot 4 joins the list only when it does something, so a boosted hop
+        # keyed before the slot existed keeps its key (the hop key hashes this
+        # list) and an unset slot 4 costs no cached hop.
+        if str(boost_lora_4) != "None" and float(boost_lora_4_strength) != 0.0:
+            boost_loras.append((str(boost_lora_4), float(boost_lora_4_strength)))
         if boost_on:
             if str(hop_refine) != "off":
                 print(f"[{TAG}] realism_boost + hop_refine={hop_refine}: each "
@@ -3637,7 +3687,7 @@ class HandTieClips:
             if all(nm == "None" or s == 0.0 for nm, s in boost_loras):
                 raise RuntimeError(
                     f"{TAG}: realism_boost is on with no boost LoRA set -- "
-                    "pick at least one of boost_lora_1..3.")
+                    "pick at least one of boost_lora_1..4.")
 
         # Upsample: the tiled upsampler's recipe once over the finished film,
         # after the last hop. Refused NOW if the upscaler file is missing,
@@ -3647,17 +3697,21 @@ class HandTieClips:
         if upsample_on:
             import folder_paths  # noqa: PLC0415
             _tu.register_folder()
-            if not folder_paths.get_full_path(_tu.FOLDER, _tu.UPSCALER_FILE):
+            if not folder_paths.get_full_path(_tu.FOLDER, str(upsample_model)):
                 raise RuntimeError(
-                    f"{TAG}: upsample is on but {_tu.UPSCALER_FILE} is not in "
+                    f"{TAG}: upsample is on but {upsample_model} is not in "
                     f"models/{_tu.FOLDER} "
                     "(huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler).")
             _uw, _uh = _tu.target_size(int(width), int(height),
                                        float(upsample_megapixels))
             print(f"[{TAG}] upsample on: after the last hop the film goes "
                   f"{int(width)}x{int(height)} -> {_uw}x{_uh} "
-                  f"({float(upsample_megapixels):g} MP). Delivery only; no "
-                  "hop's pin changes.", flush=True)
+                  f"({float(upsample_megapixels):g} MP) with {upsample_model}. "
+                  "Delivery only; no hop's pin changes.", flush=True)
+            _ud = float(upsample_denoise)
+            if _ud <= 0.0:
+                print(f"[{TAG}] upsample_denoise 0: no re-draw, the enlarged "
+                      "latent is decoded as is", flush=True)
 
         sampler = base_sigmas = None
         boost_model = None
@@ -4309,6 +4363,19 @@ class HandTieClips:
                 _starts = ([_m.start() for _m in re.finditer(r"<d>", block)]
                            + [_a for _a, _b in _planner.spoken_spans(block)])
                 block = _refs.bind_voices(block, _bindings, _starts)
+
+            # Outermost, after everything the chain adds: a LoRA trigger has to
+            # be the first thing the encoder reads and a trailing camera/body
+            # clause the last, and on hop 2+ the airlock and closer otherwise
+            # bury both. Applied here, before the key and the encode, so the
+            # cache, info and the upsampler all see the same text. Empty
+            # strings leave the block byte-identical, so old keys still hit.
+            _pre = str(prompt_prefix or "").strip()
+            _suf = str(prompt_suffix or "").strip()
+            if _pre:
+                block = _pre + " " + block.lstrip()
+            if _suf:
+                block = block.rstrip() + " " + _suf
 
             assembled.append((i + 1, block))
 
@@ -5110,12 +5177,23 @@ class HandTieClips:
                 print(f"[{TAG}] upsample: hop_refine=pin_only cached the "
                       "refined latent, not the delivered one; cached hops are "
                       "upsampled from the refined version", flush=True)
+            # Under realism_boost the re-draw runs on the boost model. At
+            # denoise 0.2 the re-draw repaints the fine band, which is where
+            # the boost's look lives; on the MODEL wire it painted the base's
+            # texture back over it. Same sigma curve either way -- the boost
+            # model is built on the shifted model -- so the recipe is intact.
+            _up_model = boost_model if boost_model is not None else model
+            if boost_model is not None:
+                print(f"[{TAG}] upsample: re-drawing on the realism boost "
+                      "model, not the MODEL wire", flush=True)
             _push_preview(unique_id, "upsampling", hop=n, total=n, frac=1.0)
             try:
                 _up_imgs, upsample_note = _tu.upsample_chain(
-                    model, sampler, vae, upsample_hops,
+                    _up_model, sampler, vae, upsample_hops,
                     float(upsample_megapixels),
-                    master=(master_imgs if (tone_on or anchor_on) else None))
+                    master=(master_imgs if (tone_on or anchor_on) else None),
+                    upscaler=str(upsample_model),
+                    denoise=float(upsample_denoise))
                 master_imgs = _up_imgs
                 del _up_imgs
                 print(f"[{TAG}] {upsample_note}", flush=True)

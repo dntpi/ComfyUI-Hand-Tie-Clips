@@ -521,6 +521,17 @@ If `H3AdaLNLoRAFix` is installed, the node runs it on the boost model itself.
 - Switching it on changes every hop's cache key, hop 1 included. With it off,
   the keys are exactly what they were.
 
+### Prompt wrap — LoRA trigger words first, camera clause last
+
+`prompt_prefix` goes at the very start of every hop's finished prompt, and
+`prompt_suffix` at the very end -- outside everything the chain adds (the
+live-action opening and directive sentences on hop 1; the continuation
+opening, live-frame citation and closing lines on hop 2+). Write a LoRA's
+trigger words in the prefix rather than in each beat: inside a beat, hop 2+
+buries them ~100 words deep. The prefix and suffix are not tag-resolved, work
+in Simple mode too, and are part of each hop's cache key; left empty, prompts
+and cached hops are unchanged.
+
 ### Upsample — a bigger, sharper film at the end
 
 `upsample: on` runs the **H3 Tiled Upsampler** recipe once over the whole film,
@@ -529,10 +540,25 @@ after the last hop: the H3 latent upscaler, then one light re-draw (denoise
 across the joins instead of adding a step at each one. `upsample_megapixels`
 sets the size (2 by default; 1.5-2 is the usual range).
 
+`upsample_model` picks the latent upscaler from `models/latent_upscale_models`
+(default: the recipe's LBH file). Alissonerdx's `h3_upscaler_lms_v0.1` is the
+same network fine-tuned on the LMS sharpness data, so it enlarges sharper and
+can take a lower `upsample_denoise`.
+
+`upsample_denoise` (0.1 by default) sets how hard the re-draw works. It is a
+fraction of the schedule, not of the noise: under the video shift (12), 0.1
+starts the step at sigma 0.57 and the side node's recipe value, 0.2, at 0.75 --
+enough to repaint skin texture and, with `realism_boost`, the boost's look.
+0.1 textured the least while staying sharp; 0.075 began to smear faces further
+from camera, and 0.02 left the enlarge unfinished. 0 skips the re-draw. Under
+`realism_boost` the re-draw runs on the boost model. For the most realism,
+render at the size you want (the resolution ladder reaches 2.0 MP) rather than
+upsampling.
+
 - **Delivery only.** It starts after every hop has handed its pin on, so it
   cannot change what any hop is generated from, and it is in no hop's cache
-  key. Changing `upsample_megapixels` on a cached chain re-runs only the
-  upsample.
+  key. Changing `upsample_megapixels` or `upsample_denoise` on a cached
+  chain re-runs only the upsample.
 - Each chunk is re-drawn with the prompt and references of the hop it falls
   in. A restart is a cut, so the film is upsampled in separate runs between
   restarts.
@@ -640,7 +666,8 @@ Set `locked: true` on a shot to pin it to its last render regardless.
 | voice_every_hop | `off` (voice 1–3 ride hop 1 only). **Recommended `speaking`** when one voice has to hold across the chain |
 | quality | final |
 | realism_boost | `off`. Use it with `steps=6` |
-| upsample | `off`. `upsample_megapixels` 2 |
+| upsample | `off`. `upsample_megapixels` 2, `upsample_denoise` 0.1 |
+| prompt wrap | `prompt_prefix` / `prompt_suffix` empty |
 
 Three shots at 10 s with a 0.9 s overlap is about 28 s of master.
 

@@ -338,6 +338,59 @@ def _result(out):
     return (out,)
 
 
+def _vae_fingerprint(vae):
+    """Identify the video VAE, so a hop decoded by one is not served to another.
+
+    Cached hops are stored as DECODED frames, so the decoder is part of what a
+    hop is. Without this, swapping the official H3 VAE for LynnReal's 26-block
+    decoder on a cached chain served the first decoder's frames to the second
+    run -- an A/B that compared a VAE with itself. The Motion-Context pin is a
+    latent and was never affected; the AddGuide fallback and pin_to_qwen read
+    decoded frames and were.
+
+    The MODULE LAYOUT: every submodule's name and class. Never anything read
+    off a weight. Weight values, and then even weight dtypes/shapes, read back
+    differently once ComfyUI's dynamic VRAM loading had made the VAE resident,
+    so one VAE keyed two ways on consecutive runs and every hop missed the
+    cache (2026-10-01, twice). The 26- and 36-block decoders differ in layout.
+    The result is pinned on the VAE object as well, so a session cannot drift.
+    Known collision: two builds of identical layout (int8 vs fp16 of the same
+    decoder, or two fine-tunes) key the same. A TensorRT VAE
+    (ComfyUI-H3VAE_TRT) runs compiled .engine files, so its runners' engine
+    paths, sizes and mtimes are keyed too.
+    """
+    if vae is None:
+        return "none"
+    pinned = getattr(vae, "_htc_vae_fp", None)
+    if pinned:
+        return pinned
+    h = hashlib.sha256()
+    inner = getattr(vae, "first_stage_model", vae)
+    h.update(type(inner).__name__.encode())
+    try:
+        mods = [(n, type(m).__name__) for n, m in inner.named_modules()]
+    except Exception:  # noqa: BLE001 -- key what we can rather than fail
+        mods = []
+    h.update(str(len(mods)).encode())
+    for name, kind in mods:
+        h.update(f"{name}:{kind};".encode())
+    for runner in ("decoder_runner", "encoder_runner"):
+        path = getattr(getattr(inner, runner, None), "model_path", None)
+        if path:
+            try:
+                st = os.stat(path)
+                h.update(f"{runner}:{os.path.basename(path)}:{st.st_size}:"
+                         f"{int(st.st_mtime)}".encode())
+            except OSError:
+                h.update(f"{runner}:{path}".encode())
+    fp = h.hexdigest()[:16]
+    try:
+        setattr(vae, "_htc_vae_fp", fp)
+    except Exception:  # noqa: BLE001 -- an object that refuses attributes still keys
+        pass
+    return fp
+
+
 def _model_fingerprint(model):
     """Identify the incoming MODEL by what has been patched onto it.
 
@@ -3457,6 +3510,7 @@ class HandTieClips:
         # Skipped on a dry run: it only feeds the hop cache key, and a dry run
         # writes no cache. Hashing patched weights is not free.
         model_fp = None if dry else _model_fingerprint(model)
+        vae_fp = None if dry else _vae_fingerprint(vae)
         # Same reasoning as model_fp: a hop refined under a different model is a
         # different hop, and serving it from cache is the silent-wrong-output
         # failure the fingerprint exists to stop.
@@ -3746,7 +3800,8 @@ class HandTieClips:
             # on itself between queues (see `_object_scalars`) is exactly the
             # case that would otherwise look like the cache is simply broken.
             print(f"[{TAG}] hop cache: {hop_store.root} "
-                  f"(budget {float(cache_budget_gb):.0f} GB, model {model_fp})",
+                  f"(budget {float(cache_budget_gb):.0f} GB, model {model_fp}, "
+                  f"vae {vae_fp})",
                   flush=True)
         # Note on how render_from works, since this is where the store appears:
         # the leading hops are NOT seeded into prev_imgs / prev_audio /
@@ -3805,6 +3860,9 @@ class HandTieClips:
             # attention path is not the same hop, so what has been patched onto
             # the incoming model is part of the key. See _model_fingerprint.
             "model": model_fp,
+            # Cached hops are decoded frames, so the decoder is part of the
+            # hop. See _vae_fingerprint.
+            "vae": vae_fp,
         }
         if locked is not None:
             # Only present when the lock is on. Adding a None field while

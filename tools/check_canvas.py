@@ -78,12 +78,18 @@ def main():
     print("the grid, the cap, and the promise on the label")
     off_grid, over_cap = [], []
     off_tier, worst_ratio = [], (0.0, "")
+    # Above native the ladder is past H3's own cap by design; there the ceiling
+    # is the ladder's own, 2.0 MP, and the tier is the label's edge give or
+    # take one grid step (the rung value is off-grid so 16:9 lands its area).
+    top_mp = 2.0 * 1048576
     for res in resolutions:
+        native = resolutions[res] <= 768
+        tier_cap = H3._area_cap(resolutions[res])
         for asp in aspects:
             w, h = quiet(res, asp)
             if w % mult or h % mult:
                 off_grid.append(f"{res} {asp} {w}x{h}")
-            if w * h > cap:
+            if w * h > (cap if native else top_mp):
                 over_cap.append(f"{res} {asp} {w}x{h}")
             # The label names a short edge, so that is what gets checked. It
             # holds exactly unless the area cap bit, which only happens at the
@@ -91,9 +97,15 @@ def main():
             # down. Anything else off the tier is a bug.
             want_short = resolutions[res]
             got_short = min(w, h)
-            if got_short != want_short:
+            if not native:
+                label_short = int(res.split("p")[0])
+                uncapped = want_short ** 2 * max(aspects[asp]) / min(aspects[asp])
+                if (got_short > label_short + mult
+                        or (got_short < label_short - mult and uncapped <= tier_cap)):
+                    off_tier.append(f"{res} {asp} {w}x{h} short={got_short}")
+            elif got_short != want_short:
                 capped = want_short * max(aspects[asp]) / min(aspects[asp])
-                if capped * want_short <= cap or got_short > want_short:
+                if capped * want_short <= tier_cap or got_short > want_short:
                     off_tier.append(f"{res} {asp} {w}x{h} short={got_short}")
             rw, rh = aspects[asp]
             d_ratio = abs((w / h) - (rw / rh)) / (rw / rh)
@@ -103,7 +115,7 @@ def main():
     n = len(resolutions) * len(aspects)
     ck("every size is on the 32 px grid, both axes",
        not off_grid, f"{n} sizes" if not off_grid else off_grid[0])
-    ck("every size is under H3's 768x1344 area cap",
+    ck("every size is under its cap (768x1344 to native, 2.0 MP above)",
        not over_cap, f"cap {cap}" if not over_cap else over_cap[0])
     ck("the short edge is the tier, unless the area cap bit",
        not off_tier, f"{n} sizes" if not off_tier else off_tier[0])
@@ -170,9 +182,13 @@ def main():
     for res, short in resolutions.items():
         if "(" not in res:
             continue
-        claimed = float(res.split("(")[1].split()[0])
+        figure = res.split("(")[1].split()[0]
+        claimed = float(figure)
+        # Half a unit in the last printed digit: "0.98" is held to 0.005, the
+        # above-native "1.5" rungs to 0.05 -- the grid cannot land them closer.
+        tol = 0.5 * 10 ** -len(figure.split(".")[1])
         w, h = quiet(res, "16:9 landscape")
-        if abs(w * h / 1048576.0 - claimed) > 0.005:
+        if abs(w * h / 1048576.0 - claimed) > tol:
             off_label.append(f"{res} -> {w}x{h} = {w * h / 1048576.0:.2f} MP")
     ck("each label's MP figure is its own 16:9 cell in mebipixels",
        not off_label, f"{len(resolutions)} rungs" if not off_label else off_label[0])

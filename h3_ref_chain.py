@@ -139,7 +139,23 @@ DEFAULT_ASPECT = "16:9 landscape"
 # It is exact for 16:9 only -- the same tier at 4:3 is 1024x768, which is
 # 0.75 MP -- so the label names the tier and the parenthesis is a signpost, not
 # a specification. tools/check_canvas.py asserts the 16:9 figure matches.
+#
+# Above native the ladder climbs in 0.1 MP steps to 2.0 MP. Those rungs are
+# past what H3 was trained for; the area cap scales with the tier (_area_cap),
+# so each is the native canvas grown, not a different shape. Their values are
+# the short edge that lands 16:9 nearest the labelled area, which is why they
+# are not the round number in the label -- the label names the edge you get.
 RESOLUTIONS = {
+    "1088p (2.0 MP)": 1081,
+    "1056p (1.9 MP)": 1062,
+    "1024p (1.8 MP)": 1044,
+    "992p (1.7 MP)": 1007,
+    "960p (1.6 MP)": 971,
+    "960p (1.5 MP)": 952,
+    "896p (1.4 MP)": 917,
+    "864p (1.3 MP)": 880,
+    "832p (1.2 MP)": 844,
+    "800p (1.1 MP)": 808,
     "768p (0.98 MP)": 768,      # native
     "640p (0.70 MP)": 640,
     "576p (0.56 MP)": 576,
@@ -189,13 +205,16 @@ LEGACY_ALIAS = {
     "0.30 MP": "448p (0.34 MP)",
 }
 DURATION_FRAMES = {
-    # Every value satisfies align_frame_count (n % 17 == 5) at FPS 24, so the
-    # label and the frames the model actually renders agree to a tenth.
-    "5 s": 124,
-    "7 s": 175,
-    "8 s": 192,
-    "10 s": 243,
-    "15 s": 362,
+    # Every value satisfies align_frame_count (n % 17 == 5) at FPS 24: the
+    # aligned count nearest the label. That grid is 17 f (0.71 s), so a label
+    # can be up to ~0.35 s off the frames rendered. The five 1.x labels keep
+    # the counts they always had, so saved graphs key the same.
+    "5 s": 124, "6 s": 141, "7 s": 175, "8 s": 192, "9 s": 209,
+    "10 s": 243, "11 s": 260, "12 s": 294, "13 s": 311, "14 s": 328,
+    "15 s": 362, "16 s": 379, "17 s": 413, "18 s": 430, "19 s": 464,
+    "20 s": 481, "21 s": 498, "22 s": 532, "23 s": 549, "24 s": 583,
+    "25 s": 600, "26 s": 617, "27 s": 651, "28 s": 668, "29 s": 702,
+    "30 s": 719,
 }
 OVERLAP_FRAMES = {
     "0.9 s": 22,
@@ -208,6 +227,12 @@ OVERLAP_FRAMES = {
 # silently clamp to 22 while the master trims the real value -- a misaligned
 # seam with no error. _pin_continue logs and falls back instead.
 MC_CONTEXT_LENGTHS = frozenset(str(v) for v in OVERLAP_FRAMES.values())
+
+
+def _area_cap(short_edge):
+    """Core's 768*1344 cap at native and below; grown with the tier above it,
+    so a 2.0 MP rung caps 21:9 the way 768p does rather than at 0.98 MP."""
+    return CANVAS_AREA_CAP * max(1.0, short_edge / 768.0) ** 2
 
 
 def _fit_canvas(ratio, short_edge):
@@ -231,8 +256,9 @@ def _fit_canvas(ratio, short_edge):
         w, h = short * ratio, float(short)
     else:
         w, h = float(short), short / ratio
-    if w * h > CANVAS_AREA_CAP:
-        scale = math.sqrt(CANVAS_AREA_CAP / (w * h))
+    cap = _area_cap(short)
+    if w * h > cap:
+        scale = math.sqrt(cap / (w * h))
         w, h = w * scale, h * scale
     m = CANVAS_MULTIPLE
     return (max(m, int(round(w / m)) * m), max(m, int(round(h / m)) * m))
@@ -2345,13 +2371,14 @@ class HandTieClips:
                 }),
                 "resolution": (list(RESOLUTIONS), {
                     "default": DEFAULT_RESOLUTION,
-                    "tooltip": "Output size, as an area. 0.98 MP is the largest H3 supports.",
+                    "tooltip": ("Output size, as an area. 0.98 MP is H3's native size; the 1.1-2.0 MP "
+                                "rungs above it are past what the model was trained for."),
                 }),
                 "aspect": (list(ASPECTS), {
                     "default": DEFAULT_ASPECT,
                     "tooltip": "Frame shape. Sets width and height together with resolution.",
                 }),
-                "duration": (["5 s", "7 s", "8 s", "10 s", "15 s"], {
+                "duration": (list(DURATION_FRAMES), {
                     "default": "10 s",
                     "tooltip": ("Length of each hop. A shot can set its own. Judge joins at 8 s or longer; "
                                 "5 s is too short to show them."),

@@ -230,7 +230,7 @@ rarely read the way you meant.
 ### Duration
 
 Per-shot `duration` overrides the chain, using exactly these labels:
-`"5 s"`, `"7 s"`, `"8 s"`, `"10 s"`, `"15 s"`.\
+`"5 s"` through `"30 s"`, in whole seconds.\
 """
 
 

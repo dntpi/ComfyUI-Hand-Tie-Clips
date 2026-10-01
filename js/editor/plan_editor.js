@@ -225,9 +225,33 @@ export function createPlanEditor(node, { onChange }) {
     }
     // Every keystroke, not "change": a textarea only fires "change" on blur,
     // and saving with the caret still in the box would drop the last edit.
-    simpleArea.addEventListener("input", writePrompt);
+    simpleArea.addEventListener("input", () => { writePrompt(); updateRepeatHint(); });
     simpleArea.addEventListener("change", () => { writePrompt(); onChange?.(); });
     simpleNote.appendChild(simpleArea);
+
+    /* One block with chains > 1 repeats the whole prompt as a continuation on
+     * every later hop -- a full H3 prompt then renders its scene twice. Easy
+     * to hit when `chains` was left over from an earlier chain (2026-10-01),
+     * so say it where the prompt is written. Same split as run()'s
+     * _parse_shots: a line holding only ---. */
+    const repeatHint = el("div", "h3e-note");
+    simpleNote.appendChild(repeatHint);
+    function updateRepeatHint() {
+        const text = simpleArea.value.trim();
+        const blocks = text
+            ? text.split(/^---\s*$/m).filter((b) => b.trim()).length || 1
+            : 0;
+        const n = Math.max(1, parseInt(chainsWidget?.value, 10) || 1);
+        if (blocks === 1 && n > 1) {
+            repeatHint.textContent =
+                `One block, chains = ${n}: this prompt runs as hop 1 and is then repeated `
+                + `as a continuation for ${n - 1} more hop(s). For a single clip, set `
+                + "chains to 1 under RUN.";
+            repeatHint.style.display = "";
+        } else {
+            repeatHint.style.display = "none";
+        }
+    }
     simpleNote.appendChild(el("div", "h3e-simple-help",
         "Simple mode: this prompt drives the whole run. One block is repeated across "
         + "`chains` hops (set under RUN); separate blocks with a line of --- to give "
@@ -767,6 +791,7 @@ export function createPlanEditor(node, { onChange }) {
             if (document.activeElement !== simpleArea) {
                 simpleArea.value = String(promptWidget?.value ?? "");
             }
+            updateRepeatHint();
             summary.textContent = `${chainsWidget?.value || 1} hop(s)`;
             return;
         }

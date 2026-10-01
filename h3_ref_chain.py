@@ -3388,6 +3388,39 @@ class HandTieClips:
                 slot_images[_r["slot"]] = _im[:1]
         _wired_slots = set(slot_images) | set(slot_videos)
 
+        # Every @tag, checked against the hop it is written on BEFORE hop 1
+        # samples. resolve_tags fails a place/prop tag whose picture is off
+        # that hop, but it runs per hop inside the loop -- so a stray @bedroom
+        # in shot 2 surfaced only after hop 1 had rendered (2026-10-01). Same
+        # routing as the loop: shot.refs wins, else the register default with
+        # unscheduled refs off continuations under `next`. Person tags always
+        # resolve (to a name or <Subject N>), so only the rest are checked.
+        if ref_plan_refs:
+            _person = _refs.subjects(ref_plan_refs)
+            _declared = {r["tag"] for r in ref_plan_refs}
+            _problems = []
+            for _i, _blk in enumerate(blocks):
+                _sh = shots[_i] if _i < len(shots) else None
+                _sh = _sh or {}
+                _start = _i == 0 or str(_sh.get("anchor") or "") == "restart"
+                if _sh.get("refs") is not None:
+                    _on = _refs.select_for_shot(ref_plan_refs, _sh["refs"], _wired_slots)
+                else:
+                    _on = _refs.active_refs(ref_plan_refs, _i, _wired_slots)
+                    if not _start and str(hop_script) == "next":
+                        _on = [r for r in _on if r.get("shots") is not None]
+                _here = {r["tag"] for r in _on}
+                for _t in sorted(set(re.findall(r"@([A-Za-z0-9_]+)", str(_blk or "")))):
+                    if _t in _person or _t in _here or _t not in _declared:
+                        continue
+                    _problems.append(f"shot {_i + 1}: @{_t}")
+            if _problems:
+                raise ValueError(
+                    f"{TAG}: a place or prop tag is written on a hop its picture "
+                    f"does not ride -- {', '.join(_problems)}. Write the place in "
+                    f"plain words on that shot, or add the shot number to that "
+                    f"reference's `shots` on the REFS tab. Nothing was rendered.")
+
         # Row voices. A second pass rather than a branch inside the loop
         # above, because the refmod arm returns early and a voice belongs to
         # both arms equally -- a face is a face whether it arrived as a still

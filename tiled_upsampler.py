@@ -814,6 +814,131 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
     return {"samples": nt.NestedTensor((done_v, done_a))}
 
 
+# --- X2 VAE: decode straight to 2x, no re-draw -------------------------------
+#
+# speach1sdef178's MiniMax-H3-X2-Detail VAE is the stock H3 video VAE with a
+# wider last layer: proj_out emits 12 channels per pixel (3 RGB x a 2x2 pixel
+# shuffle) instead of 3, so one decode lands at twice the width and height.
+# Nothing samples, so no LoRA repaints anything -- the opposite trade from the
+# re-draw, which sharpens by inventing. Stock VAELoader cannot open it (the head
+# does not fit), so this builds the stock architecture with a stock-sized head,
+# swaps the wide head in and loads the file strictly. HTC's own code, written
+# from the shape of the file; no part of their node is imported.
+
+X2_PREFIX = "X2 VAE: "
+X2_HEAD_ROWS = 12288            # 12 channels x patch 4x16x16
+_X2 = {}
+
+
+def x2_choices():
+    """`X2 VAE: <file>` for each models/vae .safetensors named like an X2 VAE."""
+    try:
+        import folder_paths
+        names = [n for n in folder_paths.get_filename_list("vae")
+                 if n.endswith(".safetensors") and "x2" in n.lower()]
+    except Exception:  # noqa: BLE001
+        names = []
+    return [X2_PREFIX + n for n in sorted(names)]
+
+
+def is_x2(name):
+    return str(name or "").startswith(X2_PREFIX)
+
+
+def load_x2_vae(name):
+    """The X2 VAE behind `X2 VAE: <file>`, built once per process."""
+    import comfy.sd
+    import comfy.utils
+    import folder_paths
+    import torch.nn as nn
+
+    fname = str(name)[len(X2_PREFIX):] if is_x2(name) else str(name)
+    if fname in _X2:
+        return _X2[fname]
+    path = folder_paths.get_full_path("vae", fname)
+    if not path:
+        raise RuntimeError(f"{TAG}: {fname!r} is not in models/vae.")
+    sd = comfy.utils.load_torch_file(path, safe_load=True)
+    # The detail-branch tensors serve their reference-image node, not a decode.
+    sd = {k: v for k, v in sd.items() if not k.startswith("detail_b32.")}
+    head = sd.get("decoder.proj_out.weight")
+    if head is None or tuple(head.shape) != (X2_HEAD_ROWS, head.shape[1]):
+        raise RuntimeError(
+            f"{TAG}: {fname!r} is not an X2 VAE (decoder.proj_out is "
+            f"{None if head is None else tuple(head.shape)}, want "
+            f"({X2_HEAD_ROWS}, dim)).")
+    stock_rows = X2_HEAD_ROWS // 4
+    boot = dict(sd)
+    boot["decoder.proj_out.weight"] = head[:stock_rows].contiguous()
+    if "decoder.proj_out.bias" in sd:
+        boot["decoder.proj_out.bias"] = sd["decoder.proj_out.bias"][:stock_rows].contiguous()
+    vae = comfy.sd.VAE(sd=boot)
+    inner = vae.first_stage_model
+    old = inner.decoder.proj_out
+    inner.decoder.proj_out = nn.Linear(int(head.shape[1]), X2_HEAD_ROWS, bias=True,
+                                       device=old.weight.device, dtype=old.weight.dtype)
+    bad = inner.load_state_dict(sd, strict=False)
+    if bad.missing_keys or bad.unexpected_keys:
+        raise RuntimeError(f"{TAG}: {fname!r} does not match the H3 VAE: missing "
+                           f"{list(bad.missing_keys)[:4]}, unexpected "
+                           f"{list(bad.unexpected_keys)[:4]}")
+    _X2.clear()
+    _X2[fname] = vae
+    print(f"[{TAG}] X2 VAE {fname}: decodes at 2x", flush=True)
+    return vae
+
+
+def _rgb_stat_x4(stat):
+    """[1,3,1,1,1] -> [1,12,1,1,1], each colour repeated for its 2x2 block --
+    the channel order pixel_shuffle reads."""
+    return stat.repeat_interleave(4, dim=1) if int(stat.shape[1]) == 3 else stat
+
+
+def decode_x2(vae, video, out_w, out_h, chunk=8):
+    """Decode a [1,24,T,H,W] video latent at 2x, then area-resize each frame to
+    (out_w, out_h). -> IMAGE [N, out_h, out_w, 3] float32 on the CPU.
+
+    The resize lets `upsample_megapixels` still mean what it says: below 2x
+    the 2x decode is supersampled down, at 2x it is a no-op. Done in frame
+    chunks so the full 2x float film never exists at once.
+    """
+    import comfy.model_management as mm
+
+    inner = vae.first_stage_model
+    saved = (inner.decoder.out_channels, inner.pixel_mean, inner.pixel_std,
+             inner.tiling, inner.tile_size, inner.tile_overlap_min)
+    try:
+        inner.decoder.out_channels = 12
+        inner.tiling, inner.tile_size, inner.tile_overlap_min = True, 256, 64
+        z = video if video.ndim == 5 else video.unsqueeze(0)
+        with mm.cuda_device_context(vae.device):
+            mm.load_models_gpu([vae.patcher],
+                               memory_required=vae.memory_used_decode(z.shape, vae.vae_dtype),
+                               force_full_load=vae.disable_offload)
+            inner.pixel_mean = _rgb_stat_x4(inner.pixel_mean)
+            inner.pixel_std = _rgb_stat_x4(inner.pixel_std)
+            packed = torch.empty(inner.decode_output_shape(z.shape),
+                                 device=mm.intermediate_device(),
+                                 dtype=vae.vae_output_dtype())
+            with torch.inference_mode():
+                inner.decode(z.to(device=vae.device, dtype=vae.vae_dtype),
+                             output_buffer=packed)
+            vae.process_output(packed)
+    finally:
+        (inner.decoder.out_channels, inner.pixel_mean, inner.pixel_std,
+         inner.tiling, inner.tile_size, inner.tile_overlap_min) = saved
+    n = int(packed.shape[2])
+    out = torch.empty((n, int(out_h), int(out_w), 3), dtype=torch.float32)
+    for s in range(0, n, chunk):
+        q = packed[0, :, s:s + chunk].permute(1, 0, 2, 3).float()      # [c,12,H,W]
+        q = F.pixel_shuffle(q, 2)                                       # [c,3,2H,2W]
+        if q.shape[-1] != int(out_w) or q.shape[-2] != int(out_h):
+            q = F.interpolate(q, size=(int(out_h), int(out_w)), mode="area")
+        out[s:s + q.shape[0]] = q.clamp_(0.0, 1.0).permute(0, 2, 3, 1).cpu()
+    del packed
+    return out
+
+
 # --- inside the chain -------------------------------------------------------
 #
 # HandTieClips runs the recipe once over the WHOLE film after its last hop,
@@ -924,6 +1049,31 @@ def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
             img = vae.decode(v)
             return img.reshape(-1, img.shape[-3], img.shape[-2], img.shape[-1])
     parts = []
+    if is_x2(upscaler):
+        # No upscaler net, no re-draw, no model: the joined latent is decoded
+        # at 2x and sized to `megapixels`. Levels still follow the master.
+        x2 = load_x2_vae(upscaler)
+        out_w = out_h = None
+        for seg in segments(hops):
+            v, _a = stitch(seg)
+            v = v if v.ndim == 5 else v.unsqueeze(0)
+            if out_w is None:
+                out_w, out_h = target_size(int(v.shape[4]) * SPATIAL,
+                                           int(v.shape[3]) * SPATIAL, megapixels)
+                print(f"[{TAG}] X2 VAE: {int(v.shape[4]) * SPATIAL}x"
+                      f"{int(v.shape[3]) * SPATIAL} -> decode at 2x -> {out_w}x{out_h}",
+                      flush=True)
+            parts.append(decode_x2(x2, v, out_w, out_h))
+        frames = torch.cat(parts, dim=0) if len(parts) > 1 else parts[0]
+        want = sum(int(h["frames"]) for h in hops)
+        if int(frames.shape[0]) != want:
+            raise ValueError(f"the X2 decode is {int(frames.shape[0])} frames, "
+                             f"the chain delivered {want}")
+        if master is not None:
+            frames = match_levels(frames, master)
+        note = (f"upsampled {out_w}x{out_h} ({out_w * out_h / 1048576.0:.2f} MP) "
+                f"by X2 VAE decode, no re-draw, {len(parts)} run(s)")
+        return frames, note
     for seg in segments(hops):
         v, a = stitch(seg)
         lat = {"samples": nt.NestedTensor((v, a))}

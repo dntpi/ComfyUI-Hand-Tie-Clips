@@ -2940,15 +2940,12 @@ class HandTieClips:
                                 "closing lines. For LoRAs that want a camera angle or similar last."),
                 }),
                 # APPENDED 2026-10-01, LAST, same positional reason.
-                "upsample_model": (_tu.choices() + _tu.x2_choices(), {
+                "upsample_model": (_tu.choices(), {
                     "default": _tu.UPSCALER_FILE,
                     "tooltip": ("The latent upscaler upsample enlarges with, from "
                                 "models/latent_upscale_models. h3_upscaler_lms_v0.1 is the same network "
                                 "fine-tuned on Alissonerdx's sharpness data: a sharper enlarge, which "
-                                "needs less re-draw (try a lower upsample_denoise). An 'X2 VAE:' "
-                                "choice (a 2x decoder in models/vae) decodes straight to 2x with no "
-                                "re-draw and no LoRAs, then sizes to upsample_megapixels; "
-                                "upsample_denoise does not apply."),
+                                "needs less re-draw (try a lower upsample_denoise)."),
                 }),
                 # APPENDED 2026-10-01, LAST, same positional reason.
                 "boost_lora_4": (_boost_lora_choices(), {
@@ -3700,14 +3697,11 @@ class HandTieClips:
         if upsample_on:
             import folder_paths  # noqa: PLC0415
             _tu.register_folder()
-            _um = str(upsample_model)
-            if not (folder_paths.get_full_path("vae", _um[len(_tu.X2_PREFIX):])
-                    if _tu.is_x2(_um) else folder_paths.get_full_path(_tu.FOLDER, _um)):
+            if not folder_paths.get_full_path(_tu.FOLDER, str(upsample_model)):
                 raise RuntimeError(
                     f"{TAG}: upsample is on but {upsample_model} is not in "
-                    + ("models/vae." if _tu.is_x2(_um) else
-                       f"models/{_tu.FOLDER} "
-                       "(huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)."))
+                    f"models/{_tu.FOLDER} "
+                    "(huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler).")
             _uw, _uh = _tu.target_size(int(width), int(height),
                                        float(upsample_megapixels))
             print(f"[{TAG}] upsample on: after the last hop the film goes "
@@ -3715,10 +3709,7 @@ class HandTieClips:
                   f"({float(upsample_megapixels):g} MP) with {upsample_model}. "
                   "Delivery only; no hop's pin changes.", flush=True)
             _ud = float(upsample_denoise)
-            if _tu.is_x2(_um):
-                print(f"[{TAG}] upsample by X2 VAE decode: no re-draw, "
-                      "upsample_denoise is not used", flush=True)
-            elif _ud <= 0.0:
+            if _ud <= 0.0:
                 print(f"[{TAG}] upsample_denoise 0: no re-draw, the enlarged "
                       "latent is decoded as is", flush=True)
 

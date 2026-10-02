@@ -543,11 +543,7 @@ sets the size (2 by default; 1.5-2 is the usual range).
 `upsample_model` picks the latent upscaler from `models/latent_upscale_models`
 (default: the recipe's LBH file). Alissonerdx's `h3_upscaler_lms_v0.1` is the
 same network fine-tuned on the LMS sharpness data, so it enlarges sharper and
-can take a lower `upsample_denoise`. An **`X2 VAE: <file>`** choice uses a
-2x decoder from `models/vae` (speach1sdef178's `MiniMax-H3-X2-Detail-v1`, any
-name containing "x2"): the joined latent is decoded straight to twice the size
-and resized to `upsample_megapixels` -- no upscaler net, no re-draw, no LoRAs,
-so nothing is repainted. `upsample_denoise` does not apply to it.
+can take a lower `upsample_denoise`.
 
 `upsample_denoise` (0.1 by default) sets how hard the re-draw works. It is a
 fraction of the schedule, not of the noise: under the video shift (12), 0.1

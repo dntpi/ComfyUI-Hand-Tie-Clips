@@ -5198,7 +5198,8 @@ class HandTieClips:
                     float(upsample_megapixels),
                     master=(master_imgs if (tone_on or anchor_on) else None),
                     upscaler=str(upsample_model),
-                    denoise=float(upsample_denoise))
+                    denoise=float(upsample_denoise),
+                    alloc=_alloc_master)
                 master_imgs = _up_imgs
                 del _up_imgs
                 print(f"[{TAG}] {upsample_note}", flush=True)

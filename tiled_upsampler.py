@@ -909,21 +909,32 @@ def match_levels(frames, ref, chunk=16):
 
 
 def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
-                   upscaler=UPSCALER_FILE, decode=None, denoise=DENOISE):
+                   upscaler=UPSCALER_FILE, decode=None, denoise=DENOISE,
+                   alloc=None):
     """The recipe over a finished chain. -> (IMAGE [N,H,W,3], note).
 
     `hops` are per-hop dicts: video/audio (the hop's delivered sampler
     latent), cond, start, drop, frames, hop. `master`, when given, is the
     tone-corrected canvas master to match levels against. `decode` turns a
     video latent into frames (the chain passes its VAE); left None it uses
-    `vae.decode`.
+    `vae.decode`. `alloc(n, h, w)` makes the film buffer (the chain passes
+    its master allocator, which spills to disk); left None it is float32 RAM.
+
+    Each run is written into one preallocated film and level-matched in
+    place. A 2 MP, 2877 f film is ~72 GB in float32; gathering the runs with
+    `torch.cat` and matching into `empty_like` held three of those at once
+    and choked a 64 GB machine at the very end of a two-minute render.
     """
     import comfy.nested_tensor as nt
     if decode is None:
         def decode(v):
             img = vae.decode(v)
             return img.reshape(-1, img.shape[-3], img.shape[-2], img.shape[-1])
-    parts = []
+    if alloc is None:
+        def alloc(n, h, w):
+            return torch.empty((n, h, w, 3), dtype=torch.float32)
+    want = sum(int(h["frames"]) for h in hops)
+    frames, at, runs = None, 0, 0
     for seg in segments(hops):
         v, a = stitch(seg)
         lat = {"samples": nt.NestedTensor((v, a))}
@@ -931,18 +942,26 @@ def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
                        megapixels, denoise)
         vid = out["samples"].tensors[0]
         _free(model)
-        parts.append(decode(vid).float().cpu())
+        part = decode(vid).float().cpu()
         del out, vid
-    frames = torch.cat(parts, dim=0) if len(parts) > 1 else parts[0]
-    want = sum(int(h["frames"]) for h in hops)
-    if int(frames.shape[0]) != want:
-        raise ValueError(f"the upsampled film is {int(frames.shape[0])} frames, "
+        n = int(part.shape[0])
+        if at + n > want:
+            raise ValueError(f"the upsampled film is at least {at + n} frames, "
+                             f"the chain delivered {want}")
+        if frames is None:
+            frames = alloc(want, int(part.shape[1]), int(part.shape[2]))
+        if master is not None:
+            part = match_levels(part, master[at:at + n])
+        frames[at:at + n] = part.to(frames.dtype)
+        del part
+        at += n
+        runs += 1
+    if at != want:
+        raise ValueError(f"the upsampled film is {at} frames, "
                          f"the chain delivered {want}")
-    if master is not None:
-        frames = match_levels(frames, master)
     note = (f"upsampled {int(frames.shape[2])}x{int(frames.shape[1])} "
             f"({frames.shape[1] * frames.shape[2] / 1048576.0:.2f} MP), "
-            f"{len(parts)} run(s)")
+            f"{runs} run(s)")
     return frames, note
 
 

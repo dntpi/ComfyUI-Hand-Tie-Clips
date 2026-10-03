@@ -93,10 +93,18 @@ def main():
     print("the three guards")
     ck("shot 1 cannot restart",
        raises(lambda: V([shot("restart")], "img.png"), "shot 1"))
-    ck("a restart without a start image is refused",
+    ck("a restart with no start image and no refs is refused",
        raises(lambda: V([shot(), shot("restart")], ""), "start image"))
     ck("whitespace is not a start image",
        raises(lambda: V([shot(), shot("restart")], "   "), "start image"))
+    ck("refs: [] is no refs",
+       raises(lambda: V([shot(), dict(shot("restart"), refs=[])], ""), "start image"))
+    try:
+        V([shot(), dict(shot("restart"), refs=["ld", "warehouse"])], "")
+        ok = True
+    except ValueError:
+        ok = False
+    ck("a restart on its own refs needs no start image", ok)
     ck("join=continuous on a restart is refused",
        raises(lambda: V([shot(), shot("restart", "continuous")], "img.png"), "continuous"))
 

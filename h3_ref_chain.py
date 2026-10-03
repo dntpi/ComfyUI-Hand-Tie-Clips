@@ -1142,12 +1142,17 @@ def _validate_anchors(shots, start_image_file):
         # The FILENAME, not the loaded image: this runs before any media is
         # loaded, which is the point of it. Whether the file resolves is a
         # separate check further down.
-        if not str(start_image_file or "").strip():
+        # A restart whose shot lists its own refs needs no photograph: it
+        # is a fresh generate on those refs, as hop 1 is, so each location
+        # cut opens on its own place instead of on one shared start image.
+        # run() already skips the frame-0 guide when no image loaded.
+        if not str(start_image_file or "").strip() and not sh.get("refs"):
             raise ValueError(
-                f"{TAG}: shot {i + 1} is anchor=restart but no start image is "
-                "set. A restart re-anchors the chain on that photograph; "
-                "without one there is nothing to restart from. Set "
-                "start_image_file in MEDIA, or remove the anchor.")
+                f"{TAG}: shot {i + 1} is anchor=restart with no start image "
+                "and no refs. A restart opens either on the start image or "
+                "as a fresh generate on the shot's own refs; this one has "
+                "neither. Set start_image_file in MEDIA, give the shot refs, "
+                "or remove the anchor.")
         if ((sh.get("directives") or {}).get("join")) == "continuous":
             raise ValueError(
                 f"{TAG}: shot {i + 1} is anchor=restart with join=continuous. "

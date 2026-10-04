@@ -331,7 +331,7 @@ def chain_checks(tu):
     # per restart segment, frames concatenated in order, count checked.
     calls = []
 
-    def fake_upsample(model, cond_at, lat, sampler, name, mp, denoise=0.2):
+    def fake_upsample(model, cond_at, lat, sampler, name, mp, denoise=0.2, guide=None):
         v = lat["samples"].tensors[0]
         calls.append(int(v.shape[2]))
         return {"samples": lat["samples"]}

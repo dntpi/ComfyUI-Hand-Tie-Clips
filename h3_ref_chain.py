@@ -83,6 +83,7 @@ from . import audio_lock as _alock
 from . import planner as _planner
 from . import refine_blend as _rblend
 from . import tiled_upsampler as _tu
+from . import upscale_guide as _ug
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -2961,6 +2962,27 @@ class HandTieClips:
                 "boost_lora_4_strength": ("FLOAT", {
                     "default": 1.0, "min": -4.0, "max": 4.0, "step": 0.05,
                 }),
+                # APPENDED 2026-10-04, LAST, same positional reason.
+                "upsample_lora": (_boost_lora_choices(), {
+                    "default": "None",
+                    "tooltip": ("A LoRA on the upsample re-draw only, on top of whatever model "
+                                "re-draws (the boost model under realism_boost, else the MODEL "
+                                "wire). Hops never see it. None skips it. An h3upscale "
+                                "LoRA also gets its guide in that same step: the film "
+                                "at half size, so the re-draw restores the film's own "
+                                "detail instead of inventing texture."),
+                }),
+                "upsample_lora_strength": ("FLOAT", {
+                    "default": 1.0, "min": -4.0, "max": 4.0, "step": 0.05,
+                }),
+                # APPENDED 2026-10-04, LAST. A socket, so it takes no widget slot.
+                "upsample_dit": ("MODEL", {
+                    "tooltip": ("Optional model for the upsample re-draw instead of the boost "
+                                "model / MODEL wire. Wire the plain UNETLoader output here "
+                                "(before SLA and the LoRA stack): the h3upscale LoRA was "
+                                "trained on the bare DiT. The chain applies its own sigma "
+                                "shift to it; upsample_lora still goes on top."),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -3067,7 +3089,9 @@ class HandTieClips:
             upsample="off", upsample_megapixels=_tu.MEGAPIXELS,
             upsample_denoise=UPSAMPLE_DENOISE, prompt_prefix="",
             prompt_suffix="", upsample_model=_tu.UPSCALER_FILE,
-            boost_lora_4="None", boost_lora_4_strength=1.0, unique_id=None):
+            boost_lora_4="None", boost_lora_4_strength=1.0,
+            upsample_lora="None", upsample_lora_strength=1.0, upsample_dit=None,
+            unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
         # right trade everywhere except here -- a 27B and an H3 render do not
@@ -3699,6 +3723,7 @@ class HandTieClips:
         # rather than after every hop has rendered.
         upsample_on = str(upsample) == "on" and not dry
         upsample_hops = []
+        upsample_guide_factor = 0
         if upsample_on:
             import folder_paths  # noqa: PLC0415
             _tu.register_folder()
@@ -3717,6 +3742,30 @@ class HandTieClips:
             if _ud <= 0.0:
                 print(f"[{TAG}] upsample_denoise 0: no re-draw, the enlarged "
                       "latent is decoded as is", flush=True)
+                if upsample_dit is not None:
+                    print(f"[{TAG}] upsample_dit is wired but upsample_denoise is "
+                          "0: there is no re-draw for it to run", flush=True)
+            if str(upsample_lora) != "None":
+                if not folder_paths.get_full_path("loras", str(upsample_lora)):
+                    raise RuntimeError(f"{TAG}: upsample_lora {upsample_lora} is not "
+                                       "in models/loras.")
+                if _ud <= 0.0:
+                    print(f"[{TAG}] upsample_lora is set but upsample_denoise is 0: "
+                          "there is no re-draw for it to act on", flush=True)
+                # An h3upscale LoRA (a guide LoRA, by its header) gets its guide
+                # inside the same re-draw step. Read here so a LoRA with guide
+                # geometry this pack cannot pack fails before any hop renders.
+                upsample_guide_factor = _ug.lora_factor(
+                    folder_paths.get_full_path("loras", str(upsample_lora)))
+                if upsample_guide_factor and _ud > 0.0:
+                    _gw, _gh = _tu.target_size(int(width), int(height),
+                                               float(upsample_megapixels),
+                                               align=32 * upsample_guide_factor)
+                    print(f"[{TAG}] upsample: {upsample_lora} is an h3upscale guide "
+                          f"LoRA (factor {upsample_guide_factor}); the re-draw follows "
+                          f"the film at {_gw // upsample_guide_factor}x"
+                          f"{_gh // upsample_guide_factor} under the LoRA's caption, "
+                          f"output {_gw}x{_gh}", flush=True)
 
         sampler = base_sigmas = None
         boost_model = None
@@ -5188,18 +5237,52 @@ class HandTieClips:
             # texture back over it. Same sigma curve either way -- the boost
             # model is built on the shifted model -- so the recipe is intact.
             _up_model = boost_model if boost_model is not None else model
-            if boost_model is not None:
+            if upsample_dit is not None:
+                # Its own model, shifted the way the hops were so the re-draw
+                # lands on the same sigma. Nothing drawn on the MODEL wire or
+                # in the boost reaches it.
+                _up_model = _result(_core_call(
+                    MiniMaxH3SigmaShift, "the sigma shift (upsample_dit)",
+                    model=upsample_dit, shift_video=float(shift_video),
+                    shift_audio=float(shift_audio)))[0]
+                print(f"[{TAG}] upsample: re-drawing on the wired upsample_dit"
+                      + (", not the realism boost model" if boost_model is not None
+                         else ", not the MODEL wire"), flush=True)
+            elif boost_model is not None:
                 print(f"[{TAG}] upsample: re-drawing on the realism boost "
                       "model, not the MODEL wire", flush=True)
+            if str(upsample_lora) != "None" and float(upsample_lora_strength) != 0.0:
+                # On top of the re-draw model, so the render's own LoRAs (or the
+                # boost's) stay under it. Delivery only: no hop key sees it.
+                import nodes as nodes_mod  # noqa: PLC0415
+                _up_model = nodes_mod.LoraLoaderModelOnly().load_lora_model_only(
+                    _up_model, str(upsample_lora), float(upsample_lora_strength))[0]
+                print(f"[{TAG}] upsample: re-draw LoRA {upsample_lora} "
+                      f"{float(upsample_lora_strength):g}", flush=True)
             _push_preview(unique_id, "upsampling", hop=n, total=n, frac=1.0)
             try:
+                _up_guide = None
+                if (upsample_guide_factor and float(upsample_denoise) > 0.0
+                        and float(upsample_lora_strength) != 0.0):
+                    _ug.install()
+                    # The caption alone, no references: what the LoRA learned
+                    # the guide under. Width/height/length only size the
+                    # latent this discards.
+                    _cap_cond = _result(_core_call(
+                        MiniMaxH3ReferenceToVideo, "the h3upscale caption",
+                        clip=clip, prompt=_ug.CAPTION, width=int(width),
+                        height=int(height), length=5,
+                        ref_image_size=ref_image_size))[0]
+                    _up_guide = _tu.Guide(
+                        factor=int(upsample_guide_factor), cond=_cap_cond,
+                        decode=None, encode=vae.encode, pixels=_ug.guide_pixels)
                 _up_imgs, upsample_note = _tu.upsample_chain(
                     _up_model, sampler, vae, upsample_hops,
                     float(upsample_megapixels),
                     master=(master_imgs if (tone_on or anchor_on) else None),
                     upscaler=str(upsample_model),
                     denoise=float(upsample_denoise),
-                    alloc=_alloc_master)
+                    alloc=_alloc_master, guide=_up_guide)
                 master_imgs = _up_imgs
                 del _up_imgs
                 print(f"[{TAG}] {upsample_note}", flush=True)

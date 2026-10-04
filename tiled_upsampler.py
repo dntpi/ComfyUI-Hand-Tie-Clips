@@ -35,6 +35,7 @@ THIRD_PARTY_NOTICES.md). The runner is this pack's.
 """
 from __future__ import annotations
 
+import collections
 import math
 import os
 
@@ -58,6 +59,23 @@ MAX_GRID_SIDE = 9           # tile grid search limit per axis
 SCHEDULER, STEPS, DENOISE = "simple", 1, 0.2
 SEED = 444
 UPSCALER_DTYPE = torch.float16
+
+# --- the guided re-draw (not part of the recipe) ----------------------------
+#
+# With an h3upscale LoRA on the re-draw model, the same one step also gets the
+# LoRA's guide: the film at 1/factor of the output size, packed on every
+# factor-th patch of each tile. The recipe's numbers do not move; the output
+# size snaps to 32 * factor, tiles snap to the same grid, the guide's rows
+# count against the token budget, and the conditioning is the LoRA's caption.
+# Without a guide every line below behaves exactly as before.
+STRIDE_KEY = "htc_grid_stride"     # upscale_guide.STRIDE_KEY; the layout patch reads it
+
+# factor: the LoRA's reference_downscale_factor. cond: the caption
+# conditioning, used for every chunk. decode(video latent) -> frames and
+# encode(frames) -> video latent are the chain's VAE; decode may be None and
+# upsample_chain fills in its own. pixels(frames, w_px, h_px, factor) shrinks
+# canvas frames to the guide (upscale_guide.guide_pixels).
+Guide = collections.namedtuple("Guide", "factor cond decode encode pixels")
 
 FOLDER = "latent_upscale_models"
 SPATIAL = 16                # H3 video VAE: pixels per latent cell
@@ -232,15 +250,25 @@ def seq_len(tile_w_px, tile_h_px, tokens):
     return (int(tile_w_px) // 32) * (int(tile_h_px) // 32) * int(tokens)
 
 
+def guided_seq_len(tile_w_px, tile_h_px, tokens, factor):
+    """`seq_len` plus the guide's rows: one per factor-th patch, every step."""
+    f = int(factor)
+    return (seq_len(tile_w_px, tile_h_px, tokens)
+            + (int(tile_w_px) // (32 * f)) * (int(tile_h_px) // (32 * f)) * int(tokens))
+
+
 def solve_grid(frame_w_px, frame_h_px, tokens, overlap_px=TILE_OVERLAP_PX,
                budget=TOKEN_BUDGET, min_tile_px=MIN_TILE_PX,
-               max_side=MAX_GRID_SIDE):
+               max_side=MAX_GRID_SIDE, factor=1):
     """The fewest equal tiles whose forward fits `budget`.
 
     -> (rows, cols, tile_w_px, tile_h_px, overlap_w_px, overlap_h_px) or None.
     Among grids of the same size, the one that splits the longer frame axis
-    more wins (strips, not a checkerboard), then the squarer one.
+    more wins (strips, not a checkerboard), then the squarer one. A guide
+    `factor` > 1 puts tiles and overlaps on the 32 * factor grid and counts the
+    guide's rows in the budget.
     """
+    grid = 32 * int(factor) if int(factor) > 1 else 32
     for n in range(1, max_side * max_side + 1):
         best = None
         for rows in range(1, max_side + 1):
@@ -249,15 +277,17 @@ def solve_grid(frame_w_px, frame_h_px, tokens, overlap_px=TILE_OVERLAP_PX,
             cols = n // rows
             if cols > max_side:
                 continue
-            across = _equal_split(frame_w_px, cols, overlap_px)
-            down = _equal_split(frame_h_px, rows, overlap_px)
+            across = _equal_split(frame_w_px, cols, overlap_px, grid)
+            down = _equal_split(frame_h_px, rows, overlap_px, grid)
             if across is None or down is None:
                 continue
             tw, ow = across
             th, oh = down
             if tw < min_tile_px or th < min_tile_px:
                 continue
-            if seq_len(tw, th, tokens) > budget:
+            cost = (guided_seq_len(tw, th, tokens, factor) if int(factor) > 1
+                    else seq_len(tw, th, tokens))
+            if cost > budget:
                 continue
             long_split = rows if frame_h_px >= frame_w_px else cols
             rank = (-long_split, abs(rows - cols))
@@ -288,13 +318,13 @@ def _axis(size, tile, overlap, floor):
     return starts, extents, seams
 
 
-def tile_grid(h, w, tokens):
+def tile_grid(h, w, tokens, factor=1):
     """The tiles for an (h, w)-cell chunk of `tokens` video steps.
 
     -> list of (r0, c0, rows, cols, seam_top, seam_left, top, left, bottom,
     right) in latent cells, plus the solved grid for the log.
     """
-    got = solve_grid(w * SPATIAL, h * SPATIAL, tokens)
+    got = solve_grid(w * SPATIAL, h * SPATIAL, tokens, factor=factor)
     if got is None:
         raise RuntimeError(
             f"{TAG}: no tile grid up to {MAX_GRID_SIDE}x{MAX_GRID_SIDE} keeps "
@@ -309,6 +339,15 @@ def tile_grid(h, w, tokens):
     if odd:
         raise RuntimeError(f"{TAG}: a tile side of {odd} px is not a multiple "
                            "of 32; H3 patchifies 2x2 latent cells.")
+    if int(factor) > 1:
+        # The guide sits on every factor-th PATCH of the tile, and a tile's
+        # guide window is cut from the film's guide at (r0, c0) / factor, so
+        # every edge and origin must land on a whole guide patch.
+        step = 2 * int(factor)
+        off = sorted({x * SPATIAL for x in r0s + rh + c0s + cw if x % step})
+        if off:
+            raise RuntimeError(f"{TAG}: tile edges {off} px are off the "
+                               f"{step * SPATIAL} px guide grid")
     tiles = []
     nr, nc = len(r0s), len(c0s)
     for i in range(nr):
@@ -459,12 +498,55 @@ def cond_for_tile(cond, h, w, r0, c0, rows, cols):
             for kf in d["minimax_keyframes"]:
                 kf = dict(kf)
                 lt = kf.get("latent")
-                if lt is not None:
+                f = int(kf.get(STRIDE_KEY, 1))
+                if lt is not None and f > 1:
+                    # The guide is on its own 1/f grid: cut the tile's window
+                    # there, never resized up to the chunk's grid.
+                    kf["latent"] = lt[:, :, :, r0 // f:(r0 + rows) // f,
+                                      c0 // f:(c0 + cols) // f].contiguous()
+                elif lt is not None:
                     if lt.shape[3] != h or lt.shape[4] != w:
                         lt = _resize_planes(lt, h, w, torch.float32)
                     kf["latent"] = lt[:, :, :, r0:r0 + rows, c0:c0 + cols].contiguous()
                 kfs.append(kf)
             d["minimax_keyframes"] = kfs
+        out.append([emb, d])
+    return out
+
+
+def encode_steps(encode, frames, steps):
+    """`steps` video latent steps from the frames that cover them.
+
+    H3's VAE encodes 17-frame clips to 5 steps each, then drops the last 3
+    steps -- right for a whole clip (17g+5 frames, 5g+2 steps), short for a
+    chunk cut out of a film: 102 frames come back as 27 steps, not 30. Each
+    17-frame clip encodes on its own, so padding the frames to the next whole
+    clip length (repeating the last frame, as the encoder itself pads) and
+    keeping the first `steps` steps gives exactly what those frames encode to.
+    """
+    n = frames_in(steps)
+    if int(frames.shape[0]) < n:
+        raise RuntimeError(f"{TAG}: {int(frames.shape[0])} frames for {steps} latent "
+                           f"steps, which cover {n}")
+    frames = frames[:n]
+    full = 5 if n <= 5 else 17 * math.ceil((n - 5) / 17) + 5
+    if full > n:
+        frames = torch.cat([frames, frames[-1:].expand(full - n, -1, -1, -1)], dim=0)
+    lat = encode(frames)
+    if int(lat.shape[2]) < steps:
+        raise RuntimeError(f"{TAG}: {full} frames encoded to {int(lat.shape[2])} "
+                           f"latent steps, needed {steps}")
+    return lat[:, :, :steps]
+
+
+def add_guide(cond, guide_latent, factor):
+    """The h3upscale guide appended as a strided keyframe at frame 0. After
+    `pin_chunk_start`, which drops every other latent keyframe at frame 0."""
+    kf = {"latent": guide_latent, "resolved_frame_index": 0, STRIDE_KEY: int(factor)}
+    out = []
+    for emb, d in cond:
+        d = dict(d)
+        d["minimax_keyframes"] = list(d.get("minimax_keyframes") or []) + [kf]
         out.append([emb, d])
     return out
 
@@ -671,17 +753,18 @@ def sample_tile(model, cond, sampler, sigmas, video, audio, noise, seed):
     return out.to(mm.intermediate_device()).tensors[0]
 
 
-def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed):
+def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed, factor=1):
     """Every tile stepped together, merged under the feather after each step.
 
     Step 0 hands each tile its slice of one noise field drawn at the chunk's
-    full size; later steps add no noise. Audio rides along frozen.
+    full size; later steps add no noise. Audio rides along frozen. `factor`
+    > 1 is a guided re-draw: tiles on the guide's grid, guide rows budgeted.
     """
     import comfy.nested_tensor as nt
     import comfy.sample
 
     _, _, t, h, w = video.shape
-    tiles, grid = tile_grid(h, w, t)
+    tiles, grid = tile_grid(h, w, t, factor)
     field = comfy.sample.prepare_noise(nt.NestedTensor((video, audio)), seed)
     nv, na = field.tensors[0], field.tensors[1]
     dev, dt = video.device, video.dtype
@@ -691,9 +774,11 @@ def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed):
                          cond_for_tile(cond, h, w, r0, c0, rows, cols),
                          feather(rows, cols, st, sl, top, left, bottom, right,
                                  dev)[None, None, None]))
+    tokens = (seq_len(grid[2], grid[3], t) if int(factor) <= 1
+              else f"{guided_seq_len(grid[2], grid[3], t, factor)} (guide incl.)")
     print(f"[{TAG}] chunk {w * SPATIAL}x{h * SPATIAL}px x {t} latent steps: "
           f"{grid[0]}x{grid[1]} tiles of {grid[2]}x{grid[3]}px, overlap "
-          f"{grid[4]}/{grid[5]}px, {seq_len(grid[2], grid[3], t)} tokens per "
+          f"{grid[4]}/{grid[5]}px, {tokens} tokens per "
           f"forward, stepped together", flush=True)
 
     x = video
@@ -762,12 +847,16 @@ def _free(model):
 
 
 def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
-             denoise=DENOISE):
+             denoise=DENOISE, guide=None):
     """The whole recipe on an H3 AV latent. -> the upsampled AV latent dict.
 
     `conditioning` is one conditioning for the whole clip, or a callable
     `(f0, f1) -> conditioning` giving each chunk its own -- the chain passes
     the latter, because each hop was generated from its own prompt.
+
+    `guide` (a Guide) makes the re-draw a guided one: each chunk's canvas
+    frames, shrunk to 1/factor of the output, ride every tile as the h3upscale
+    guide, and `guide.cond` replaces `conditioning`. Same step, same sigmas.
     """
     import comfy.nested_tensor as nt
 
@@ -780,18 +869,27 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
     video, audio = samples.tensors
     if video.shape[0] != 1:
         raise RuntimeError(f"{TAG}: one clip at a time (batch 1).")
+    factor = int(guide.factor) if guide is not None else 1
+    if guide is not None:
+        conditioning = guide.cond
     per_chunk = callable(conditioning)
     cond = None if per_chunk else clean_refs(conditioning)
     tv, ta = video.shape[2], audio.shape[-1]
-    w_px, h_px = target_size(video.shape[4] * SPATIAL, video.shape[3] * SPATIAL,
-                             megapixels)
+    if guide is not None:
+        w_px, h_px = target_size(video.shape[4] * SPATIAL, video.shape[3] * SPATIAL,
+                                 megapixels, align=32 * factor)
+    else:
+        w_px, h_px = target_size(video.shape[4] * SPATIAL, video.shape[3] * SPATIAL,
+                                 megapixels)
     sigmas = recipe_sigmas(model, denoise)
     plan = chunks(tv)
     print(f"[{TAG}] {video.shape[4] * SPATIAL}x{video.shape[3] * SPATIAL} -> "
           f"{w_px}x{h_px} ({w_px * h_px / 1048576.0:.2f} MP), {len(plan)} "
           f"chunk(s), "
           + (f"sigmas {[round(float(s), 4) for s in sigmas]}" if sigmas is not None
-             else "no re-draw (denoise 0)"), flush=True)
+             else "no re-draw (denoise 0)")
+          + (f", h3upscale guide at {w_px // factor}x{h_px // factor}"
+             if guide is not None and sigmas is not None else ""), flush=True)
 
     done_v = done_a = None
     for i, (k0, f0, k1, f1) in enumerate(plan):
@@ -800,6 +898,14 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
         ca = audio[:, :, :, a0:min(a1, ta)].contiguous()
         if _device().type == "cuda":
             _free(model)            # never H3 and the upscaler resident at once
+        glat = None
+        if guide is not None and sigmas is not None:
+            # From this chunk's own canvas frames, before the upscaler runs:
+            # the guide is what the film IS, the enlarged latent is a guess.
+            px = guide.decode(cv)[:frames_in(cv.shape[2])]
+            glat = encode_steps(guide.encode, guide.pixels(px, w_px, h_px, factor),
+                                int(cv.shape[2]))
+            del px
         cv = upscale_chunk(cv, upscaler, w_px, h_px)
         if sigmas is None:
             done_v, done_a = join_chunk(done_v, done_a, cv, ca, k0, f0)
@@ -808,7 +914,15 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
                                else cond, f0, f1, cv.shape[3], cv.shape[4])
         if i > 0:
             ccond = pin_chunk_start(ccond, done_v, f0)
-        out_v = redraw_chunk(model, ccond, sampler, sigmas, cv, ca, SEED)
+        if glat is not None:
+            want = (int(cv.shape[2]), int(cv.shape[3]) // factor, int(cv.shape[4]) // factor)
+            got = tuple(int(x) for x in glat.shape[2:])
+            if got != want:
+                raise RuntimeError(f"{TAG}: guide latent {got} for a chunk that "
+                                   f"needs {want} (steps, rows, cols)")
+            ccond = add_guide(ccond, glat.to(cv.device, cv.dtype), factor)
+            del glat
+        out_v = redraw_chunk(model, ccond, sampler, sigmas, cv, ca, SEED, factor)
         done_v, done_a = join_chunk(done_v, done_a, out_v, ca, k0, f0)
     _free(model)
     return {"samples": nt.NestedTensor((done_v, done_a))}
@@ -910,7 +1024,7 @@ def match_levels(frames, ref, chunk=16):
 
 def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
                    upscaler=UPSCALER_FILE, decode=None, denoise=DENOISE,
-                   alloc=None):
+                   alloc=None, guide=None):
     """The recipe over a finished chain. -> (IMAGE [N,H,W,3], note).
 
     `hops` are per-hop dicts: video/audio (the hop's delivered sampler
@@ -933,13 +1047,15 @@ def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
     if alloc is None:
         def alloc(n, h, w):
             return torch.empty((n, h, w, 3), dtype=torch.float32)
+    if guide is not None and guide.decode is None:
+        guide = guide._replace(decode=decode)
     want = sum(int(h["frames"]) for h in hops)
     frames, at, runs = None, 0, 0
     for seg in segments(hops):
         v, a = stitch(seg)
         lat = {"samples": nt.NestedTensor((v, a))}
         out = upsample(model, cond_by_frame(seg), lat, sampler, upscaler,
-                       megapixels, denoise)
+                       megapixels, denoise, guide=guide)
         vid = out["samples"].tensors[0]
         _free(model)
         part = decode(vid).float().cpu()
@@ -961,7 +1077,7 @@ def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
                          f"the chain delivered {want}")
     note = (f"upsampled {int(frames.shape[2])}x{int(frames.shape[1])} "
             f"({frames.shape[1] * frames.shape[2] / 1048576.0:.2f} MP), "
-            f"{runs} run(s)")
+            f"{runs} run(s)" + (", h3upscale guided" if guide is not None else ""))
     return frames, note
 
 

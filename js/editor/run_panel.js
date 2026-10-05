@@ -80,7 +80,9 @@ const GROUPS = [
                 // Panel order is reading order, not declaration order; the
                 // widget itself is declared last so a saved workflow keeps its
                 // indices. It belongs beside the schedule it replaces.
-                "refine_align"]],
+                "refine_align",
+                // split only; declared last of all for the same reason.
+                "split_finish_aug"]],
     // Its own group, not part of refine: boost changes how the hop is sampled.
     // The three LoRAs are combos on this node rather than loader nodes on the
     // canvas -- deliberately, to keep the graph short; the speed stack itself

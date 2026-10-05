@@ -2354,6 +2354,66 @@ def _boost_sampled(latent, *, model, guider, boost_guider, sampler,
         latent_image=mid))[0]
 
 
+# hop_refine=split: the refine as the hop's own finish, not a second pass. The
+# hop samples its schedule down to the start of its last K steps (K =
+# refine_steps), then those K steps -- each cut in SPLIT_EXTEND -- continue the
+# same latent with no new noise, on refine_model / refine_sampler. Nothing is
+# re-noised and there is no second copy to blend: what is decoded is what the
+# next hop is pinned to. Continuity holds because both stages carry the hop's
+# own conditioning, Motion-Context pin included -- the same reason a boosted
+# hop still continues. SPLIT_EXTEND is BOOST_EXTEND's midpoint rule, not its
+# value by coincidence: one midpoint per gap.
+SPLIT_EXTEND = 2
+SPLIT_DEFAULT_K = 2         # refine_steps=0 ("the hop's steps") means this here
+
+
+def _split_k(refine_steps, hop_steps):
+    """K for this hop: refine_steps (0 = SPLIT_DEFAULT_K), at least one step
+    left for stage 1 and at least one finished finely."""
+    k = int(refine_steps) or SPLIT_DEFAULT_K
+    return max(1, min(k, int(hop_steps) - 1))
+
+
+def _split_sigmas(hop_sigmas, sigma_cache, hop_steps, k):
+    """(stage-1 sigmas, stage-2 sigmas), sharing the hand-off sigma."""
+    key = ("split", int(hop_steps), int(k))
+    if key not in sigma_cache:
+        n = int(hop_sigmas.shape[-1]) - 1
+        hi = hop_sigmas[:n - k + 1].clone()
+        lo = _result(_core_call(
+            ExtendIntermediateSigmas, "the split finish",
+            sigmas=hop_sigmas[n - k:].clone(), steps=SPLIT_EXTEND,
+            start_at_sigma=1.0, end_at_sigma=0.0, spacing="linear"))[0]
+        sigma_cache[key] = (hi, lo)
+    return sigma_cache[key]
+
+
+def _split_sampled(latent, *, noise, guider, finish_guider, sampler,
+                   finish_sampler, hop_sigmas, sigma_cache, hop_steps, k,
+                   hop_no, label):
+    """One hop, finished on the split. -> the sampler output dict.
+
+    Stage 1's SamplerCustomAdvanced output is inverse-noise-scaled at the
+    hand-off sigma; stage 2's DisableNoise multiplies it back by (1 - sigma) on
+    the way in, so the pair cancels to the very latent stage 1 stopped at. A
+    noise_mask on the latent (the audio lock) rides out of stage 1 on the
+    copied dict and holds the take through stage 2 as it did through stage 1.
+    """
+    hi, lo = _split_sigmas(hop_sigmas, sigma_cache, hop_steps, k)
+    print(f"[{TAG}] hop {hop_no}: split refine {int(hi.shape[-1]) - 1} + "
+          f"{int(lo.shape[-1]) - 1} steps ({k} finished in {SPLIT_EXTEND}), "
+          f"{label}, hand-off sigma {float(lo[0]):.4f}", flush=True)
+    mid = _result(_core_call(
+        SamplerCustomAdvanced, "the split stage-1 sampler",
+        noise=noise, guider=guider, sampler=sampler,
+        sigmas=hi, latent_image=latent))[0]
+    return _result(_core_call(
+        SamplerCustomAdvanced, "the split stage-2 sampler",
+        noise=_result(_core_call(DisableNoise, "the split stage-2 noise"))[0],
+        guider=finish_guider, sampler=finish_sampler, sigmas=lo,
+        latent_image=mid))[0]
+
+
 def _refine_blend_latent(raw, refined, keys, interp="linear", hop_no=0):
     """Lerp the refined video back toward the raw sample over the pinned head.
 
@@ -2794,10 +2854,13 @@ class HandTieClips:
                 # above them moves. Everything here ships inert -- hop_refine
                 # defaults off and the hop key only carries these fields when
                 # it is on, so a workflow saved before today keys byte-identical.
-                "hop_refine": (["off", "full", "pin_only"], {
+                "hop_refine": (["off", "full", "pin_only", "split"], {
                     "default": "off",
                     "tooltip": ("A light second pass on each hop to restore texture. full ships the refined "
-                                "result; pin_only uses it only for the next hop's join; off skips it."),
+                                "result; pin_only uses it only for the next hop's join; off skips it. "
+                                "split is no second pass: the hop's last refine_steps steps are finished "
+                                "in finer steps with no new noise, on refine_model / refine_sampler, and "
+                                "that one latent is both shown and handed on. Not with realism_boost."),
                 }),
                 "refine_denoise": ("FLOAT", {
                     "default": 0.50, "min": 0.05, "max": 1.0, "step": 0.05,
@@ -2975,6 +3038,18 @@ class HandTieClips:
                 "upsample_lora_strength": ("FLOAT", {
                     "default": 1.0, "min": -4.0, "max": 4.0, "step": 0.05,
                 }),
+                # APPENDED 2026-10-06, the last widget (upsample_dit below is a
+                # socket and takes no widgets_values slot).
+                "split_finish_aug": ("FLOAT", {
+                    "default": 0.999, "min": 0.5, "max": 0.999, "step": 0.005,
+                    "tooltip": ("hop_refine=split only. How clean the picture conditions look to "
+                                "the finish steps: 0.999 (default) is unchanged. Lower (try 0.85) "
+                                "hands the finish a noisier, noisier-labelled copy of the join pin, "
+                                "so it copies less of the previous hop's texture; the earlier steps "
+                                "keep the clean pin. Core applies it to every picture condition at "
+                                "once: reference pictures on that hop are weakened in the finish "
+                                "too (Qwen still sees them)."),
+                }),
                 # APPENDED 2026-10-04, LAST. A socket, so it takes no widget slot.
                 "upsample_dit": ("MODEL", {
                     "tooltip": ("Optional model for the upsample re-draw instead of the boost "
@@ -3090,7 +3165,8 @@ class HandTieClips:
             upsample_denoise=UPSAMPLE_DENOISE, prompt_prefix="",
             prompt_suffix="", upsample_model=_tu.UPSCALER_FILE,
             boost_lora_4="None", boost_lora_4_strength=1.0,
-            upsample_lora="None", upsample_lora_strength=1.0, upsample_dit=None,
+            upsample_lora="None", upsample_lora_strength=1.0,
+            split_finish_aug=0.999, upsample_dit=None,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -3675,7 +3751,7 @@ class HandTieClips:
         # exactly as the published string does.
         _blend_was = str(refine_blend)
         refine_blend = _rblend.resolve(refine_blend, overlap_n)
-        if str(refine_blend) != _blend_was and str(hop_refine) != "off":
+        if str(refine_blend) != _blend_was and str(hop_refine) not in ("off", "split"):
             print(f"[{TAG}] refine_blend=auto -> {refine_blend!r} "
                   f"(raw across the {overlap_n} f pin, crossing over the "
                   f"{_rblend.CROSS_FRAMES} f after it)", flush=True)
@@ -3683,7 +3759,7 @@ class HandTieClips:
         # two minutes into hop 1, and so a dry run catches it too.
         try:
             refine_keys = (_rblend.parse(refine_blend)
-                           if str(hop_refine) != "off" else [])
+                           if str(hop_refine) not in ("off", "split") else [])
         except ValueError as e:
             raise RuntimeError(f"{TAG}: {e}") from e
 
@@ -3702,6 +3778,34 @@ class HandTieClips:
         # list) and an unset slot 4 costs no cached hop.
         if str(boost_lora_4) != "None" and float(boost_lora_4_strength) != 0.0:
             boost_loras.append((str(boost_lora_4), float(boost_lora_4_strength)))
+        split_on = str(hop_refine) == "split"
+        if split_on:
+            if boost_on:
+                raise RuntimeError(
+                    f"{TAG}: hop_refine=split does not run with realism_boost: "
+                    "the boost already splits each hop and finishes it on the boost "
+                    "LoRAs. Pick one -- realism_boost with hop_refine full/pin_only, "
+                    "or split without the boost.")
+            _k_note = (f"{int(refine_steps)}" if int(refine_steps)
+                       else f"{SPLIT_DEFAULT_K} (refine_steps 0)")
+            print(f"[{TAG}] hop_refine=split: each hop's last {_k_note} steps are "
+                  f"finished in {SPLIT_EXTEND}, with no new noise, on "
+                  + ("the wired refine_model" if refine_model is not None
+                     else "the MODEL wire")
+                  + f" with {'the hop sampler' if str(refine_sampler) == 'same' else refine_sampler}"
+                  "; the hop's conditioning carries the pin through both stages. "
+                  "refine_denoise / refine_scheduler / refine_cond / refine_audio / "
+                  "refine_blend / refine_head / refine_align do not apply.", flush=True)
+        finish_aug = min(0.999, max(0.0, float(split_finish_aug)))
+        if finish_aug < 0.999:
+            if split_on:
+                print(f"[{TAG}] split_finish_aug={finish_aug:g}: the finish steps see every "
+                      "picture condition (the join pin, and any reference picture on that "
+                      "hop) at that noise level and label; the steps before keep them "
+                      "clean. Audio conditions are untouched.", flush=True)
+            else:
+                print(f"[{TAG}] split_finish_aug={finish_aug:g} is set but hop_refine is "
+                      f"{hop_refine}: it applies only to split, ignored", flush=True)
         if boost_on:
             if str(hop_refine) != "off":
                 print(f"[{TAG}] realism_boost + hop_refine={hop_refine}: each "
@@ -3768,6 +3872,7 @@ class HandTieClips:
                           f"output {_gw}x{_gh}", flush=True)
 
         sampler = base_sigmas = None
+        split_model = None
         boost_model = None
         refine_sampler_obj = refine_sched = None
         sigma_cache = {}
@@ -3789,6 +3894,15 @@ class HandTieClips:
                     sampler_name=str(refine_sampler)))[0]
             refine_sched = (str(scheduler) if str(refine_scheduler) == "same"
                             else str(refine_scheduler))
+            # split's finish model: refine_model shifted like the hops, so the
+            # finish steps land on the same timesteps the sigmas name (shifting
+            # an already-shifted model is a no-op), else the MODEL wire.
+            split_model = model
+            if split_on and refine_model is not None:
+                split_model = _result(_core_call(
+                    MiniMaxH3SigmaShift, "the sigma shift (split refine_model)",
+                    model=refine_model, shift_video=float(shift_video),
+                    shift_audio=float(shift_audio)))[0]
             base_sigmas = _result(_core_call(
                 BasicScheduler, "the sigma schedule",
                 model=model, scheduler=scheduler, steps=int(steps),
@@ -4587,7 +4701,17 @@ class HandTieClips:
                 # cached by an `off` run; that is the whole A/B, silently void.
                 # Present only when on, for the same reason last_frame_guide is:
                 # adding "off" would move every existing cache key.
-                if str(hop_refine) != "off":
+                if split_on:
+                    # Only what split reads. Its own key space: a split hop is
+                    # neither an off hop nor a refined one.
+                    hop_payload["refine"] = [
+                        "split", _split_k(refine_steps, hop_payload["steps"]),
+                        str(refine_sampler), refine_model_fp, SPLIT_EXTEND]
+                    # Only when moved, so a default split keys as it did.
+                    if finish_aug < 0.999:
+                        hop_payload["refine"].append(
+                            ["finish_aug", round(finish_aug, 4)])
+                elif str(hop_refine) != "off":
                     hop_payload["refine"] = [
                         str(hop_refine), round(float(refine_denoise), 4),
                         int(refine_steps), str(refine_sampler),
@@ -4840,6 +4964,33 @@ class HandTieClips:
                         hop_steps=hop_steps, seed=shot_seed, hop_no=i + 1,
                         label=f"{sampler_name}/{scheduler}")
                     del boost_guider
+                elif split_on:
+                    # The finish runs on its own guider only when it has its
+                    # own model; the conditioning is the hop's either way, so
+                    # the pin and the guides reach the finish too.
+                    finish_guider = guider
+                    finish_cond = cond
+                    if finish_aug < 0.999:
+                        # The stock key core reads for every picture condition;
+                        # audio has its own key and is left alone.
+                        finish_cond = [[emb, dict(d, minimax_visual_cond_noise_aug=finish_aug)]
+                                       for emb, d in cond]
+                    if refine_model is not None or finish_aug < 0.999:
+                        finish_guider = _result(_core_call(
+                            BasicGuider, "the split finish guider",
+                            model=split_model, conditioning=finish_cond))[0]
+                    sampled = _split_sampled(
+                        latent, noise=noise, guider=guider,
+                        finish_guider=finish_guider, sampler=sampler,
+                        finish_sampler=refine_sampler_obj,
+                        hop_sigmas=hop_sigmas, sigma_cache=sigma_cache,
+                        hop_steps=hop_steps,
+                        k=_split_k(refine_steps, hop_steps), hop_no=i + 1,
+                        label=(sampler_name if str(refine_sampler) == "same"
+                               else f"{sampler_name} -> {refine_sampler}")
+                              + (", refine_model" if refine_model is not None else "")
+                              + (f", finish aug {finish_aug:g}" if finish_aug < 0.999 else ""))
+                    del finish_guider, finish_cond
                 else:
                     sampled = _result(_core_call(
                         SamplerCustomAdvanced, "the sampler",
@@ -4850,7 +5001,7 @@ class HandTieClips:
                 # pixels. After the sampler, so pin_mech / the guides / the
                 # audio lock are all already spent and none of them can see it.
                 refined_for_pin = None
-                if str(hop_refine) != "off":
+                if str(hop_refine) not in ("off", "split"):
                     if str(hop_refine) == "pin_only" and i >= n - 1:
                         # Nothing downstream would ever read it.
                         print(f"[{TAG}] hop {i + 1}: refine skipped "

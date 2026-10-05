@@ -53,6 +53,7 @@ CHECKS = [
     ("check_last_frame_guide.py", []),
     ("check_refine_audio.py", []),
     ("check_refine_keys.py", []),
+    ("check_split_refine.py", []),
     ("check_boost.py", []),
     ("check_tiled_upsampler.py", []),
     ("check_upscale_guide.py", []),

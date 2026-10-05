@@ -126,8 +126,8 @@ def main():
     ck("refine_model is a socket, not a widget",
        "refine_model" in (opt or {}) and "refine_model" not in names,
        "a MODEL input takes no widgets_values slot")
-    ck("hop_refine offers off / full / pin_only",
-       (opt.get("hop_refine") or [None])[0] == ["off", "full", "pin_only"])
+    ck("hop_refine offers off / full / pin_only / split (split appended last)",
+       (opt.get("hop_refine") or [None])[0] == ["off", "full", "pin_only", "split"])
     ck("every refine widget has a tooltip",
        all((opt[n][1] if len(opt[n]) > 1 else {}).get("tooltip")
            for n in REFINE))

@@ -318,18 +318,21 @@ def _axis(size, tile, overlap, floor):
     return starts, extents, seams
 
 
-def tile_grid(h, w, tokens, factor=1):
+def tile_grid(h, w, tokens, factor=1, budget=TOKEN_BUDGET):
     """The tiles for an (h, w)-cell chunk of `tokens` video steps.
 
     -> list of (r0, c0, rows, cols, seam_top, seam_left, top, left, bottom,
-    right) in latent cells, plus the solved grid for the log.
+    right) in latent cells, plus the solved grid for the log. `budget` is the
+    largest sequence one tile forward may carry: the recipe's TOKEN_BUDGET
+    unless a caller lowers it to fit a smaller card.
     """
-    got = solve_grid(w * SPATIAL, h * SPATIAL, tokens, factor=factor)
+    got = solve_grid(w * SPATIAL, h * SPATIAL, tokens, budget=int(budget), factor=factor)
     if got is None:
         raise RuntimeError(
             f"{TAG}: no tile grid up to {MAX_GRID_SIDE}x{MAX_GRID_SIDE} keeps "
             f"a {w * SPATIAL}x{h * SPATIAL}px chunk of {tokens} latent steps "
-            f"under {TOKEN_BUDGET} tokens per forward. Lower megapixels.")
+            f"under {int(budget)} tokens per forward. Lower megapixels, or raise "
+            f"the tile budget.")
     _r, _c, tw, th, ow, oh = got
     tw, th, ow, oh = tw // SPATIAL, th // SPATIAL, ow // SPATIAL, oh // SPATIAL
     floor = MIN_TILE_PX // SPATIAL
@@ -753,7 +756,8 @@ def sample_tile(model, cond, sampler, sigmas, video, audio, noise, seed):
     return out.to(mm.intermediate_device()).tensors[0]
 
 
-def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed, factor=1):
+def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed, factor=1,
+                 budget=TOKEN_BUDGET):
     """Every tile stepped together, merged under the feather after each step.
 
     Step 0 hands each tile its slice of one noise field drawn at the chunk's
@@ -764,7 +768,7 @@ def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed, factor=1):
     import comfy.sample
 
     _, _, t, h, w = video.shape
-    tiles, grid = tile_grid(h, w, t, factor)
+    tiles, grid = tile_grid(h, w, t, factor, budget)
     field = comfy.sample.prepare_noise(nt.NestedTensor((video, audio)), seed)
     nv, na = field.tensors[0], field.tensors[1]
     dev, dt = video.device, video.dtype
@@ -847,7 +851,7 @@ def _free(model):
 
 
 def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
-             denoise=DENOISE, guide=None):
+             denoise=DENOISE, guide=None, budget=TOKEN_BUDGET):
     """The whole recipe on an H3 AV latent. -> the upsampled AV latent dict.
 
     `conditioning` is one conditioning for the whole clip, or a callable
@@ -857,6 +861,10 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
     `guide` (a Guide) makes the re-draw a guided one: each chunk's canvas
     frames, shrunk to 1/factor of the output, ride every tile as the h3upscale
     guide, and `guide.cond` replaces `conditioning`. Same step, same sigmas.
+
+    `budget` caps one tile forward's tokens (default: the recipe's). Lower it
+    and the same frame is cut into more, smaller tiles -- less VRAM, more
+    forwards, the same feathered merge.
     """
     import comfy.nested_tensor as nt
 
@@ -922,7 +930,7 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
                                    f"needs {want} (steps, rows, cols)")
             ccond = add_guide(ccond, glat.to(cv.device, cv.dtype), factor)
             del glat
-        out_v = redraw_chunk(model, ccond, sampler, sigmas, cv, ca, SEED, factor)
+        out_v = redraw_chunk(model, ccond, sampler, sigmas, cv, ca, SEED, factor, budget)
         done_v, done_a = join_chunk(done_v, done_a, out_v, ca, k0, f0)
     _free(model)
     return {"samples": nt.NestedTensor((done_v, done_a))}
@@ -1024,7 +1032,7 @@ def match_levels(frames, ref, chunk=16):
 
 def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
                    upscaler=UPSCALER_FILE, decode=None, denoise=DENOISE,
-                   alloc=None, guide=None):
+                   alloc=None, guide=None, budget=TOKEN_BUDGET):
     """The recipe over a finished chain. -> (IMAGE [N,H,W,3], note).
 
     `hops` are per-hop dicts: video/audio (the hop's delivered sampler
@@ -1055,7 +1063,7 @@ def upsample_chain(model, sampler, vae, hops, megapixels, master=None,
         v, a = stitch(seg)
         lat = {"samples": nt.NestedTensor((v, a))}
         out = upsample(model, cond_by_frame(seg), lat, sampler, upscaler,
-                       megapixels, denoise, guide=guide)
+                       megapixels, denoise, guide=guide, budget=budget)
         vid = out["samples"].tensors[0]
         _free(model)
         part = decode(vid).float().cpu()

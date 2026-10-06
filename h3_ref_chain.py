@@ -2364,6 +2364,11 @@ def _boost_sampled(latent, *, model, guider, boost_guider, sampler,
 # hop still continues. SPLIT_EXTEND is BOOST_EXTEND's midpoint rule, not its
 # value by coincidence: one midpoint per gap.
 SPLIT_EXTEND = 2
+# Below this the upsample tile budget is read as "the recipe's": 0 is the
+# documented default, and a graph saved with split_finish_aug in that widget
+# slot casts its 0.999 / 0.85 to 0. One widget step, so no real budget a user
+# dials in is ever overridden.
+UPSAMPLE_MIN_TILE_TOKENS = 1024
 SPLIT_DEFAULT_K = 2         # refine_steps=0 ("the hop's steps") means this here
 
 
@@ -3038,17 +3043,18 @@ class HandTieClips:
                 "upsample_lora_strength": ("FLOAT", {
                     "default": 1.0, "min": -4.0, "max": 4.0, "step": 0.05,
                 }),
-                # APPENDED 2026-10-06, the last widget (upsample_dit below is a
-                # socket and takes no widgets_values slot).
-                "split_finish_aug": ("FLOAT", {
-                    "default": 0.999, "min": 0.5, "max": 0.999, "step": 0.005,
-                    "tooltip": ("hop_refine=split only. How clean the picture conditions look to "
-                                "the finish steps: 0.999 (default) is unchanged. Lower (try 0.85) "
-                                "hands the finish a noisier, noisier-labelled copy of the join pin, "
-                                "so it copies less of the previous hop's texture; the earlier steps "
-                                "keep the clean pin. Core applies it to every picture condition at "
-                                "once: reference pictures on that hop are weakened in the finish "
-                                "too (Qwen still sees them)."),
+                # The last widget (upsample_dit below is a socket and takes no
+                # widgets_values slot). This slot held split_finish_aug
+                # (2026-10-06, removed the same week: 0.85 burnt late hops in
+                # chain_00101 and changed nothing at 0.999). A graph saved with
+                # it carries 0.999 / 0.85 here, which ComfyUI casts to 0 for an
+                # INT -- and 0 means the recipe value, so it still queues.
+                "upsample_tile_tokens": ("INT", {
+                    "default": _tu.TOKEN_BUDGET, "min": 0, "max": 1048576, "step": 1024,
+                    "tooltip": ("Upsample VRAM: the largest sequence one tile forward may carry. "
+                                "Lower = more, smaller tiles -- less memory, slower, the same "
+                                f"seamless merge. {_tu.TOKEN_BUDGET} (or 0) is the recipe's "
+                                "value. Delivery only: no hop re-renders when it changes."),
                 }),
                 # APPENDED 2026-10-04, LAST. A socket, so it takes no widget slot.
                 "upsample_dit": ("MODEL", {
@@ -3166,7 +3172,7 @@ class HandTieClips:
             prompt_suffix="", upsample_model=_tu.UPSCALER_FILE,
             boost_lora_4="None", boost_lora_4_strength=1.0,
             upsample_lora="None", upsample_lora_strength=1.0,
-            split_finish_aug=0.999, upsample_dit=None,
+            upsample_tile_tokens=_tu.TOKEN_BUDGET, upsample_dit=None,
             unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
@@ -3796,16 +3802,6 @@ class HandTieClips:
                   "; the hop's conditioning carries the pin through both stages. "
                   "refine_denoise / refine_scheduler / refine_cond / refine_audio / "
                   "refine_blend / refine_head / refine_align do not apply.", flush=True)
-        finish_aug = min(0.999, max(0.0, float(split_finish_aug)))
-        if finish_aug < 0.999:
-            if split_on:
-                print(f"[{TAG}] split_finish_aug={finish_aug:g}: the finish steps see every "
-                      "picture condition (the join pin, and any reference picture on that "
-                      "hop) at that noise level and label; the steps before keep them "
-                      "clean. Audio conditions are untouched.", flush=True)
-            else:
-                print(f"[{TAG}] split_finish_aug={finish_aug:g} is set but hop_refine is "
-                      f"{hop_refine}: it applies only to split, ignored", flush=True)
         if boost_on:
             if str(hop_refine) != "off":
                 print(f"[{TAG}] realism_boost + hop_refine={hop_refine}: each "
@@ -4707,10 +4703,6 @@ class HandTieClips:
                     hop_payload["refine"] = [
                         "split", _split_k(refine_steps, hop_payload["steps"]),
                         str(refine_sampler), refine_model_fp, SPLIT_EXTEND]
-                    # Only when moved, so a default split keys as it did.
-                    if finish_aug < 0.999:
-                        hop_payload["refine"].append(
-                            ["finish_aug", round(finish_aug, 4)])
                 elif str(hop_refine) != "off":
                     hop_payload["refine"] = [
                         str(hop_refine), round(float(refine_denoise), 4),
@@ -4969,16 +4961,10 @@ class HandTieClips:
                     # own model; the conditioning is the hop's either way, so
                     # the pin and the guides reach the finish too.
                     finish_guider = guider
-                    finish_cond = cond
-                    if finish_aug < 0.999:
-                        # The stock key core reads for every picture condition;
-                        # audio has its own key and is left alone.
-                        finish_cond = [[emb, dict(d, minimax_visual_cond_noise_aug=finish_aug)]
-                                       for emb, d in cond]
-                    if refine_model is not None or finish_aug < 0.999:
+                    if refine_model is not None:
                         finish_guider = _result(_core_call(
                             BasicGuider, "the split finish guider",
-                            model=split_model, conditioning=finish_cond))[0]
+                            model=split_model, conditioning=cond))[0]
                     sampled = _split_sampled(
                         latent, noise=noise, guider=guider,
                         finish_guider=finish_guider, sampler=sampler,
@@ -4988,9 +4974,8 @@ class HandTieClips:
                         k=_split_k(refine_steps, hop_steps), hop_no=i + 1,
                         label=(sampler_name if str(refine_sampler) == "same"
                                else f"{sampler_name} -> {refine_sampler}")
-                              + (", refine_model" if refine_model is not None else "")
-                              + (f", finish aug {finish_aug:g}" if finish_aug < 0.999 else ""))
-                    del finish_guider, finish_cond
+                              + (", refine_model" if refine_model is not None else ""))
+                    del finish_guider
                 else:
                     sampled = _result(_core_call(
                         SamplerCustomAdvanced, "the sampler",
@@ -5411,6 +5396,14 @@ class HandTieClips:
                 print(f"[{TAG}] upsample: re-draw LoRA {upsample_lora} "
                       f"{float(upsample_lora_strength):g}", flush=True)
             _push_preview(unique_id, "upsampling", hop=n, total=n, frac=1.0)
+            # 0 (and anything under a floor no tile could fit, e.g. a stale
+            # split_finish_aug value cast to INT) is the recipe's budget.
+            _up_budget = (int(upsample_tile_tokens)
+                          if int(upsample_tile_tokens) >= UPSAMPLE_MIN_TILE_TOKENS
+                          else _tu.TOKEN_BUDGET)
+            if _up_budget != _tu.TOKEN_BUDGET:
+                print(f"[{TAG}] upsample: tile budget {_up_budget} tokens (recipe "
+                      f"{_tu.TOKEN_BUDGET}): more, smaller tiles", flush=True)
             try:
                 _up_guide = None
                 if (upsample_guide_factor and float(upsample_denoise) > 0.0
@@ -5433,7 +5426,8 @@ class HandTieClips:
                     master=(master_imgs if (tone_on or anchor_on) else None),
                     upscaler=str(upsample_model),
                     denoise=float(upsample_denoise),
-                    alloc=_alloc_master, guide=_up_guide)
+                    alloc=_alloc_master, guide=_up_guide,
+                    budget=_up_budget)
                 master_imgs = _up_imgs
                 del _up_imgs
                 print(f"[{TAG}] {upsample_note}", flush=True)

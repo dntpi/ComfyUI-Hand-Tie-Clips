@@ -80,9 +80,7 @@ const GROUPS = [
                 // Panel order is reading order, not declaration order; the
                 // widget itself is declared last so a saved workflow keeps its
                 // indices. It belongs beside the schedule it replaces.
-                "refine_align",
-                // split only; declared last of all for the same reason.
-                "split_finish_aug"]],
+                "refine_align"]],
     // Its own group, not part of refine: boost changes how the hop is sampled.
     // The three LoRAs are combos on this node rather than loader nodes on the
     // canvas -- deliberately, to keep the graph short; the speed stack itself
@@ -95,7 +93,8 @@ const GROUPS = [
     // never what a hop is generated from, so it sits after every group that
     // does.
     ["upsample", ["upsample", "upsample_model", "upsample_megapixels",
-                  "upsample_denoise", "upsample_lora", "upsample_lora_strength"]],
+                  "upsample_denoise", "upsample_lora", "upsample_lora_strength",
+                  "upsample_tile_tokens"]],
     // Wrap every hop's finished prompt: LoRA trigger words first, a trailing
     // camera/body clause last, outside everything the chain adds.
     ["prompt wrap", ["prompt_prefix", "prompt_suffix"]],

@@ -131,46 +131,16 @@ def wiring_checks():
     ck("blend ramp not parsed under split",
        'if str(hop_refine) not in ("off", "split") else [])' in src)
     ck("finish guider uses the hop's own conditioning (the pin)",
-       "finish_cond = cond\n" in src
-       and 'BasicGuider, "the split finish guider",\n                            model=split_model, conditioning=finish_cond' in src)
-    ck("split_finish_aug: stock core key, set on the finish conditioning only",
-       "finish_cond = [[emb, dict(d, minimax_visual_cond_noise_aug=finish_aug)]" in src)
-    ck("split_finish_aug keyed only when moved off 0.999",
-       'if finish_aug < 0.999:\n                        hop_payload["refine"].append(' in src)
+       'BasicGuider, "the split finish guider",\n                            model=split_model, conditioning=cond' in src)
+    code = chr(10).join(ln.split("#", 1)[0] for ln in src.splitlines())
+    ck("split_finish_aug is gone from the code (removed 2026-10-06: 0.85 burnt late hops)",
+       "finish_aug" not in code and "minimax_visual_cond_noise_aug" not in code)
     ck("refine_model is sigma-shifted like the hops for the finish",
        '"the sigma shift (split refine_model)",\n                    model=refine_model' in src)
 
 
-def widget_checks(H3):
-    print("split_finish_aug widget")
-    import inspect
-    opt = H3.HandTieClips.INPUT_TYPES().get("optional") or {}
-    spec = opt.get("split_finish_aug")
-    ck("exists, FLOAT, default 0.999 (= split unchanged)",
-       spec is not None and spec[0] == "FLOAT" and spec[1].get("default") == 0.999)
-    ck("the last widget (only the upsample_dit socket after it)",
-       list(opt)[-2:] == ["split_finish_aug", "upsample_dit"])
-    ck("run() defaults it to 0.999",
-       inspect.signature(H3.HandTieClips.run).parameters["split_finish_aug"].default == 0.999)
-
-
-def aug_core_checks():
-    """What core does with the key, read from its source: every picture
-    condition (keyframes AND reference images) gets the noise and the label."""
-    print("core reads the key")
-    import comfy.ldm.minimax.model as mm
-    src = open(mm.__file__, encoding="utf-8").read()
-    ck("content: aug * r + (1 - aug) * noise on every cond video latent",
-       'aug = payload.get("visual_cond_noise_aug", VISUAL_COND_TIMESTEP)' in src
-       and "r = aug * r + (1.0 - aug) * noise" in src)
-    ck("label: cond AND ref_img rows get max(t_v, vis_aug)",
-       '"cond": max(t_v, vis_aug), "ref_img": max(t_v, vis_aug)' in src)
-
-
 def main():
     H3 = load_pack()
-    widget_checks(H3)
-    aug_core_checks()
     sigma_checks(H3)
     handoff_checks(H3)
     wiring_checks()

@@ -25,6 +25,10 @@ from .tiled_upsampler import (
     NODE_DISPLAY_NAME_MAPPINGS as _TILED_NAMES,
     register_folder as _tiled_register_folder,
 )
+from .video_upsampler import (
+    NODE_CLASS_MAPPINGS as _VIDEO_UP_NODES,
+    NODE_DISPLAY_NAME_MAPPINGS as _VIDEO_UP_NAMES,
+)
 from . import refmod as _refmod
 
 NODE_CLASS_MAPPINGS.update(_PREVIEW_NODES)
@@ -41,6 +45,8 @@ _refmod.register_folder()
 NODE_CLASS_MAPPINGS.update(_TILED_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_TILED_NAMES)
 _tiled_register_folder()
+NODE_CLASS_MAPPINGS.update(_VIDEO_UP_NODES)
+NODE_DISPLAY_NAME_MAPPINGS.update(_VIDEO_UP_NAMES)
 
 # The editor's dropdowns are served from directives.VOCAB rather than copied
 # into JS. A failure here costs the dropdowns their tooltips, not the node, so

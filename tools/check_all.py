@@ -57,6 +57,7 @@ CHECKS = [
     ("check_boost.py", []),
     ("check_tiled_upsampler.py", []),
     ("check_upscale_guide.py", []),
+    ("check_video_upsampler.py", []),
     ("check_speed_mode.py", []),
     ("check_restart_trim.py", []),
     ("check_shot_refs.py", []),

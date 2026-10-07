@@ -26,7 +26,7 @@ from h3p import h3_ref_chain as H3   # noqa: E402
 
 CORE = {"UNETLoader", "CLIPLoader", "VAELoader", "CreateVideo", "SaveVideo",
         "SaveImage", "Note", "MarkdownNote", "PreviewAny", "PreviewImage"}
-OURS = {"HandTieClips", "HTCChainPreview", "HTCSeamReport", "HTCH3Cache"}
+OURS = {"HandTieClips", "HTCChainPreview", "HTCH3Cache"}
 # Declared dependencies, not accidents: the turbo stack this node is actually
 # run with. Anything outside these three sets is a pack the reader never asked
 # for and must not appear in a shipped example.
@@ -70,7 +70,7 @@ def widget_names():
     """The flat widget list, in the order widgets_values is indexed by.
 
     A widget is any input whose type is a primitive or a combo AND which is not
-    marked `forceInput` -- `continuity_state` is a STRING but arrives on a wire.
+    marked `forceInput` (a STRING that arrives on a wire takes no slot).
     `seed` occupies TWO entries because the frontend appends
     control_after_generate directly after it.
     """

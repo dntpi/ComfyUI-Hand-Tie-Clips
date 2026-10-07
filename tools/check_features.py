@@ -15,7 +15,6 @@ Covers:
   * quality=draft      -- forces 0.3 MP and 6 steps
   * contact sheet      -- builds, and degrades to a placeholder rather than
                           raising
-  * seam report        -- recovers a planted step at the right frame index
   * over-delivery lint -- fires on the real pattern, stays quiet on the traps
 """
 from __future__ import annotations
@@ -67,7 +66,6 @@ def main():
     H3 = sys.modules["htcpack.h3_ref_chain"]
     T = sys.modules["htcpack.tone"]
     P = sys.modules["htcpack.plan"]
-    S = sys.modules["htcpack.seam"]
     SH = sys.modules["htcpack.sheet"]
 
     torch.manual_seed(0)
@@ -272,59 +270,6 @@ def main():
        tuple(SH.placeholder(737, 415).shape) == (1, 414, 736, 3))
     ck("small() shrinks a full frame",
        tuple(SH.small(torch.rand(736, 1280, 3)).shape)[0] == SH.THUMB_H)
-
-    # ----------------------------------------------------------- seam node
-    print("\nseam report")
-    total = 362 + 340 * 2
-    v = torch.full((total, 16, 16, 3), 0.50)
-    v[702:] -= 0.02
-    rows_, hop_len, _ = S.measure(v, 3, 22, 6)
-    ck("derives whole-frame hop length", abs(hop_len - 362.0) < 0.01, "%.2f" % hop_len)
-    ck("finds the seams at the right frames",
-       [r["at"] for r in rows_] == [362, 702], str([r["at"] for r in rows_]))
-    ck("reads the planted -5.1/255 step",
-       abs(rows_[1]["luma"] + 5.1) < 0.2 and rows_[1]["verdict"] == "VISIBLE",
-       "%+.2f/255 %s" % (rows_[1]["luma"], rows_[1]["verdict"]))
-    ck("calls the clean seam invisible", rows_[0]["verdict"] == "invisible")
-    ck("chart renders", S.chart(rows_).shape[1] > 50)
-
-    # A restart hop writes its FULL length instead of being trimmed, so a chain
-    # containing one has no single hop length to solve for. `seam_positions()`
-    # solves for one anyway and lands in the middle of hops: on a 4x192 chain
-    # restarting at hop 4 it estimates 198/373/548 where the joins are at
-    # 192/362/532. It does not merely misplace them -- it reports the real
-    # steps as "invisible", because there is nothing at the frames it looked
-    # at. That is a clean bill of health for a chain with visible seams.
-    print(chr(10) + "seam report: a restart chain")
-    r = torch.full((724, 16, 16, 3), 0.50)
-    for at, step in ((192, 0.06), (362, -0.05), (532, 0.04)):
-        r[at:] += step
-    est, _ = S.seam_positions(724, 4, 22)
-    ck("the uniform solve cannot describe a restart chain",
-       est != [192, 362, 532], str(est))
-    blind, _, _ = S.measure(r, 4, 22, 6)
-    ck("and reports the real steps as invisible",
-       all(x["verdict"] == "invisible" for x in blind),
-       "measured at " + str([x["at"] for x in blind]))
-
-    info = ("4 hops x 192f overlap 22 -> 724 frames" + chr(10) +
-            "seams: 192, 362, 532")
-    ck("the chain's info parses", S.seams_from_info(info) == [192, 362, 532])
-    ck("a missing seams line falls back, it does not raise",
-       S.seams_from_info("4 hops x 192f overlap 22") is None)
-    ck("garbage falls back", S.seams_from_info("seams: 192, banana") is None)
-    ck("out-of-order falls back", S.seams_from_info("seams: 362, 192") is None)
-
-    seen, _, _ = S.measure(r, 4, 22, 6, S.seams_from_info(info))
-    ck("wired, it measures the joins that were written",
-       [x["at"] for x in seen] == [192, 362, 532], str([x["at"] for x in seen]))
-    ck("and finds every planted step",
-       all(x["verdict"] == "VISIBLE" for x in seen),
-       ", ".join("%+.1f" % x["luma"] for x in seen))
-    ck("the info socket is optional, not a widget",
-       "info" in S.HTCSeamReport.INPUT_TYPES().get("optional", {})
-       and S.HTCSeamReport.INPUT_TYPES()["optional"]["info"][1].get("forceInput")
-       is True, "forceInput adds no widgets_values entry")
 
     # ------------------------------------------------------------- dry run
     print("\ndry_run / render_through / quality")

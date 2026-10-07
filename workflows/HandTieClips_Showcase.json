@@ -259,13 +259,6 @@
           "link": 4
         },
         {
-          "localized_name": "continuity_state",
-          "name": "continuity_state",
-          "shape": 7,
-          "type": "STRING",
-          "link": null
-        },
-        {
           "localized_name": "prompt",
           "name": "prompt",
           "type": "STRING",

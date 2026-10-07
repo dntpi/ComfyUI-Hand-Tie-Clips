@@ -325,7 +325,7 @@ def grade(path, want_hops=None):
             subs, {r["subject"] for r in refs if r["subject"] is not None})
         block = H3._assemble_next(
             resolved, live_picture=1, live_video=1, n_stills=len(active),
-            state_header="", identity_ordinals=id_ords, n_subjects=n_subj,
+            identity_ordinals=id_ords, n_subjects=n_subj,
             tail=(shot.get("directives") or {}).get("tail"), continuity=cont)
 
         pics = {int(m) for m in re.findall(r"<Picture (\d+)>", block)}

@@ -42,7 +42,7 @@ says which one each hop took.
 | **SWAP** | One-hop identity swap from a reference clip. Four named modes, so what *stays* with the clip is stated rather than left to omission. |
 | **A lossless hop cache** | Re-roll shot 5 of 8 and only 5–8 re-render. Resume after a crash. Hold about one hop in RAM instead of the whole film. |
 | **A lip-sync lock** | `master_audio_file` — one continuous take every hop locks to, delivered as a passthrough. |
-| **Instruments** | Dry run, contact sheet, seam report and a live preview panel, so you can find the hop that broke without scrubbing the file. |
+| **Instruments** | Dry run, contact sheet and a live preview panel, so you can find the hop that broke without scrubbing the file. |
 
 ---
 
@@ -447,8 +447,8 @@ and pumping.
 | 0.35 | 5.1 | 1.9 |
 | 0.60 | 2.9 | 2.6 |
 
-Both columns are **H3 Seam Report's own numbers**, so what you measure matches
-what this table says. Drift falls evenly — 45%, 62%, 78% of the uncorrected
+Both columns were measured with the H3 Seam Report (since retired; its chart is
+above). Drift falls evenly — 45%, 62%, 78% of the uncorrected
 slide. The seam does not: `0.15` pulls it *tighter* than the uncorrected chain
 and it grows from there. Hop 1 is byte-identical in all four. **0.35 is the
 default and stays** — it halves the drift while every seam still reads as
@@ -688,14 +688,6 @@ fix `H3 Ref2VA Chain`'s output: that node joins its hops internally and drops
 each hop's first `overlap` frames at the seam, so the regenerated copies this
 needs are already gone. Use the chain node's `tone_compensate` widget instead.
 
-**H3 Seam Report** — `report` (STRING) + `chart` (IMAGE). **Ships wired on the
-Starter canvas.** Wire the chain's `info` into it as well as `images`: with a
-restart in the chain the hop lengths are no longer uniform, and the `hops` /
-`overlap` widgets cannot describe that. It measures the brightness step at every
-join, says whether each is invisible / marginal / visible, and totals the
-chain's cumulative drift. A single reading includes whatever the scene did
-across the cut, so treat one number as an upper bound.
-
 **H3 Cache** — `MODEL` in, `MODEL` out. Drop it on the model wire before the
 chain node. It reuses MiniMax-H3's whole-block-stack residual on steps whose
 features have barely moved, which is what makes the **non-turbo** base fast
@@ -719,10 +711,6 @@ only setting is `megapixels` (2 by default, aspect kept; 1.5-2 is the usual rang
 [LBH-123-AI/Minimax_h3_latent_Upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
 in `models/latent_upscale_models`.
 
-**H3 Continuity State** — `continuity_state` (STRING) out. **Setting only**:
-`setting_locked` / `setting_context` / `setting_mutable`. Characters belong in
-`ref_plan`.
-
 ### Limits
 
 - **Texture still ratchets on long chains.** Stay around **3–5 hops** until that
@@ -733,7 +721,6 @@ in `models/latent_upscale_models`.
 - The reference `desc` and subject `locked` text go to the encoder verbatim,
   every hop. A detail that is not in the photograph is **asked for**, not
   ignored. Describe what you actually wired.
-- `HTCContinuityState` is setting only; the `characters_*` fields were removed
   because filling in both injected identity text twice.
 - Each join hard-cuts video but crossfades audio ~40 ms, so A/V drifts ~40 ms
   per hop.

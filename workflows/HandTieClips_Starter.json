@@ -259,13 +259,6 @@
           "link": 4
         },
         {
-          "localized_name": "continuity_state",
-          "name": "continuity_state",
-          "shape": 7,
-          "type": "STRING",
-          "link": null
-        },
-        {
           "localized_name": "prompt",
           "name": "prompt",
           "type": "STRING",
@@ -529,8 +522,7 @@
           "type": "IMAGE",
           "slot_index": 0,
           "links": [
-            5,
-            20
+            5
           ]
         },
         {
@@ -921,118 +913,6 @@
       "title": "Contact sheet"
     },
     {
-      "id": 36,
-      "type": "HTCSeamReport",
-      "pos": [
-        2991.7,
-        1100.0
-      ],
-      "size": [
-        340,
-        130
-      ],
-      "flags": {},
-      "order": 107,
-      "mode": 0,
-      "title": "H3 Seam Report - measure the joins",
-      "inputs": [
-        {
-          "localized_name": "images",
-          "name": "images",
-          "type": "IMAGE",
-          "link": 20
-        }
-      ],
-      "outputs": [
-        {
-          "localized_name": "report",
-          "name": "report",
-          "type": "STRING",
-          "slot_index": 0,
-          "links": [
-            21
-          ]
-        },
-        {
-          "localized_name": "chart",
-          "name": "chart",
-          "type": "IMAGE",
-          "slot_index": 1,
-          "links": [
-            22
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "HTCSeamReport"
-      },
-      "widgets_values": [
-        2,
-        22,
-        6
-      ]
-    },
-    {
-      "id": 37,
-      "type": "PreviewAny",
-      "pos": [
-        3400.0,
-        1100.0
-      ],
-      "size": [
-        400,
-        300
-      ],
-      "flags": {},
-      "order": 108,
-      "mode": 0,
-      "title": "Seam numbers",
-      "inputs": [
-        {
-          "localized_name": "source",
-          "name": "source",
-          "type": "*",
-          "link": 21
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewAny",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 38,
-      "type": "PreviewImage",
-      "pos": [
-        3400.0,
-        1450.0
-      ],
-      "size": [
-        400,
-        320
-      ],
-      "flags": {},
-      "order": 109,
-      "mode": 0,
-      "title": "Seam chart",
-      "inputs": [
-        {
-          "localized_name": "images",
-          "name": "images",
-          "type": "IMAGE",
-          "link": 22
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": []
-    },
-    {
       "id": 30,
       "type": "LTX_lora_loader",
       "pos": [
@@ -1404,30 +1284,6 @@
       7,
       3,
       35,
-      0,
-      "IMAGE"
-    ],
-    [
-      20,
-      7,
-      0,
-      36,
-      0,
-      "IMAGE"
-    ],
-    [
-      21,
-      36,
-      0,
-      37,
-      0,
-      "STRING"
-    ],
-    [
-      22,
-      36,
-      1,
-      38,
       0,
       "IMAGE"
     ],

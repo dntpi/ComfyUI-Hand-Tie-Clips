@@ -130,7 +130,7 @@ for fn in ("HandTieClips_Starter.json", "HandTieClips_Showcase.json"):
                        if r["subject"] is not None}) if refs else ""
             block = H3._assemble_next(
                 resolved, live_picture=1, live_video=1,
-                n_stills=len(active), state_header="",
+                n_stills=len(active),
                 identity_ordinals=id_ords, n_subjects=n_subj,
                 tail=(shot.get("directives") or {}).get("tail"),
                 continuity=cont)

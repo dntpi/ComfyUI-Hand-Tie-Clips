@@ -600,20 +600,6 @@ def _parse_shots(text):
     return parts or [text]
 
 
-def _parse_state(text):
-    """continuity_state input: blank -> no-op, else a JSON object (from HTCContinuityState)."""
-    text = (text or "").strip()
-    if not text:
-        return {}
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"{TAG}: continuity_state looks like JSON but does not parse ({e})") from e
-    if not isinstance(data, dict):
-        raise ValueError(f"{TAG}: continuity_state must be a JSON object")
-    return data
-
-
 def _continue_prompt(block):
     """Wrap a verbatim-mode block as a continuation.
 
@@ -647,38 +633,6 @@ def _expand_shots(blocks, chains, hop_script="verbatim"):
         wrap = i > 0 and (unique == 1 or i >= unique)
         out.append(_continue_prompt(block) if wrap else block)
     return out, unique
-
-
-def _state_entry_text(entry, hop_index):
-    """locked (verbatim) + context (current-state) + this hop's mutable beat."""
-    if not isinstance(entry, dict):
-        return ""
-    locked = str(entry.get("locked") or "").strip()
-    context = str(entry.get("context") or "").strip()
-    mutable = entry.get("mutable") or []
-    if isinstance(mutable, str):
-        mutable = _parse_shots(mutable) if mutable.strip() else []
-    mutable = [str(b).strip() for b in mutable if str(b).strip()]
-    beat = ""
-    if mutable:
-        idx = hop_index if hop_index < len(mutable) else len(mutable) - 1
-        beat = mutable[idx]
-    return "\n".join(p for p in (locked, context, beat) if p)
-
-
-def _state_header(state, hop_index):
-    """Compose the continuity_state block for this hop (locked/context every hop, mutable indexed)."""
-    if not state:
-        return ""
-    sections = []
-    setting_text = _state_entry_text(state.get("setting") or {}, hop_index)
-    if setting_text:
-        sections.append("setting:\n" + setting_text)
-    for char_id, entry in (state.get("characters") or {}).items():
-        char_text = _state_entry_text(entry, hop_index)
-        if char_text:
-            sections.append(f"character {char_id}:\n" + char_text)
-    return "\n\n".join(sections)
 
 
 def _identity_lock(n_stills, live_picture, identity_ordinals=None, n_subjects=None):
@@ -760,7 +714,7 @@ def _live_cite(live_picture, live_video):
 
 
 def _assemble_next(beat, live_picture=None, live_video=None,
-                   n_stills=0, state_header="",
+                   n_stills=0,
                    identity_ordinals=None, n_subjects=None, tail=None,
                    continuity="", retention="", wardrobe=False, refvid=""):
     """Hop 2+ in `next` mode: user text is only the new beat."""
@@ -783,8 +737,6 @@ def _assemble_next(beat, live_picture=None, live_video=None,
     # subject_definitions block, and putting one here made hop 2 a second
     # Ref2VA generate (chain_00033, the short drink beat). The call site passes
     # nothing, and there is no parameter to pass.
-    header = str(state_header or "").strip()
-    top = header + "\n\n" if header else ""
     # Labelled blocks lead, prose follows -- the same shape hop 1 gets from
     # subject_prose. Deliberately NOT folded into `inject`: that is space-joined
     # into a single paragraph, and retention_analysis is a multi-line block that
@@ -854,7 +806,6 @@ def _assemble_next(beat, live_picture=None, live_video=None,
     text = re.sub(
         r"(?m)^(overall_soundscape|non_diegetic_music):\s*", "", text).strip()
     return (
-        f"{top}"
         f"{ret_block}"
         "The clip opens already in progress from the pinned frames. "
         "The incoming arrangement holds for a short beat -- breath, a weight "
@@ -2558,13 +2509,6 @@ class HandTieClips:
                                 "adds its last frame as a picture; pin clip adds the overlap as a short "
                                 "video."),
                 }),
-                "continuity_state": ("STRING", {
-                    "multiline": True,
-                    "default": "",
-                    "forceInput": True,
-                    "tooltip": ("Optional text from HTC Continuity State. The reference register replaces "
-                                "it; leave unwired."),
-                }),
                 "shot_plan": ("STRING", {
                     "multiline": True,
                     "default": "",
@@ -2678,9 +2622,6 @@ class HandTieClips:
                 # every widget after it, and a workflow saved before the change
                 # reads its own settings out of the wrong slots. Silently: the
                 # numbers all still parse, they are just the wrong numbers.
-                "soundtrack": ("AUDIO", {
-                    "tooltip": "Optional music under the whole chain, mixed in at the end.",
-                }),
                 "music_gain_db": ("FLOAT", {
                     "default": -14.0, "min": -60.0, "max": 6.0, "step": 0.5,
                     "tooltip": "Music level. -14 sits under speech; -6 is music-led.",
@@ -2703,8 +2644,7 @@ class HandTieClips:
                 # in the panel. LAST, per the note at the top of this block.
                 "soundtrack_file": ("STRING", {
                     "default": "",
-                    "tooltip": ("A music file for the soundtrack. Set it on the MEDIA tab. A wired "
-                                "soundtrack wins."),
+                    "tooltip": "A music file for the soundtrack. Set it on the MEDIA tab.",
                 }),
                 # Trim windows, appended 2026-09-01 -- LAST, per the note at
                 # the top of this block. Six floats rather than one JSON blob
@@ -3083,8 +3023,7 @@ class HandTieClips:
         "Motion-Context, falling back to an AddGuide pixel pin when that is "
         "unavailable. Author with shot_plan + ref_plan; hop_script=next treats "
         "later blocks as what-happens-next; pin_to_qwen shows the incoming frame "
-        "to the text encoder; continuity_state (from HTCContinuityState) carries "
-        "locked/context setting text forward."
+        "to the text encoder."
     )
 
     @classmethod
@@ -3134,13 +3073,13 @@ class HandTieClips:
             aspect, duration, overlap, seed, seed_per_shot, steps,
             sampler_name, scheduler, shift_video, shift_audio, ref_image_size,
             start_image_file="", reference_video_file="", voice_file="",
-            hop_script="verbatim", pin_to_qwen="last frame", continuity_state="",
+            hop_script="verbatim", pin_to_qwen="last frame",
             shot_plan="", ref_plan="", cache_hops="off", cache_budget_gb=20.0,
             audio_pin_frames=24, pin_renorm="off", pin_noise=0.0,
             tone_compensate="off", establish=None,
             render_through=0, quality="final", dry_run="off",
             contact_sheet="off", tone_anchor=_tone.ANCHOR_STRENGTH,
-            soundtrack=None, music_gain_db=-14.0, music_duck=0.6,
+            music_gain_db=-14.0, music_duck=0.6,
             music_fit="loop", music_fade_s=1.0, soundtrack_file="",
             voice_start_s=0.0, voice_end_s=0.0,
             reference_video_start_s=0.0, reference_video_end_s=0.0,
@@ -3379,7 +3318,6 @@ class HandTieClips:
                     f"{TAG}: shot {i + 1}: overlap {overlap} ({overlap_n} frames) must "
                     f"be smaller than duration ({ln} frames)"
                 )
-        state = _parse_state(continuity_state)
         # The three singles first, so a name that does not resolve is reported
         # before anything expensive starts. Each returns exactly what the socket
         # it replaced delivered, so everything downstream is unchanged.
@@ -3456,7 +3394,7 @@ class HandTieClips:
                             ("start_image", start_image_file and start_image is None),
                             ("reference_video", reference_video_file and reference_video is None),
                             ("voice", voice_file and voice is None),
-                            ("soundtrack", soundtrack_file and soundtrack is None
+                            ("soundtrack", soundtrack_file
                              and _media.resolve(soundtrack_file, kinds={"audio"}) is None)):
             if _got:
                 print(f"[{TAG}] note: {_name} file could not be read; continuing "
@@ -3648,21 +3586,6 @@ class HandTieClips:
                                  if _v is not None))
             for _w in _refs.check(ref_plan_obj, _wired_slots):
                 print(f"[{TAG}] note: {_w}", flush=True)
-            # ref_plan subjects and a `characters` block in continuity_state
-            # both feed the prompt header, so filling in both injects identity
-            # prose twice. HTCContinuityState no longer emits characters, so this
-            # can only come from hand-authored JSON -- still worth warning about
-            # rather than raising, since the setting half stays useful.
-            _chars = sorted(
-                cid for cid, c in (state.get("characters") or {}).items()
-                if (c or {}).get("locked") or (c or {}).get("context")
-                or (c or {}).get("mutable")
-            )
-            if ref_subjects and _chars:
-                print(f"[{TAG}] note: ref_plan defines subject(s) "
-                      f"{sorted(ref_subjects)} and continuity_state also carries "
-                      f"character(s) {_chars}. Both inject identity text -- drop "
-                      f"the characters block and keep setting only.", flush=True)
         ref_images = _collect_ref_images(slot_images)
         base_videos, base_video_audios = {}, {}
         for _v, _a in _vid_slots:
@@ -4331,7 +4254,6 @@ class HandTieClips:
                 block = block.rstrip() + "\n\n" + refvid_line
             if str(hop_script) == "next" and not hop_is_start:
                 n_stills = len(base_images or {})
-                hop_state_header = _state_header(state, i)
                 # With a register wired, only the subject-bearing refs are
                 # identities; a setting or prop plate must not be declared one.
                 id_ords = None
@@ -4396,7 +4318,6 @@ class HandTieClips:
                     live_picture=live_p,
                     live_video=live_v,
                     n_stills=n_stills,
-                    state_header=hop_state_header,
                     identity_ordinals=id_ords,
                     n_subjects=n_subj,
                     tail=(shot.get("directives") or {}).get("tail"),
@@ -4408,7 +4329,6 @@ class HandTieClips:
                 print(f"[{TAG}] hop {i + 1} next-beat assembled "
                       f"(Picture {live_p}, Video {live_v}, "
                       f"{len(id_ords or [])} identity stills of {n_stills}, "
-                      f"state_header {len(hop_state_header)} chars, "
                       f"continuity {len(hop_continuity)} chars, "
                       f"retention {len(hop_retention)} chars"
                       f"{', wardrobe plate' if hop_wardrobe else ''})",
@@ -5492,17 +5412,13 @@ class HandTieClips:
         # cannot move a generated frame or sample -- it only decides what is
         # laid over them. It also means a cached chain can be re-mixed at a
         # different level for the price of the mix alone.
-        # The socket wins over the picker when both are set. A wire is a
-        # deliberate act; a filename left in the panel from an earlier take is
-        # not, and silently preferring the stale one would be the worse guess.
-        _bed = soundtrack
-        if _bed is None and soundtrack_file:
+        # The music comes from `soundtrack_file` (the MEDIA picker). A wired
+        # AUDIO socket used to sit beside it; removed 2026-10-07 as a duplicate.
+        _bed = None
+        if soundtrack_file:
             _bed = _media.load_audio(soundtrack_file,
                                      start=float(music_start_s),
                                      end=float(music_end_s))
-        elif _bed is not None and soundtrack_file:
-            print(f"[{TAG}] soundtrack: using the wired socket, not "
-                  f"{soundtrack_file!r}", flush=True)
         if _bed is not None and master_wav is not None:
             try:
                 master_wav, _mnote = _music.apply(
@@ -5534,65 +5450,6 @@ class HandTieClips:
         return (master_imgs, master_audio, info, sheet)
 
 
-class HTCContinuityState:
-    """Author locked/context/mutable *setting* text once; HandTieClips consumes it per hop.
-
-    locked and context ride every hop 2+ unchanged. mutable is --- delimited like the
-    prompt field: one beat per hop, padded by repeating the last block if there are
-    fewer blocks than hops.
-
-    Setting only. Characters live in `ref_plan`'s reference register, which is
-    the only thing that knows a photograph is a face rather than a room. This
-    node used to carry `characters_*` as well, so filling in both it and the
-    register injected identity prose twice into every hop 2+ -- run() warned
-    about that collision rather than preventing it. With the character half
-    gone the collision is structurally impossible.
-    """
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {},
-            "optional": {
-                "setting_locked": ("STRING", {
-                    "multiline": True, "default": "",
-                    "tooltip": "Setting text (place, lighting) repeated on every hop after the first.",
-                }),
-                "setting_context": ("STRING", {
-                    "multiline": True, "default": "",
-                    "tooltip": ("Current setting text, less fixed than locked, repeated on every hop after "
-                                "the first."),
-                }),
-                "setting_mutable": ("STRING", {
-                    "multiline": True, "default": "",
-                    "tooltip": "Per-hop setting text, separated by ---.",
-                }),
-            },
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("continuity_state",)
-    FUNCTION = "run"
-    CATEGORY = "Hand Tie Clips"
-    DESCRIPTION = (
-        "Builds a JSON continuity-state blob (locked/context/mutable) for the "
-        "*setting* only, feeding HandTieClips's continuity_state input. "
-        "hop_script=next only. Characters belong in ref_plan's register."
-    )
-
-    def run(self, setting_locked="", setting_context="", setting_mutable=""):
-        state = {
-            "setting": {
-                "locked": setting_locked.strip(),
-                "context": setting_context.strip(),
-                "mutable": _parse_shots(setting_mutable) if setting_mutable.strip() else [],
-            },
-        }
-        return (json.dumps(state),)
-
-
-
-
 # -- pre-rename ids ----------------------------------------------------------
 # A plain alias in NODE_CLASS_MAPPINGS keeps old workflows loading, but it also
 # lists the node a second time in search: ComfyUI falls back to the mapping key
@@ -5606,17 +5463,10 @@ class _LegacyH3RefChain(HandTieClips):
     DEPRECATED = True
 
 
-class _LegacyH3ContinuityState(HTCContinuityState):
-    DEPRECATED = True
-
-
 NODE_CLASS_MAPPINGS = {
     "HandTieClips": HandTieClips,
-    "HTCContinuityState": HTCContinuityState,
     "H3RefChain": _LegacyH3RefChain,
-    "H3ContinuityState": _LegacyH3ContinuityState,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "HandTieClips": "H3 Ref2VA Chain",
-    "HTCContinuityState": "H3 Continuity State",
 }

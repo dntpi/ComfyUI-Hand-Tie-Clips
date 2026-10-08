@@ -301,6 +301,8 @@
 }
 
 .h3e-beat { width: 100%; background: var(--h3-sunken); }
+/* pin_mech=hand_tie: the previs line under each beat. */
+.h3e-moment { margin-top: 4px; border-left: 2px solid var(--h3-accent, #6aa0ff); font-style: italic; }
 
 /* -- Simple mode: the prompt widget drawn in the SCRIPT tab ---------------- */
 

@@ -96,7 +96,8 @@ ck("plain moments sit on their window: 00:00.000, 00:05.667, 00:08.500",
                            "At 00:08.500 <Subject 1> lifts")))
 ck("a speaking moment is led in so the window lands mid-line (window B 2.833 -> 1.833)",
    "At 00:01.833 <Subject 1> turns to the window" in text, text)
-ck("the closing line leads into window E (11.333 -> 10.333)", "At 00:10.333 <Subject 1> chops again" in text)
+ck("the closing line is placed to end with the previs (11.333 + 0.917 - 2.0 = 10.250)",
+   "At 00:10.250 <Subject 1> chops again" in text, text[-160:])
 no_moment = HT.compile_previs([{"beat": "First thing. Second thing."}, {"beat": "Third. Fourth."}], [192, 192])[0]
 ck("without moments: each beat's first sentence, and the last beat's last sentence",
    no_moment == "At 00:00.000 First thing. At 00:02.833 Third. At 00:05.667 Fourth.", no_moment)
@@ -106,6 +107,33 @@ rep = [dict(plan[0]), dict(plan[1])]
 rep[1]["beat"] = "(S1) finishes, <d>[English] the snow will stop by noon.</d> She leans on the sill."
 ck("a beat repeating its head window's line is flagged", len(HT.crossing_lints(rep)) == 1, HT.crossing_lints(rep))
 ck("the plan that writes the line once is clean", HT.crossing_lints(plan) == [])
+
+print("\nthe crossing line, split between the two hops that share its window")
+split = HT.split_crossing(plan)
+ck("hop 1 ends on the line's opening up to the window, cut by core's <|cutoff|> token",
+   split[0]["beat"].endswith("<d>[English] I keep thinking the<|cutoff|></d>"), split[0]["beat"][-90:])
+ck("hop 2 picks the same sentence up from the start of the window",
+   split[1]["beat"].startswith("<Subject 1> (S1) continues the same sentence, <d>[English] thinking the snow "
+                               "will stop by noon.</d>"), split[1]["beat"][:110])
+ck("the last hop gets the moment_end line whole",
+   split[3]["beat"].endswith("<d>[English] Right. Soup won't make itself.</d>"), split[3]["beat"][-80:])
+ck("the input shots are not modified", "<d>" not in plan[0]["beat"] and "continues" not in plan[1]["beat"])
+ck("a moment without a line changes nothing",
+   HT.split_crossing([{"beat": "a"}, {"beat": "b", "moment": "she turns."}])[0]["beat"] == "a")
+ck("<|cutoff|> is a special token in core's H3 tokenizer",
+   '"<|cutoff|>"' in open(os.path.join(os.path.dirname(os.path.dirname(HERE)), "comfy", "text_encoders",
+                                       "minimax.py"), encoding="utf-8").read())
+
+import shutil, subprocess  # noqa: E401,E402
+node = shutil.which("node")
+if node:
+    r = subprocess.run([node, os.path.join(HERE, "tools", "check_hand_tie_plan.mjs")],
+                       capture_output=True, text=True)
+    _out = (r.stdout + r.stderr).strip().splitlines()
+    ck("the editor round-trips moment / moment_end (tools/check_hand_tie_plan.mjs)", r.returncode == 0,
+       _out[-1] if _out else "")
+else:
+    print("  skip the editor round-trip: Node is not on PATH")
 
 print("\ntone match")
 torch.manual_seed(0)

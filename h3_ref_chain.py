@@ -2603,10 +2603,12 @@ class HandTieClips:
                     "tooltip": ("draft renders small and fast to check the story and the joins. final is "
                                 "the real render."),
                 }),
-                "dry_run": (["off", "on"], {
+                "dry_run": (["off", "on", "previs"], {
                     "default": "off",
                     "tooltip": ("Build every prompt without rendering, to check what each hop will send. "
-                                "Read them on the info output."),
+                                "Read them on the info output. previs (pin_mech=hand_tie): render only "
+                                "each section's previs and output it, to check it before the hops; it "
+                                "is cached, so the full run then skips it."),
                 }),
                 "contact_sheet": (["off", "on"], {
                     "default": "off",
@@ -3134,6 +3136,15 @@ class HandTieClips:
             print(f"[{TAG}] writer unload skipped ({_le!r})", flush=True)
 
         dry = str(dry_run) == "on"
+        # pin_mech=hand_tie: render each section's previs, output it, render no
+        # hop. Everything a hop is, the previs is too, so this is the cheap look
+        # at the one generate the whole section is tied to (chain_00135's previs
+        # split between two kitchens and every hop followed it).
+        previs_only = str(dry_run) == "previs"
+        if previs_only and str(pin_mech) != "hand_tie":
+            raise ValueError(
+                f"{TAG}: dry_run=previs needs pin_mech=hand_tie: only hand-tie "
+                "renders a previs.")
         draft = str(quality) == "draft"
         want_sheet = str(contact_sheet) == "on" or dry
         if draft:
@@ -3182,7 +3193,8 @@ class HandTieClips:
                 # Every hop is tied to the previs, not to the hop before it, so
                 # every hop is a start: its own refs, its own subject prose, no
                 # continuation airlock and no `join` sentence.
-                blocks = [_d.compile_shot(s, 0, establish) for s in shots]
+                blocks = [_d.compile_shot(s, 0, establish)
+                          for s in _ht.split_crossing(shots)]
                 for _w in _ht.crossing_lints(shots):
                     print(f"[{TAG}] note: {_w}", flush=True)
             unique = len(shots)
@@ -3769,7 +3781,7 @@ class HandTieClips:
         # Upsample: the tiled upsampler's recipe once over the finished film,
         # after the last hop. Refused NOW if the upscaler file is missing,
         # rather than after every hop has rendered.
-        upsample_on = str(upsample) == "on" and not dry
+        upsample_on = str(upsample) == "on" and not dry and not previs_only
         upsample_hops = []
         upsample_guide_factor = 0
         if upsample_on:
@@ -3948,7 +3960,8 @@ class HandTieClips:
         # A dry run must not allocate the master. At 8 x 15 s and 1280x736 that
         # is 2742 full float frames -- ~31 GB -- for a feature whose entire
         # point is that it costs seconds.
-        master_imgs = None if dry else _alloc_master(total_frames, height, width)
+        master_imgs = (None if (dry or previs_only)
+                       else _alloc_master(total_frames, height, width))
         write_pos = 0
         # Where each join actually landed. Recorded rather than derived,
         # because it can no longer BE derived: `seam.seam_positions()` solves
@@ -4106,6 +4119,7 @@ class HandTieClips:
         ht_previs_raw = []
         ht_windows = {}      # section -> (window pictures, window sounds)
         ht_previs_info = []
+        ht_previs_media = []
         if ht:
             for _si, _sec in enumerate(_ht.sections(shots)):
                 _frames = [lengths[j] for j in _sec]
@@ -4245,6 +4259,8 @@ class HandTieClips:
                              "sample_rate": _p_sr})
             ht_windows[_si] = (pics, snds)
             ht_previs_info.append((_si + 1, _p_len, _lay["windows"], pblock))
+            if previs_only:
+                ht_previs_media.append((_p_imgs, _p_wav, _p_sr))
 
         assembled = []
         for i, block in enumerate(blocks):
@@ -4675,6 +4691,9 @@ class HandTieClips:
 
             if ht and ht_pos[i][0] not in ht_windows:
                 _ht_previs(i)
+            if previs_only:
+                pbar.update(1)
+                continue
 
             # Key this hop. prev_key makes the key chained, so editing shot 1
             # invalidates every hop after it -- correct, and the reason the UI
@@ -5485,6 +5504,27 @@ class HandTieClips:
                       }})
             del imgs, wav, audio
             pbar.update(1)
+
+        if previs_only:
+            _imgs = torch.cat([m[0] for m in ht_previs_media], dim=0)
+            _sr = int(ht_previs_media[0][2])
+            _wav = torch.cat([m[1] for m in ht_previs_media], dim=-1)
+            head = (f"PREVIS ONLY - {len(ht_previs_media)} section(s), "
+                    f"{int(_imgs.shape[0])} frames ({_imgs.shape[0] / FPS:.1f}s) at "
+                    f"{int(width)}x{int(height)}. No hop rendered; "
+                    + ("the previs is cached, so the full run (dry_run=off) skips it."
+                       if hop_store is not None else
+                       "cache_hops is off, so the full run renders the previs again. "
+                       "Turn cache_hops on to reuse this one."))
+            print(f"[{TAG}] {head}", flush=True)
+            _sep = chr(10) * 2
+            info = head + _sep + _sep.join(
+                "===== hand-tie previs %d (%d frames, windows at %s) =====\n%s" % row
+                for row in ht_previs_info)
+            _push_preview(unique_id, "previs done", hop=n, total=n, frac=1.0,
+                          frame=_imgs[-1], meta={"done": True})
+            return (_imgs, {"waveform": _wav, "sample_rate": _sr}, info,
+                    _sheet.placeholder(width, height))
 
         if dry:
             _span = (str(lengths[0]) if len(set(lengths)) == 1

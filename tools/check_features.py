@@ -360,6 +360,22 @@ def main():
        H3.HandTieClips.INPUT_TYPES()["required"]["pin_mech"][0][-1] == "hand_tie"
        if "pin_mech" in H3.HandTieClips.INPUT_TYPES()["required"]
        else H3.HandTieClips.INPUT_TYPES()["optional"]["pin_mech"][0][-1] == "hand_tie")
+    try:
+        run(dry_run="previs")
+        ck("dry_run=previs is refused without pin_mech=hand_tie", False, "accepted")
+    except ValueError as e:
+        ck("dry_run=previs is refused without pin_mech=hand_tie", "pin_mech=hand_tie" in str(e), str(e)[:70])
+    oc, _ = run(shot_plan=json.dumps({"shots": [
+        {"beat": "She chops.", "duration": "8 s"},
+        {"beat": "She leans on the sill.", "duration": "8 s",
+         "moment": "She turns and (S1) says, <d>[English] I keep thinking the snow will stop by noon.</d>"}]}),
+        pin_mech="hand_tie", duration="8 s")
+    _h1 = oc[2].split("===== hop 1 prompt =====")[1].split("===== hop 2 prompt =====")[0]
+    _h2 = oc[2].split("===== hop 2 prompt =====")[1]
+    ck("hand_tie: hop 1's prompt ends the crossing line with <|cutoff|>",
+       "<d>[English] I keep thinking the<|cutoff|></d>" in _h1, _h1[-120:])
+    ck("hand_tie: hop 2's prompt continues the same sentence",
+       "continues the same sentence, <d>[English] thinking the snow will stop by noon.</d>" in _h2, _h2[:200])
     ck("plan keeps moment / moment_end only when written",
        "moment" in P.parse_plan(json.dumps(ht_plan))[1]
        and "moment" not in P.parse_plan(json.dumps(ht_plan))[0]

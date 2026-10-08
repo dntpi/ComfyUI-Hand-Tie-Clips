@@ -64,6 +64,11 @@ export function parsePlan(text) {
         refs: Array.isArray(s.refs)
             ? s.refs.map((t) => String(t).replace(/^@/, "").trim()).filter(Boolean)
             : null,
+        // pin_mech=hand_tie's previs fields. Round-tripped for the same reason
+        // as tone/anchor/refs: a field this list drops is deleted by the next
+        // edit of any card.
+        moment: String(s.moment || ""),
+        moment_end: String(s.moment_end || ""),
     }));
 }
 
@@ -84,6 +89,8 @@ export function planToJson(shots) {
         // Write [] as well as a filled list: omitting it would turn
         // "explicit none" into "register default" on the next save.
         if (Array.isArray(s.refs)) o.refs = s.refs;
+        if (s.moment) o.moment = s.moment;
+        if (s.moment_end) o.moment_end = s.moment_end;
         return o;
     });
     return JSON.stringify({ shots: out }, null, 2);
@@ -617,6 +624,36 @@ export function createPlanEditor(node, { onChange }) {
         beat.addEventListener("input", () => { shot.beat = beat.value; writeWidget(); });
         beat.addEventListener("change", () => { writeWidget(); onChange?.(); });
         body.appendChild(beat);
+
+        // pin_mech=hand_tie: the previs is compiled from these, so they sit
+        // under the beat rather than in `advanced`. Not drawn in other modes,
+        // where nothing reads them (a written value is kept either way).
+        if (String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie") {
+            const momentBox = (key, placeholder, hint) => {
+                const t = el("textarea", "h3e-beat h3e-moment");
+                t.rows = 2;
+                t.value = shot[key] || "";
+                t.placeholder = placeholder;
+                t.title = hint;
+                t.addEventListener("input", () => { shot[key] = t.value; writeWidget(); });
+                t.addEventListener("change", () => { writeWidget(); onChange?.(); });
+                return t;
+            };
+            body.appendChild(momentBox("moment",
+                index === 0
+                    ? "moment: the film's first frame (blank = the beat's first sentence)"
+                    : "moment: what is on screen as this hop starts (blank = the beat's first sentence)",
+                "hand-tie: the previs shows this at the start of this hop, and this hop and the one "
+                + "before it are tied to it. A pose and a place, one sentence. A spoken line that "
+                + "crosses the join goes here, once, as <d>[English] ...</d> -- the node splits it "
+                + "between the two hops. Do not repeat it in the beat."));
+            if (index === shots.length - 1) {
+                body.appendChild(momentBox("moment_end",
+                    "moment end: what is on screen as the film ends (blank = the beat's last sentence)",
+                    "hand-tie: the previs ends on this, and the last hop is tied to it. A line here "
+                    + "is spoken so that it ends with the film."));
+            }
+        }
 
         // directive row
         const dirs = el("div", "h3e-dirs");

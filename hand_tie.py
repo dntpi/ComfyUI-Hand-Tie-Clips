@@ -141,25 +141,98 @@ def moments(shots):
     return out
 
 
+def _lead_s(spoken_s):
+    """How far ahead of its window a crossing line starts."""
+    return min(LEAD_MAX_S, spoken_s / 2.0)
+
+
 def compile_previs(shots, hop_frames, fps=FPS):
     """The previs's timed description: `At MM:SS.mmm <moment>` per window.
 
     A moment that carries a spoken line starts ahead of its window, by half the
     line (at most LEAD_MAX_S), so the window lands inside the line rather than at
     its first word: both hops tied to that window then share the middle of the
-    sentence, and each says its own end of it.
+    sentence, and each says its own end of it. A line in the closing moment
+    instead ENDS where the previs ends, so the film's last hop finishes it.
     """
     lay = layout(hop_frames)
     rows = []
-    for k, (w, m) in enumerate(zip(lay["windows"], moments(shots))):
+    ms = moments(shots)
+    for k, (w, m) in enumerate(zip(lay["windows"], ms)):
         if not m:
             continue
         t = w / float(fps)
         sp = _spoken_s(m)
-        if sp:
-            t = max(0.0, t - min(LEAD_MAX_S, sp / 2.0))
+        if sp and k == len(ms) - 1:
+            t = max(0.0, (w + WINDOW) / float(fps) - sp)
+        elif sp:
+            t = max(0.0, t - _lead_s(sp))
         rows.append("At %s %s" % (_stamp(t), m))
     return " ".join(rows), lay
+
+
+_SID = re.compile(r"\(S\d+\)")
+_WHO = re.compile(r"@[A-Za-z0-9_]+|<Subject \d+>")
+CUTOFF = "<|cutoff|>"       # core's tokenizer special token (comfy/text_encoders/minimax.py)
+
+
+def _line_parts(moment):
+    """(text before the line, language tag, words) of a moment's first spoken line."""
+    m = _D.search(moment or "")
+    if not m:
+        return None
+    inner = m.group(1).strip()
+    tag = _TAG.match(inner)
+    lang = tag.group(0).strip() if tag else ""
+    words = _TAG.sub("", inner).split()
+    return moment[:m.start()].strip(), lang, words
+
+
+def split_crossing(shots, fps=FPS):
+    """Shots with every crossing line written into the two hops that share it.
+
+    A spoken line in shot k's `moment` (k > 0) straddles window k, which both
+    hop k-1 (its last 22 frames) and hop k (its first 22) are tied to. Neither
+    beat contains those words, so without this each hop invents its half: the
+    node's first run garbled the line on both sides (chain_00134). Hop k-1 now
+    ends on the line's opening words up to the end of the window, cut by core's
+    `<|cutoff|>` token ("speech truncated by the end of the video"); hop k picks
+    the same sentence up from the start of the window. The film keeps hop k-1's
+    copy of the window, so the sentence plays once. A line in the last shot's
+    `moment_end` is appended whole to the last hop, which the previs ends on.
+
+    Returns copies; the input shots are not modified. Shot 0's `moment` is the
+    film's first frame and is left to the beat.
+    """
+    out = [dict(s or {}) for s in shots or []]
+    per_s = 1.0 / SPEECH_WPS
+    n_win = max(1, int(round(WINDOW / float(fps) / per_s)))
+    for k in range(1, len(out)):
+        parts = _line_parts(out[k].get("moment"))
+        if not parts:
+            continue
+        prefix, lang, words = parts
+        if not words:
+            continue
+        n_before = int(round(_lead_s(len(words) * per_s) / per_s))
+        head = " ".join(words[:min(len(words), n_before + n_win)])
+        rest = " ".join(words[min(n_before, len(words) - 1):])
+        sid = _SID.search(prefix)
+        who = _WHO.search(prefix)
+        speaker = ("%s %s" % (who.group(0) if who else "", sid.group(0) if sid else "")).strip()
+        lead = (prefix + " " if prefix else "")
+        out[k - 1]["beat"] = ("%s %s<d>%s %s%s</d>" % (
+            str(out[k - 1].get("beat") or "").rstrip(), lead, lang, head, CUTOFF)).strip()
+        out[k]["beat"] = ("%s continues the same sentence, <d>%s %s</d> %s" % (
+            speaker or "The speaker", lang, rest, str(out[k].get("beat") or "").lstrip())).strip()
+    if out:
+        parts = _line_parts(out[-1].get("moment_end"))
+        if parts and parts[2]:
+            prefix, lang, words = parts
+            out[-1]["beat"] = ("%s %s<d>%s %s</d>" % (
+                str(out[-1].get("beat") or "").rstrip(), (prefix + " ") if prefix else "",
+                lang, " ".join(words))).strip()
+    return out
 
 
 def crossing_lints(shots):

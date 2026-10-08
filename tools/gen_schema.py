@@ -141,6 +141,16 @@ def build():
                                     "drop identity stills on a pin-less "
                                     "restart. A filled list is those tags "
                                     "only, in that order."},
+            "moment": {"type": "string",
+                       "description": "pin_mech=hand_tie only: what is on screen "
+                                      "as this hop starts, a pose and a place in "
+                                      "one sentence. A spoken line that crosses "
+                                      "into this hop goes here, once, and not in "
+                                      "the beat. Omit otherwise."},
+            "moment_end": {"type": "string",
+                           "description": "pin_mech=hand_tie, last shot only: what "
+                                          "is on screen as the section ends. Omit "
+                                          "otherwise."},
         },
     }
     assert set(shot["properties"]) == set(p._SHOT_KEYS), (

@@ -180,7 +180,7 @@ def main():
        "refined_for_pin = _latent_cpu(_ref)" in src
        and "this_sampled = (refined_for_pin" in src)
     ck("the refine runs before the decode",
-       src.index("_refine_sampled(") < src.index("_decode_av(vae"))
+       src.index("_refine_sampled(") < src.index("imgs, audio = _decode_av(vae"))
     ck("the master-audio replacement still runs after it",
        src.index("_refine_sampled(") < src.index("_slice_take_audio(locked"))
 

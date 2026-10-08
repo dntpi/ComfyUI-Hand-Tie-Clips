@@ -84,6 +84,7 @@ from . import planner as _planner
 from . import refine_blend as _rblend
 from . import tiled_upsampler as _tu
 from . import upscale_guide as _ug
+from . import hand_tie as _ht
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
 # told could drift apart.
@@ -2706,10 +2707,12 @@ class HandTieClips:
                 # anywhere but the end silently reassigns every later value in
                 # every saved workflow. Adding options to an existing combo is
                 # safe; adding a widget is not.
-                "pin_mech": (["auto", "motion_context", "addguide"], {
+                "pin_mech": (["auto", "motion_context", "addguide", "hand_tie"], {
                     "default": "auto",
                     "tooltip": ("How hops are joined. auto uses Motion-Context when available, AddGuide "
-                                "otherwise. Forcing one fails rather than falling back."),
+                                "otherwise. Forcing one fails rather than falling back. hand_tie renders one "
+                                "previs per section and ties every hop to it at both ends, so no hop reads "
+                                "another and texture does not compound (needs a shot plan, overlap 0.9 s)."),
                 }),
                 # APPENDED, never inserted -- see the note above `pin_mech`.
                 "tone_anchor_ref": (["hop1", "still"], {
@@ -3175,6 +3178,13 @@ class HandTieClips:
             except Exception:
                 _rp_for_check = None
             blocks = _plan.compile_blocks(shots, establish, _rp_for_check)
+            if str(pin_mech) == "hand_tie":
+                # Every hop is tied to the previs, not to the hop before it, so
+                # every hop is a start: its own refs, its own subject prose, no
+                # continuation airlock and no `join` sentence.
+                blocks = [_d.compile_shot(s, 0, establish) for s in shots]
+                for _w in _ht.crossing_lints(shots):
+                    print(f"[{TAG}] note: {_w}", flush=True)
             unique = len(shots)
             print(f"[{TAG}] shot plan:\n" + _plan.describe(shots), flush=True)
             for i, sh in enumerate(shots):
@@ -3298,6 +3308,20 @@ class HandTieClips:
         # any sampling, so a forced setting fails on the queue rather than three
         # hops in. The per-hop one (no sampler latent) cannot be known here and
         # is raised by _pin_mech_for at the hop it affects.
+        if str(pin_mech) == "hand_tie":
+            if not shots:
+                raise ValueError(
+                    f"{TAG}: pin_mech=hand_tie needs a shot plan: its previs is "
+                    "compiled from the shots (their beats, or `moment` where set). "
+                    "Switch the editor to Shots, or use pin_mech=auto.")
+            if str(master_audio_file or "").strip():
+                raise ValueError(
+                    f"{TAG}: pin_mech=hand_tie does not take master_audio_file yet: "
+                    "it pins each window's previs sound. Clear master_audio_file, or "
+                    "use pin_mech=auto.")
+            _ht_errors = _ht.settings_errors(overlap_n, last_frame_guide, shots, lengths)
+            if _ht_errors:
+                raise ValueError(f"{TAG}: " + " ".join(_ht_errors))
         if str(pin_mech) == "motion_context":
             if _motion_context_cls() is None:
                 raise ValueError(
@@ -3496,7 +3520,8 @@ class HandTieClips:
             for _i, _blk in enumerate(blocks):
                 _sh = shots[_i] if _i < len(shots) else None
                 _sh = _sh or {}
-                _start = _i == 0 or str(_sh.get("anchor") or "") == "restart"
+                _start = (_i == 0 or str(_sh.get("anchor") or "") == "restart"
+                          or str(pin_mech) == "hand_tie")
                 if _sh.get("refs") is not None:
                     _on = _refs.select_for_shot(ref_plan_refs, _sh["refs"], _wired_slots)
                 else:
@@ -4071,6 +4096,156 @@ class HandTieClips:
                   + _tone.anchor_note(anchor_ref), flush=True)
         sheet_rows = []
 
+        # pin_mech=hand_tie: one previs per section, compiled here, rendered at
+        # the section's first hop (it needs that hop's refs and assembly), cut
+        # into 22-frame windows that guide every hop of the section at both ends.
+        # See hand_tie.py.
+        ht = str(pin_mech) == "hand_tie"
+        ht_pos = {}          # hop index -> (section, position in it)
+        ht_layouts = []
+        ht_previs_raw = []
+        ht_windows = {}      # section -> (window pictures, window sounds)
+        ht_previs_info = []
+        if ht:
+            for _si, _sec in enumerate(_ht.sections(shots)):
+                _frames = [lengths[j] for j in _sec]
+                _text, _lay = _ht.compile_previs([shots[j] for j in _sec], _frames, FPS)
+                _first, _last = shots[_sec[0]] or {}, shots[_sec[-1]] or {}
+                _dirs = {a: v for a, v in (_first.get("directives") or {}).items()
+                         if a in ("camera", "framing", "pace") and v}
+                _tail = (_last.get("directives") or {}).get("tail")
+                if _tail:
+                    _dirs["tail"] = _tail
+                ht_previs_raw.append(_d.compile_shot({"beat": _text, "directives": _dirs},
+                                                     0, establish))
+                ht_layouts.append(_lay)
+                for _k, _j in enumerate(_sec):
+                    ht_pos[_j] = (_si, _k)
+                print(f"[{TAG}] hand-tie section {_si + 1}: hops {_sec[0] + 1}-{_sec[-1] + 1}, "
+                      f"previs {_lay['previs']}f, windows at {_lay['windows']}", flush=True)
+            if tone_on or anchor_on:
+                print(f"[{TAG}] hand-tie: tone_compensate={tone_mode} is replaced by the "
+                      f"hand-tie tone match (each hop pulled onto its windows)", flush=True)
+
+        def _ht_previs(i):
+            """Render (or load) the hand-tie previs for hop i's section, and cut it
+            into windows. Called at the section's first hop, after that hop's
+            prompt is assembled: the previs carries the same references, subject
+            prose, voices and prefix/suffix, so it is assembled the same way,
+            from those same values (read here at call time)."""
+            _si = ht_pos[i][0]
+            _lay = ht_layouts[_si]
+            pblock = ht_previs_raw[_si]
+            if ref_plan_refs:
+                pblock = _refs.resolve_tags(
+                    pblock, hop_ords, _refs.subjects(ref_plan_refs),
+                    where=f"hand-tie previs {_si + 1}",
+                    declared={r["tag"] for r in ref_plan_refs},
+                    subject_names=None, video_map=video_ords)
+            if hop_subject_prose and not _d.is_full_h3_prompt(pblock):
+                pblock = hop_subject_prose + "\n\n" + pblock
+            if refvid_line and not _d.is_full_h3_prompt(pblock):
+                pblock = pblock.rstrip() + "\n\n" + refvid_line
+            if _voice_ord and f"<Audio {_voice_ord}>" not in pblock:
+                pblock = (pblock.rstrip() + f"\n\nThe speaker's voice follows "
+                          f"<Audio {_voice_ord}> as a timbre reference.")
+            if _bindings:
+                _pst = ([_m.start() for _m in re.finditer(r"<d>", pblock)]
+                        + [_a for _a, _b in _planner.spoken_spans(pblock)])
+                pblock = _refs.bind_voices(pblock, _bindings, _pst)
+            if _pre:
+                pblock = _pre + " " + pblock.lstrip()
+            if _suf:
+                pblock = pblock.rstrip() + " " + _suf
+
+            _sh = shots[i] or {}
+            _p_seed = ((int(_sh["seed"]) if _sh.get("seed") is not None
+                        else ((int(seed) + i) if seed_per_shot else int(seed)))
+                       + _ht.PREVIS_SEED_OFFSET)
+            _p_steps = int(_sh.get("steps") or steps)
+            _p_len = int(_lay["previs"])
+            _p_key = None
+            _hit = None
+            if hop_store is not None:
+                _p_key = _store.hop_key(None, {
+                    "chain": chain_salt, "previs": pblock, "len": _p_len,
+                    "seed": _p_seed, "steps": _p_steps,
+                    "refs": {k: _store.tensor_digest(t)
+                             for k, t in sorted((hop_images or {}).items())},
+                    "videos": {k: _store.tensor_digest(t)
+                               for k, t in sorted((hop_videos or {}).items())},
+                    "audios": {k: _store.audio_digest(a)
+                               for k, a in sorted((hop_ref_audios or {}).items())},
+                    "start": _store.tensor_digest(start_image),
+                })
+                _hit = hop_store.get(_p_key)
+            if _hit is not None:
+                _p_imgs, _p_wav, _p_sr, _ = _hit
+                print(f"[{TAG}] hand-tie previs {_si + 1}: loaded from cache "
+                      f"({int(_p_imgs.shape[0])}f, key {_p_key[:8]})", flush=True)
+            else:
+                print(f"[{TAG}] hand-tie previs {_si + 1}: rendering {_p_len}f "
+                      f"(seed {_p_seed}, {_p_steps} steps)", flush=True)
+                _push_preview(unique_id, f"previs {_si + 1} sampling…", hop=i + 1, total=n)
+                packed = _core_call(
+                    MiniMaxH3ReferenceToVideo, "the hand-tie previs",
+                    clip=clip, vae=vae, audio_vae=audio_vae, prompt=pblock,
+                    width=int(width), height=int(height), length=_p_len,
+                    ref_image_size=ref_image_size, ref_images=hop_images,
+                    ref_videos=hop_videos,
+                    ref_video_audios=(hop_video_audios or None),
+                    ref_audios=hop_ref_audios,
+                )
+                _pc, _pl = _result(packed)[0], _result(packed)[1]
+                if refmod_image_blocks or refmod_video_blocks:
+                    _pc = _refmod.splice_blocks(
+                        _pc, hop_images, hop_videos,
+                        refmod_image_blocks, refmod_video_blocks)
+                if start_image is not None and (i == 0 or str(_sh.get("anchor") or "") == "restart"):
+                    # The section opens on the photograph, so window A does.
+                    _pc = _result(_core_call(
+                        MiniMaxH3AddGuide, "the previs start image",
+                        positive=_pc, latent=_pl, frame_idx=0,
+                        vae=vae, audio_vae=None, image=start_image[:1], audio=None,
+                    ))[0]
+                _offload_text_encoder(clip, model)
+                if _p_steps not in sigma_cache:
+                    sigma_cache[_p_steps] = _result(_core_call(
+                        BasicScheduler, "the sigma schedule",
+                        model=model, scheduler=scheduler, steps=_p_steps,
+                        denoise=1.0))[0]
+                _pg = _result(_core_call(BasicGuider, "the previs guider",
+                                         model=model, conditioning=_pc))[0]
+                _pn = _result(_core_call(RandomNoise, "the previs noise",
+                                         noise_seed=_p_seed))[0]
+                _ps = _result(_core_call(
+                    SamplerCustomAdvanced, "the previs sampler",
+                    noise=_pn, guider=_pg, sampler=sampler,
+                    sigmas=sigma_cache[_p_steps], latent_image=_pl))[0]
+                _p_imgs, _p_audio = _decode_av(vae, audio_vae, _ps)
+                _p_imgs = _p_imgs.contiguous().cpu()
+                _p_wav = _p_audio["waveform"].contiguous().cpu()
+                _p_sr = int(_p_audio["sample_rate"])
+                del _pc, _pl, _pg, _pn, _ps, packed
+                mm.soft_empty_cache()
+                if hop_store is not None:
+                    hop_store.put(_p_key, _p_imgs, _p_wav, _p_sr,
+                                  {"previs": _si + 1, "block": pblock[:400]})
+            if int(_p_imgs.shape[0]) < _p_len:
+                raise ValueError(
+                    f"{TAG}: hand-tie previs {_si + 1} decoded {int(_p_imgs.shape[0])} "
+                    f"frames, {_p_len} planned.")
+            pics, snds = [], []
+            for w in _lay["windows"]:
+                pics.append(_p_imgs[w:w + _ht.WINDOW].clone())
+                _a0, _ad = _ht.window_audio(w)
+                _s0 = int(round(_a0 * _p_sr))
+                _s1 = _s0 + int(round(_ad * _p_sr))
+                snds.append({"waveform": _p_wav[..., _s0:_s1].contiguous(),
+                             "sample_rate": _p_sr})
+            ht_windows[_si] = (pics, snds)
+            ht_previs_info.append((_si + 1, _p_len, _lay["windows"], pblock))
+
         assembled = []
         for i, block in enumerate(blocks):
             mm.throw_exception_if_processing_interrupted()
@@ -4088,6 +4263,13 @@ class HandTieClips:
             # told it continues from pinned frames it does not have.
             hop_restart = i > 0 and str(shot.get("anchor") or "") == "restart"
             hop_is_start = i == 0 or hop_restart
+            # Whether the master drops this hop's first `overlap` frames. Equal
+            # to `not hop_is_start` except under hand_tie, where every hop is
+            # ASSEMBLED as a start (it reads no other hop) yet still overlaps its
+            # predecessor by one window and is cut inside it.
+            hop_trims = i > 0 and not hop_restart
+            if ht:
+                hop_is_start = True
             if hop_restart:
                 print(f"[{TAG}] hop {i + 1}: ANCHOR RESTART -- start image is "
                       f"frame 0, the previous hop is not relayed", flush=True)
@@ -4491,6 +4673,9 @@ class HandTieClips:
                 pbar.update(1)
                 continue
 
+            if ht and ht_pos[i][0] not in ht_windows:
+                _ht_previs(i)
+
             # Key this hop. prev_key makes the key chained, so editing shot 1
             # invalidates every hop after it -- correct, and the reason the UI
             # must show staleness before queuing or it reads as a bug.
@@ -4501,7 +4686,8 @@ class HandTieClips:
             # there is no mechanism left to pick. Asking for motion_context on
             # a restart hop is not a contradiction to raise on, it is a setting
             # that does not reach this hop.
-            pin_mech_pred = ("none" if hop_restart
+            pin_mech_pred = ("hand_tie" if ht
+                             else "none" if hop_restart
                              else _pin_mech_for(i, overlap_n, prev_sampled,
                                                 mode=str(pin_mech)))
             pin_mech_used = pin_mech_pred
@@ -4655,8 +4841,17 @@ class HandTieClips:
                     hop_payload["boost"] = [
                         [[nm, round(s, 4)] for nm, s in boost_loras],
                         BOOST_EXTEND, BOOST_SPLIT]
+                if ht:
+                    # The two windows, not the previous hop: a hand-tie hop reads
+                    # nothing from its predecessor, so editing an earlier beat
+                    # leaves it cached, and a new previs moves both digests.
+                    _si, _k = ht_pos[i]
+                    _wp, _ws = ht_windows[_si]
+                    hop_payload.update(_ht.hop_key_fields(
+                        _store.tensor_digest(_wp[_k]), _store.tensor_digest(_wp[_k + 1]),
+                        _store.audio_digest(_ws[_k]), _store.audio_digest(_ws[_k + 1])))
                 hop_key = _store.hop_key(
-                    None if hop_restart else prev_key, hop_payload)
+                    None if (hop_restart or ht) else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
                 # changed -- that is the point of locking. The content key would
                 # have moved, so the pointer is what finds it.
@@ -4673,7 +4868,7 @@ class HandTieClips:
                         # brightness, not its content. Entries written before
                         # `prev_key` was recorded are not judged.
                         _pm = hop_store.meta(pinned) or {}
-                        if (not hop_restart and "prev_key" in _pm
+                        if (not hop_restart and not ht and "prev_key" in _pm
                                 and _pm["prev_key"] != prev_key):
                             unpaired_joins.append(i + 1)
                             print(f"[{TAG}] WARNING: hop {i + 1} is locked, but "
@@ -4768,7 +4963,22 @@ class HandTieClips:
                 # every branch below rebinds `cond`.
                 base_cond = cond
 
-                if (i == 0 or hop_restart) and start_image is not None:
+                if ht:
+                    # Window k at frame 0, window k+1 at the last 22 frames,
+                    # picture and sound together. Nothing from the previous hop.
+                    _si, _k = ht_pos[i]
+                    _wp, _ws = ht_windows[_si]
+                    for _fi, _w in ((0, _k), (-_ht.WINDOW, _k + 1)):
+                        cond = _result(_core_call(
+                            MiniMaxH3AddGuide, "the hand-tie window",
+                            positive=cond, latent=latent, frame_idx=_fi,
+                            vae=vae, audio_vae=audio_vae,
+                            image=_wp[_w], audio=_ws[_w],
+                        ))[0]
+                    pin_mech_used = "hand_tie"
+                    print(f"[{TAG}] hop {i + 1}: hand-tie, windows {_k + 1} and {_k + 2} "
+                          f"of section {_si + 1} (picture + sound)", flush=True)
+                elif (i == 0 or hop_restart) and start_image is not None:
                     # A restart hop is a chain start. It gets the photograph as
                     # its frame-0 anchor exactly as hop 1 does, and NOTHING from
                     # the previous hop reaches it -- no sampler latent, no
@@ -5042,7 +5252,7 @@ class HandTieClips:
                     hop_store.put(hop_key, imgs, wav, sr,
                                   {"hop": i + 1, "of": n, "block": block[:400],
                                    "pin_mech": pin_mech_used,
-                                   "prev_key": None if hop_restart else prev_key},
+                                   "prev_key": None if (hop_restart or ht) else prev_key},
                                   latent=this_sampled)
                     hop_store.set_pointer(
                         str(shot.get("id") or f"shot{i + 1}"), hop_key)
@@ -5061,7 +5271,16 @@ class HandTieClips:
             # previous hop's ALREADY CORRECTED tail, so the whole chain lands on
             # hop 1's tone.
             tone_note = ""
-            if tone_on:
+            if ht:
+                # Both hops at a join land on the same window's tone, so the cut
+                # meets on one level (lab: 1.7 -> 0.6 /255 at the worst join).
+                _si, _k = ht_pos[i]
+                _wp, _ws = ht_windows[_si]
+                imgs, (_ho, _to) = _ht.tone_match(imgs, _wp[_k], _wp[_k + 1])
+                tone_note = ("hand-tie head " + "/".join("%+.1f" % (float(v) * 255) for v in _ho)
+                             + ", tail " + "/".join("%+.1f" % (float(v) * 255) for v in _to) + " /255")
+                print(f"[{TAG}] hop {i + 1} tone: {tone_note}", flush=True)
+            if tone_on and not ht:
                 if i > 0 and prev_imgs is not None:
                     imgs, tone_note = _tone.compensate(
                         prev_imgs, imgs, tone_mode, overlap_n)
@@ -5077,7 +5296,7 @@ class HandTieClips:
             # above. It runs here for the same reason that one does: `prev_imgs`
             # is taken below, so correcting now is what stops the drift feeding
             # the next hop rather than merely repainting the master.
-            if anchor_on:
+            if anchor_on and not ht:
                 shot_tone = str(shot.get("tone") or "")
                 if i == 0 and not anchor_from_still:
                     anchor_ref = _tone.anchor_stats(imgs)
@@ -5108,7 +5327,7 @@ class HandTieClips:
                         print(f"[{TAG}] hop {i + 1} tone: {anchor_note}",
                               flush=True)
 
-            if hop_is_start:
+            if not hop_trims:
                 keep_n = int(imgs.shape[0])
                 if write_pos + keep_n > total_frames:
                     raise ValueError(
@@ -5161,8 +5380,8 @@ class HandTieClips:
                     "video": (_up[0] if _up and len(_up) == 2 else None),
                     "audio": (_up[1] if _up and len(_up) == 2 else None),
                     "cond": up_cond,
-                    "start": bool(hop_is_start),
-                    "drop": 0 if hop_is_start else int(overlap_n),
+                    "start": not hop_trims,
+                    "drop": int(overlap_n) if hop_trims else 0,
                     "frames": int(keep_n),
                     # pin_only caches the REFINED latent, not the delivered one
                     "stand_in": bool(cached is not None
@@ -5175,7 +5394,7 @@ class HandTieClips:
                 # (hop 1 or a restart) gives all of them, a continuation
                 # gives what survives the overlap trim. Showing imgs[0] on
                 # a continuation would show a frame the master never contains.
-                _f0 = imgs[0] if hop_is_start else imgs[overlap_n]
+                _f0 = imgs[overlap_n] if hop_trims else imgs[0]
                 _row_seed = (int(shot["seed"]) if shot.get("seed") is not None
                              else ((int(seed) + i) if seed_per_shot else int(seed)))
                 sheet_rows.append({
@@ -5383,6 +5602,10 @@ class HandTieClips:
         # what each hop sent to the text encoder.
         _sep = '\n\n'
         info = info + _sep + _sep.join('===== hop %d prompt =====\n%s' % (k, t) for k, t in assembled)
+        if ht_previs_info:
+            info = info + _sep + _sep.join(
+                '===== hand-tie previs %d (%d frames, windows at %s) =====\n%s' % row
+                for row in ht_previs_info)
         # `info` is the third return (Preview Text). Never send it as the
         # preview status — that strip is ~22 px and will render the dump.
         _v_secs = float(master_imgs.shape[0]) / FPS

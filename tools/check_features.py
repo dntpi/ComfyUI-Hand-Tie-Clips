@@ -327,6 +327,44 @@ def main():
     ck("audio is silent, not None", out[1]["waveform"].abs().max() == 0)
     ck("info carries every compiled prompt", out[2].count("===== hop") == 8)
     ck("contact sheet is built on a dry run", out[3].shape[1] > 100)
+    # pin_mech=hand_tie: every hop compiled as a start, sections logged, and the
+    # refusals that have to fire on the queue before anything samples.
+    ht_plan = {"shots": [
+        {"beat": "She chops herbs. She sets the knife down.", "duration": "8 s"},
+        {"beat": "She leans on the sill.", "duration": "8 s",
+         "moment": "She turns to the window and (S1) says, <d>[English] The snow again.</d>"},
+        {"beat": "She sips from the mug.", "duration": "8 s"},
+        {"beat": "She chops again.", "duration": "8 s", "moment_end": "She chops, smiling."}]}
+    oh, log_h = run(shot_plan=json.dumps(ht_plan), pin_mech="hand_tie", duration="8 s")
+    ck("hand_tie: dry run compiles every hop", oh[2].count("===== hop") == 4)
+    # (A restart opens a second section; the geometry of that is pinned in
+    # check_hand_tie.py. Here a restart would also need a start image or refs.)
+    ck("hand_tie: the section is logged with its previs geometry",
+       "hand-tie section 1: hops 1-4, previs 294f, windows at [0, 68, 136, 204, 272]" in log_h,
+       log_h[-600:])
+    ck("hand_tie: no hop is assembled as a continuation (no next-beat airlock)",
+       "next-beat assembled" not in log_h)
+    for label, kw, needle in (
+            ("needs overlap 0.9 s", {"overlap": "0.2 s"}, "needs overlap 0.9 s"),
+            ("refuses last_frame_guide", {"last_frame_guide": "before_restart"}, "last_frame_guide"),
+            ("refuses master_audio_file", {"master_audio_file": "x.wav"}, "master_audio_file"),
+            ("refuses a section past 362 frames",
+             {"shot_plan": json.dumps({"shots": [{"beat": "x", "duration": "8 s"}] * 6})}, "anchor=restart")):
+        try:
+            run(**dict({"shot_plan": json.dumps(ht_plan), "pin_mech": "hand_tie",
+                        "duration": "8 s"}, **kw))
+            ck("hand_tie: " + label, False, "accepted")
+        except ValueError as e:
+            ck("hand_tie: " + label, needle in str(e), str(e)[:90])
+    ck("hand_tie is the last pin_mech option (appended, never inserted)",
+       H3.HandTieClips.INPUT_TYPES()["required"]["pin_mech"][0][-1] == "hand_tie"
+       if "pin_mech" in H3.HandTieClips.INPUT_TYPES()["required"]
+       else H3.HandTieClips.INPUT_TYPES()["optional"]["pin_mech"][0][-1] == "hand_tie")
+    ck("plan keeps moment / moment_end only when written",
+       "moment" in P.parse_plan(json.dumps(ht_plan))[1]
+       and "moment" not in P.parse_plan(json.dumps(ht_plan))[0]
+       and "moment_end" in P.parse_plan(json.dumps(ht_plan))[3])
+
     ou, log_u = run(upsample="on", upsample_megapixels=2.0)
     ck("upsample does nothing on a dry run",
        ou[2].count("===== hop") == 8 and tuple(ou[0].shape) == (1, 736, 1280, 3)

@@ -28,6 +28,9 @@ Shot fields (all optional except `beat`):
                 without changing the rest of the chain. A list is those tags
                 only, in that order.
     id          stable identifier, generated if absent
+    moment      pin_mech=hand_tie: what is on screen as this hop starts (a pose and
+                a place; may carry a <d> line that crosses the join into this hop)
+    moment_end  pin_mech=hand_tie, last shot: what is on screen as the section ends
 """
 
 import json
@@ -41,7 +44,10 @@ TAG = "HandTieClips"
 # rail for this hop, including the empty list. The editor round-trips it;
 # dropping it on save was how the field died the first time.
 _SHOT_KEYS = {"id", "beat", "directives", "prose",
-              "seed", "steps", "duration", "locked", "tone", "anchor", "refs"}
+              "seed", "steps", "duration", "locked", "tone", "anchor", "refs",
+              # pin_mech=hand_tie only: the frame at the start of this hop, and
+              # (last shot) at the end of it. See hand_tie.compile_previs.
+              "moment", "moment_end"}
 
 
 TONE_VALUES = ("", "free", "rebase")
@@ -197,6 +203,10 @@ def _norm_shot(raw, i):
         "tone": _tone_field(raw.get("tone"), where),
         "anchor": _anchor_field(raw.get("anchor"), where),
         "refs": _refs_field(raw.get("refs"), where),
+        # Present only when written, so a plan without them parses to the
+        # same dict it always did.
+        **{k: str(raw[k]).strip() for k in ("moment", "moment_end")
+           if str(raw.get(k) or "").strip()},
     }
 
 

@@ -4856,6 +4856,7 @@ class HandTieClips:
                 # changed -- that is the point of locking. The content key would
                 # have moved, so the pointer is what finds it.
                 shot_name = str(shot.get("id") or f"shot{i + 1}")
+                content_key = hop_key
                 if shot.get("locked"):
                     pinned = hop_store.get_pointer(shot_name)
                     if pinned:
@@ -4868,6 +4869,17 @@ class HandTieClips:
                         # brightness, not its content. Entries written before
                         # `prev_key` was recorded are not judged.
                         _pm = hop_store.meta(pinned) or {}
+                        if ht and "ht_windows" in _pm and _pm["ht_windows"] != [
+                                hop_payload["head"], hop_payload["tail"]]:
+                            # A hand-tie hop's join partners are its windows. A
+                            # locked hop tied to another previs meets this run's
+                            # neighbours on frames it never saw.
+                            unpaired_joins.append(i + 1)
+                            print(f"[{TAG}] WARNING: hop {i + 1} is locked, but it was "
+                                  f"tied to a different previs than this run's. Its "
+                                  f"joins were never generated with these neighbours. "
+                                  f"Unlock it to render it against this previs.",
+                                  flush=True)
                         if (not hop_restart and not ht and "prev_key" in _pm
                                 and _pm["prev_key"] != prev_key):
                             unpaired_joins.append(i + 1)
@@ -4884,6 +4896,21 @@ class HandTieClips:
                               f"render yet; rendering it once", flush=True)
                 hop_keys.append(hop_key)
                 cached = hop_store.get(hop_key)
+                if (cached is not None and locked_served
+                        and tuple(cached[0].shape[1:3]) != (int(height), int(width))):
+                    # A lock outranks the content key, not the canvas. Served at
+                    # another size it cannot be written into this master, and
+                    # under hand_tie its windows would not match (2026-10-09:
+                    # hop 1 locked at 512p, re-queued at 768p).
+                    print(f"[{TAG}] hop {i + 1} is locked, but its render is "
+                          f"{int(cached[0].shape[2])}x{int(cached[0].shape[1])} and this "
+                          f"run is {int(width)}x{int(height)}; rendering it again at "
+                          f"this size", flush=True)
+                    cached = None
+                    locked_served = False
+                    hop_key = content_key
+                    hop_keys[-1] = hop_key
+                    cached = hop_store.get(hop_key)
                 if i < replay_before and cached is None:
                     # Name the hop. "Cache miss" on its own sends people to the
                     # temp folder to count files; what they need to know is
@@ -5252,7 +5279,9 @@ class HandTieClips:
                     hop_store.put(hop_key, imgs, wav, sr,
                                   {"hop": i + 1, "of": n, "block": block[:400],
                                    "pin_mech": pin_mech_used,
-                                   "prev_key": None if (hop_restart or ht) else prev_key},
+                                   "prev_key": None if (hop_restart or ht) else prev_key,
+                                   **({"ht_windows": [hop_payload["head"], hop_payload["tail"]]}
+                                      if ht else {})},
                                   latent=this_sampled)
                     hop_store.set_pointer(
                         str(shot.get("id") or f"shot{i + 1}"), hop_key)

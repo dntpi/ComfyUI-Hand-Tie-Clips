@@ -5327,6 +5327,13 @@ class HandTieClips:
                 imgs, (_ho, _to) = _ht.tone_match(imgs, _wp[_k], _wp[_k + 1])
                 tone_note = ("hand-tie head " + "/".join("%+.1f" % (float(v) * 255) for v in _ho)
                              + ", tail " + "/".join("%+.1f" % (float(v) * 255) for v in _to) + " /255")
+                if hop_trims and prev_imgs is not None:
+                    # What tone_match leaves at the cut itself, faded out over a
+                    # second after it (chain_00141 flickered 3/255 at two joins).
+                    imgs, _step = _ht.seam_blend(prev_imgs, imgs, overlap_n)
+                    if _step is not None:
+                        tone_note += (", seam " + "/".join("%+.1f" % (float(v) * 255) for v in _step)
+                                      + " /255 faded over 1 s")
                 print(f"[{TAG}] hop {i + 1} tone: {tone_note}", flush=True)
             if tone_on and not ht:
                 if i > 0 and prev_imgs is not None:

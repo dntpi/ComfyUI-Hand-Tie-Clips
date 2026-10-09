@@ -324,6 +324,61 @@ def tone_match(images, head, tail=None, frames=WINDOW):
     return (images + off.view(n, 1, 1, -1)).clamp(0.0, 1.0), (head_off, tail_off)
 
 
+SEAM_FADE = 24           # frames (1 s) over which the residual step is faded out
+SEAM_STILL = 4.0 / 255   # a pixel is "still" if it moves less than this on both sides
+SEAM_MIN_STILL = 0.05    # below this share of still pixels the step is not trusted
+
+
+def seam_step(prev_tail, images, start, still=SEAM_STILL):
+    """The level step across a cut, measured on pixels that are still on both sides.
+
+    A whole-frame mean confuses motion with tone: on chain_00141 it read 2.4 /255 at
+    a join whose background did not move at all, and 0.3 at one whose background
+    stepped 2 /255. The median left-minus-right difference over pixels that hold
+    still across the two frames before AND the two after the cut is the level shift
+    alone. -> (step [C], share of still pixels), step None when too few are still.
+    """
+    import torch  # noqa: PLC0415
+    a2, a1 = prev_tail[-2].float(), prev_tail[-1].float()
+    b0, b1 = images[start].float(), images[start + 1].float()
+    mask = ((a1 - a2).abs().amax(-1) < still) & ((b1 - b0).abs().amax(-1) < still)
+    share = float(mask.float().mean())
+    if share < SEAM_MIN_STILL:
+        return None, share
+    return (a1 - b0)[mask].median(dim=0).values, share
+
+
+def seam_blend(prev_tail, images, start, fade=SEAM_FADE):
+    """Remove the level step left at a cut, fading it out after the cut.
+
+    tone_match pulls each hop onto its windows by a ramp fitted over 22-frame
+    spans, which is right on average and can still leave a few /255 between the
+    last frame kept of hop k and the first frame kept of hop k+1 (chain_00141: a
+    still-pixel step of 4 /255 at join 1 and 2 at join 3, seen as a brightness
+    flicker). The step (`seam_step`) is added to hop k+1 at the cut and faded
+    linearly to nothing over `fade` frames: invisible as a drift, gone as a step.
+    Post only: hand-tie hops read no other hop, so nothing is generated from these
+    pixels.
+
+    prev_tail [>=2,H,W,C] the last frames delivered before the cut; images the
+    whole hop, its first delivered frame at `start`. -> (images, step per channel)
+    """
+    import torch  # noqa: PLC0415
+    n = int(images.shape[0])
+    if prev_tail is None or int(prev_tail.shape[0]) < 2 or start + 1 >= n:
+        return images, None
+    step, _share = seam_step(prev_tail, images, start)
+    if step is None:
+        return images, None
+    span = min(int(fade), n - start)
+    w = torch.linspace(1.0, 0.0, span + 1)[:span]
+    out = images.clone()
+    out[start:start + span] = (out[start:start + span]
+                               + (w.view(-1, 1, 1, 1) * step.view(1, 1, 1, -1)).to(out.dtype)
+                               ).clamp(0.0, 1.0)
+    return out, step
+
+
 # --- what hand-tie refuses, and what it keys ------------------------------------
 
 def settings_errors(overlap_frames, last_frame_guide="off", shots=None, hop_frames=None):

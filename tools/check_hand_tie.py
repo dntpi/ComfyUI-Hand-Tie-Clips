@@ -167,6 +167,24 @@ try:
 except ValueError as e:
     ck("a hop too short for two spans is refused", True, str(e)[:50])
 
+print("\nseam blend (chain_00141's brightness flicker)")
+torch.manual_seed(1)
+H, W = 24, 32
+bg = torch.rand(1, H, W, 3) * 0.5 + 0.2
+left = bg.repeat(6, 1, 1, 1).clone()
+right = (bg + 4.0 / 255).repeat(40, 1, 1, 1).clone()           # the next hop sits 4/255 brighter
+right[:, :8, :8] = torch.rand(40, 8, 8, 3)                     # and something moves in one corner
+hop = torch.cat([torch.zeros(22, H, W, 3), right], 0)         # its first 22 frames are cut
+st, share = HT.seam_step(left, hop, 22)
+ck("the step is measured on still pixels, ignoring the moving corner",
+   abs(float(st.mean()) * 255 + 4.0) < 0.05 and share > 0.8, "%s, %.0f%% still" % ((st * 255).tolist(), share * 100))
+out, st2 = HT.seam_blend(left, hop, 22)
+ck("after the blend the cut has no level step", abs(float((out[22] - left[-1])[:, 8:, :].mean()) * 255) < 0.05)
+ck("the correction fades to nothing over 1 s", torch.allclose(out[22 + HT.SEAM_FADE:], hop[22 + HT.SEAM_FADE:]))
+ck("the cut frames of the hop are untouched", torch.equal(out[:22], hop[:22]))
+busy = torch.rand(40, H, W, 3)
+ck("a seam with no still pixels is left alone", HT.seam_blend(left, torch.cat([torch.zeros(22, H, W, 3), busy]), 22)[1] is None)
+
 print("\nrefusals")
 ck("overlap 22 + last_frame_guide off is fine", HT.settings_errors(22, "off") == [])
 ck("overlap 5 is refused", len(HT.settings_errors(5)) == 1)

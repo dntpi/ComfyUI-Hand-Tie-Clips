@@ -517,6 +517,22 @@ PREVIS_TRIES = 3         # previs renders before the least-cut one is used anywa
 PREVIS_RETRY_STRIDE = 104729   # seed step between tries: clear of every hop's own seed
 
 
+CUT_SAME_FRAMES = 24     # a cut this close to the last take's is the same cut
+
+
+def same_cut(before, now, near=CUT_SAME_FRAMES):
+    """True when a re-rendered previs cuts where the last take did.
+
+    A seed-driven cut moves when the seed changes; a cut the TEXT asks for does
+    not (chain_00150: three seeds cut at 13.38 / 13.42 / 13.62 s, each to the
+    moment "walks toward the camera"). Re-rolling that a third time costs a whole
+    previs render for nothing, so the loop stops when every cut of this take sits
+    within `near` frames of one in the last take.
+    """
+    return bool(before) and bool(now) and all(
+        any(abs(int(c) - int(b)) <= near for b in before) for c in now)
+
+
 def previs_cuts(frames):
     """Frames where the previs hard-cuts to another shot: [index of the first new frame].
 

@@ -176,6 +176,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
             missing,
             seedCtl: String(widgetByName(node, "control_after_generate")?.value || "fixed"),
             refsNow: parseJson(widgetByName(node, "ref_plan")?.value)?.refs || [],
+            tie: String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie",
         });
     }
 

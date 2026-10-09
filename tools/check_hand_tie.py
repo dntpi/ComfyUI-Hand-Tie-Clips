@@ -322,7 +322,11 @@ ck("run() renders the previs again on a cut, PREVIS_TRIES at most, keeping the l
    "for _try in range(_ht.PREVIS_TRIES):" in src and "_ht.previs_cuts(_p_imgs[:_p_len])" in src
    and "len(_cuts) < len(_best[3])" in src)
 ck("a previs that cuts on every try is a warning in the log and in info",
-   "ht_previs_warn.append(" in src and "the hops follow it" in src)
+   "ht_previs_warn.append(" in src and "check the film there" in src)
+ck("a cut the text asks for (same place twice) stops the re-rolls (chain_00150: 13.38/13.42/13.62 s)",
+   HT.same_cut([321], [322]) and HT.same_cut([314], [327]) and "if _again:" in src)
+ck("a cut that moved, or a new one, is not the same cut",
+   not HT.same_cut([321], [261, 327]) and not HT.same_cut([100], [200]) and not HT.same_cut([], [321]))
 
 print("\nthe cut sits at the window START (the previous hop's tail span is dropped)")
 # raw hops of chain_00142: the tail span, guided at -22, stepped -11/255; the head,

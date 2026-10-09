@@ -103,4 +103,24 @@ fc = forecastPlan({ shots: unseededExt, rec: recU, now: snapOf(unseededExt), see
 ck("extend under a moving seed re-renders every unseeded shot",
    fc.state.every((st) => st === "render"), fc.state.join());
 
+// Hand-tie: one previs per section, so a change re-renders the section.
+fc = forecastPlan({ shots: edited, rec, now: snapOf(edited), tie: true });
+ck("hand-tie: editing shot 2 re-renders its whole section, shot 1 included",
+   fc.state.join() === "render,render,render,render", fc.state.join());
+ck("hand-tie: the cause says the previs changes",
+   String(fc.cause[0]).startsWith("the section's previs changes (shot 2 edited"), String(fc.cause[0]));
+const tieExt = [...base, shot("s5", "e")];
+fc = forecastPlan({ shots: tieExt, rec, now: snapOf(tieExt), tie: true });
+ck("hand-tie: extending re-renders the whole section, not just the new hop",
+   fc.state.every((st) => st === "render"), fc.state.join());
+const tieR = base.map((s) => ({ ...s }));
+tieR[2].anchor = "restart";
+const tieRe = tieR.map((s) => ({ ...s }));
+tieRe[3].beat = "d2";
+fc = forecastPlan({ shots: tieRe, rec: recOf(tieR, snapOf(tieR)), now: snapOf(tieRe), tie: true });
+ck("hand-tie: a change stays in its own section (stops at the restart)",
+   fc.state.join() === "keeps,keeps,render,render", fc.state.join());
+fc = forecastPlan({ shots: base, rec, now, tie: true });
+ck("hand-tie: nothing edited, nothing re-renders", fc.state.every((s) => s === "keeps"), fc.state.join());
+
 process.exit(failed ? 1 : 0);

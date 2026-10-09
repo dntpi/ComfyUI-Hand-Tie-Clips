@@ -12,6 +12,11 @@
  *   - a locked hop still in the cache is served by pointer, so it never
  *     re-renders and the hop after it keys from that unchanged render.
  *
+ * Under pin_mech=hand_tie (`tie`) hops do not chain, but every hop of a section
+ * is tied to that section's ONE previs, whose text and length come from all of
+ * its shots. So a change to any hop of a section -- an edit, a reorder, an
+ * appended shot -- re-renders the whole section, and stops at its restart.
+ *
  * Anything this cannot see -- a LoRA swapped on the MODEL wire, a reference
  * file replaced on disk under the same name -- the run itself will catch.
  */
@@ -58,7 +63,7 @@ export function parseJson(text) {
  *          one nobody generated.
  */
 export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
-                               seedCtl = "fixed", refsNow = [] }) {
+                               seedCtl = "fixed", refsNow = [], tie = false }) {
     const snap = rec?.snapshot || null;
     const n = shots.length;
     const isStart = (i) => i === 0 || shots[i]?.anchor === "restart";
@@ -119,6 +124,23 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         }
         for (const tag of changedRefs) {
             for (const i of ridesHops(tag)) if (i < n) note(i, `@${tag} changed`);
+        }
+    }
+
+    if (tie) {
+        // One previs per section: what moves one hop moves the section.
+        let start = 0;
+        for (let i = 0; i <= n; i++) {
+            if (i === n || (i > start && isStart(i))) {
+                const hit = [...Array(i - start).keys()].map((k) => start + k)
+                    .find((k) => why.has(k));
+                if (hit !== undefined) {
+                    for (let k = start; k < i; k++) {
+                        note(k, `the section's previs changes (${why.get(hit)})`);
+                    }
+                }
+                start = i;
+            }
         }
     }
 

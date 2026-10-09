@@ -4189,6 +4189,7 @@ class HandTieClips:
             # first, so the node has to.
             _pc = _pl = None
             _best = None
+            _last_cuts = []
             for _try in range(_ht.PREVIS_TRIES):
                 _p_seed = _p_seed0 + _try * _ht.PREVIS_RETRY_STRIDE
                 _p_key = None
@@ -4266,18 +4267,26 @@ class HandTieClips:
                     _best = (_p_imgs, _p_wav, _p_sr, _cuts, _p_seed)
                 if not _cuts:
                     break
+                _again = _ht.same_cut(_last_cuts, _cuts)
+                _last_cuts = _cuts
                 print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} hard-cuts at "
                       + ", ".join(f"f{c} ({c / FPS:.2f}s)" for c in _cuts)
-                      + ("; rendering it again on the next seed"
+                      + ("; the same place as the last take, so the text asks for it: "
+                         "no more takes" if _again
+                         else "; rendering it again on the next seed"
                          if _try + 1 < _ht.PREVIS_TRIES else ""), flush=True)
+                if _again:
+                    break
             del _pc, _pl
             _p_imgs, _p_wav, _p_sr, _cuts, _p_seed = _best
             if _cuts:
-                print(f"[{TAG}] WARNING: hand-tie previs {_si + 1}: every one of "
-                      f"{_ht.PREVIS_TRIES} renders cuts; using seed {_p_seed} (cuts at "
-                      + ", ".join(f"f{c}" for c in _cuts) + "). The hops will follow "
-                      "those cuts. Change the seed, or simplify the beat that crosses them.",
-                      flush=True)
+                # chain_00150: a previs cut between two windows came out of the
+                # hop as a camera move, not a cut. Kept as a warning because a
+                # cut INSIDE a window is pinned into the film as it is.
+                print(f"[{TAG}] WARNING: hand-tie previs {_si + 1}: using seed {_p_seed}, "
+                      "which cuts at " + ", ".join(f"f{c}" for c in _cuts) + ". A hop "
+                      "usually carries a cut between its windows as a camera move; "
+                      "check the film there.", flush=True)
                 ht_previs_warn.append((_si + 1, _p_seed, _cuts))
             elif _p_seed != _p_seed0:
                 print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} holds one take",
@@ -5766,7 +5775,7 @@ class HandTieClips:
             info += chr(10) + upsample_note
         for _sec, _seed, _cuts in ht_previs_warn:
             info += (chr(10) + f"hand-tie previs {_sec} (seed {_seed}) cuts at "
-                     + ", ".join(f"f{c}" for c in _cuts) + "; the hops follow it")
+                     + ", ".join(f"f{c}" for c in _cuts) + "; check the film there")
         print(f"[{TAG}] {info}", flush=True)
         # The assembled prompts being inspectable is the whole point of the
         # directive layer -- wire `info` to a Preview Text node to read exactly

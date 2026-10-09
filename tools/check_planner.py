@@ -461,6 +461,95 @@ def main():
        PL.count_beat("'I am happy!' and 'I never want to leave.'")[1:] == (2, 8),
        repr(PL.count_beat("'I am happy!' and 'I never want to leave.'")))
 
+    # ------------------------------------------------- dialogue_spans (both forms)
+    # The official `<d>` tag is the contract's own way to write a line, and
+    # quotes-only counting told a beat written in it that it had nothing to say
+    # -- the writer's own output, counted by the writer's own validator.
+    print("\nplanner.dialogue_spans / dialogue_warnings")
+    D = ("@ref_1 sets the bowl down and says, "
+         "<d>[English] I am going to the market now, and I will be back "
+         "before the light goes.</d> She wipes her hands.")
+    spans = PL.dialogue_spans(D)
+    ck("a <d> line is one span", len(spans) == 1, repr(spans))
+    ck("the <d> line's words are recovered",
+       spans and spans[0][2] == "I am going to the market now, and I will be "
+                                "back before the light goes.",
+       repr(spans[0][2] if spans else None))
+    ck("the language label is markup, not words",
+       spans and "[English]" not in spans[0][2], repr(spans[0][2] if spans else None))
+    ck("count_beat counts the <d> line as a line and words",
+       PL.count_beat(D)[1:] == (1, len(spans[0][2].split())),
+       repr(PL.count_beat(D)[1:]))
+    ck("spoken_text returns the <d> words",
+       PL.spoken_text(D) == spans[0][2], repr(PL.spoken_text(D)))
+
+    # A quote INSIDE a <d> line is part of that line, not a second one: the
+    # line is already delimited, and double-counting it doubles the seconds.
+    NEST = ('<d>[English] She says "I am fine" and keeps packing.</d>')
+    _nl, _nw = PL.count_beat(NEST)[1:]
+    ck("a quote inside <d> is not a second line",
+       _nl == 1 and _nw == len(PL.dialogue_spans(NEST)[0][2].split()),
+       repr((_nl, _nw)))
+
+    # Markup inside the line -- a delivery tag, or the <|cutoff|> that ends an
+    # overrunning line -- is not spoken either.
+    TAGS = '<d>[English] <soft> I am fine <|cutoff|></d>'
+    ck("tags inside <d> are not words",
+       PL.dialogue_spans(TAGS)[0][2] == "I am fine",
+       repr(PL.dialogue_spans(TAGS)[0][2]))
+
+    ck("both forms together, in order",
+       [w[:4] for _a, _b, w in PL.dialogue_spans(
+           "She says, 'one two' then <d>[English] three four five</d>")]
+       == ["one ", "thre"],
+       repr(PL.dialogue_spans("She says, 'one two' then "
+                              "<d>[English] three four five</d>")))
+    ck("a beat with no line has no spans",
+       PL.dialogue_spans("@ref_1 walks to the counter and waits.") == [])
+    ck("quotes-only spoken_spans is unchanged (run() adds its own)",
+       len(PL.spoken_spans(
+           '<d>[English] I am fine</d>')) == 0, "the <d> form is not a quote")
+
+    # ----------------------------------------------------- dialogue_warnings
+    LONG = ('@ref_1 answers. <d>[English] ' + " ".join(["word"] * 26)
+            + '</d> She stands.')
+    SHORT = ('@ref_1 answers. <d>[English] ' + " ".join(["word"] * 8)
+             + '</d> She stands.')
+    w_long = PL.dialogue_warnings(LONG, 8.0)
+    w_short = PL.dialogue_warnings(SHORT, 8.0)
+    ck("an overlong <d> line warns on the queue too",
+       any("run LONG" in w for w in w_long), "; ".join(w_long)[:110])
+    ck("a line inside the budget is quiet",
+       not any("run LONG" in w for w in w_short), "; ".join(w_short)[:110])
+    ck("the warning names the word ceiling",
+       any(f"{int(8.0 * PL.SPEECH_MAX_SHARE * PL.SPEECH_WPS)} words" in w
+           for w in w_long),
+       "; ".join(w for w in w_long if "words" in w)[:110])
+    ck("no line means nothing to warn about",
+       PL.dialogue_warnings("@ref_1 walks to the counter.", 8.0) == [])
+
+    # 'both' moves both mouths when it sits beside a line. Two people mouth one
+    # sentence because the beat said so -- the fix is a closed-mouth action for
+    # whoever is not speaking, not deleting the word from the prompt.
+    BOTH = ('<d>[English] I will be there.</d> Both of them answer at once.')
+    TOGET = ('<d>[English] I will be there.</d> They answer together.')
+    ALONE = ('<d>[English] I will be there.</d> She nods once.')
+    ck("'both' beside a line warns",
+       any("both people" in w for w in PL.dialogue_warnings(BOTH, 8.0)),
+       "; ".join(PL.dialogue_warnings(BOTH, 8.0))[:110])
+    ck("'together' beside a line warns",
+       any("both people" in w for w in PL.dialogue_warnings(TOGET, 8.0)),
+       "; ".join(PL.dialogue_warnings(TOGET, 8.0))[:110])
+    ck("a closed-mouth action beside the line is clean",
+       PL.dialogue_warnings(ALONE, 8.0) == [],
+       "; ".join(PL.dialogue_warnings(ALONE, 8.0))[:110])
+    # A 'both' INSIDE the line is the speaker's own word and must not trip it.
+    INLINE = ('<d>[English] We are both coming, and both of us will stay.</d> '
+              'She lifts the bag.')
+    ck("'both' inside the line is left alone",
+       not any("both people" in w for w in PL.dialogue_warnings(INLINE, 8.0)),
+       "; ".join(PL.dialogue_warnings(INLINE, 8.0))[:110])
+
     def _talk(spoken):
         return json.dumps({"shots": [
             {"id": "s1", "beat": "@ref_1 walks and says, '" + spoken

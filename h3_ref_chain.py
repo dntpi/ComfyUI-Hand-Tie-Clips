@@ -4370,6 +4370,15 @@ class HandTieClips:
                       f"frame 0, the previous hop is not relayed", flush=True)
             _push_preview(unique_id, f"hop {i + 1}/{n} sampling…", hop=i + 1, total=n,
                            frac=(write_pos / float(total_frames)) if total_frames else None)
+            # The same lint the writer's `validate` runs, on the queue, for a
+            # plan nobody generated. A hand-written beat written in the official
+            # `<d>` form overruns its hop exactly as a generated one does, and
+            # here the only place left to say so is before this hop spends its
+            # minutes. Warn, never raise: the seconds are an estimate at
+            # SPEECH_WPS and the author is the one who knows the delivery.
+            for _w in _planner.dialogue_warnings(shot.get("beat"),
+                                                 hop_length / float(FPS)):
+                print(f"[{TAG}] hop {i + 1}: {_w}", flush=True)
 
             # With a register, this hop's refs are only the ones active on it.
             # shot.refs, when present, is the whole rail for this hop --

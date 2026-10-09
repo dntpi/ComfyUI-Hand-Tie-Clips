@@ -122,9 +122,8 @@ def speech_seconds(text):
 
 
 def spoken_text(beat):
-    """Just the words inside the spoken spans, joined."""
-    t = str(beat or "")
-    return " ".join(t[a + 1:b] for a, b in spoken_spans(t))
+    """Just the words inside the spoken lines, both forms, joined."""
+    return " ".join(said for _a, _b, said in dialogue_spans(beat))
 
 
 # How much of a hop a speaking character should actually be speaking for. Below
@@ -168,13 +167,15 @@ def count_beat(beat):
     `spoken_words` is what is inside those spans. Lines are the wrong unit on
     their own -- a line runs from six words to twenty, and six words is 2.4 s
     of a 10 s hop.
+
+    An official `<d>[English] ...</d>` line counts as a line too. Counting
+    only quotes told a beat written in the H3 contract's own form that it had
+    no spoken lines at all.
     """
     text = str(beat or "")
     words = len(text.split())
-    spans = spoken_spans(text)
-    spoken = 0
-    for a, b in spans:
-        spoken += len(text[a + 1:b].split())
+    spans = dialogue_spans(text)
+    spoken = sum(len(said.split()) for _a, _b, said in spans)
     return words, len(spans), spoken
 
 
@@ -192,6 +193,84 @@ def spoken_spans(beat):
               if not (i > 0 and text[i - 1].isalnum()
                       and i + 1 < len(text) and text[i + 1].isalnum())]
     return list(zip(delims[0::2], delims[1::2]))
+
+
+# The official dialogue tag. The language label and any inline tag inside it
+# (`<cutoff>`, a delivery tag) are markup, not words anyone says.
+_D_LINE = re.compile(r"<d>(.*?)</d>", re.S)
+_D_MARKUP = re.compile(r"^\s*\[[^\]]*\]|<[^>]*>")
+
+
+def dialogue_spans(beat):
+    """(start, end, words) for every spoken line, quoted or `<d>`, in order.
+
+    `spoken_spans` stays quotes-only because the voice binding in `run()`
+    adds the `<d>` starts itself, and moving it would change hop-1 text. A
+    quote inside a `<d>` line is part of that line, not a second one.
+    """
+    text = str(beat or "")
+    tagged = [(m.start(), m.end(), _D_MARKUP.sub(" ", m.group(1)).strip())
+              for m in _D_LINE.finditer(text)]
+    quoted = [(a, b, text[a + 1:b]) for a, b in spoken_spans(text)
+              if not any(s <= a < e for s, e, _w in tagged)]
+    return sorted(tagged + quoted)
+
+
+# The ceiling to SPEECH_MIN_SHARE's floor. A beat is action as well as talk,
+# and lines written to fill the whole hop leave the action no seconds: a 10 s
+# duo written with 24 spoken words (9.6 s at SPEECH_WPS) spoke every line on
+# the right face and ran over its closing sip, where 19 words (7.6 s) rendered
+# clean on the same hop (2026-09-26).
+SPEECH_MAX_SHARE = 0.85
+
+# Both mouths move. With a line in the same sentence or the one after, "both"
+# and "together" read as both people saying it: an ending of 'Deal' beside
+# "both" moved both mouths on 2/2 seeds, and the rewrite that gave the other
+# person a closed-mouth action rendered clean on the same two.
+_TOGETHER = re.compile(r"\b(both|together|in unison)\b", re.I)
+
+
+def dialogue_warnings(beat, secs):
+    """Lints for the spoken lines of one beat; strings without a shot prefix.
+
+    Shared by the writer's `validate` and the queue in `run()`, because a
+    hand-written plan overruns its hop exactly as a generated one does.
+    """
+    text = str(beat or "")
+    spans = dialogue_spans(text)
+    out = []
+    if not spans:
+        return out
+    said = " ".join(w for _a, _b, w in spans)
+    speech = speech_seconds(said)
+    if secs and speech > secs * SPEECH_MAX_SHARE:
+        out.append(
+            f"the spoken lines run LONG, about {speech:.1f}s in a {secs:.0f}s "
+            f"hop. Lines that fill the hop leave the action no seconds, and "
+            f"whatever comes after the last line is cut short or talked over. "
+            f"Keep the lines under about {secs * SPEECH_MAX_SHARE:.0f}s "
+            f"({int(secs * SPEECH_MAX_SHARE * SPEECH_WPS)} words).")
+    # Sentences of the narration alone, so a "both" inside a line is left
+    # alone and a full stop inside one does not split the sentence.
+    masked = list(text)
+    for a, b, _w in spans:
+        masked[a:b] = "x" * (b - a)
+    masked = "".join(masked)
+    cuts = [0] + [m.end() for m in re.finditer(r"[.!?]+(\s|$)", masked)]
+    sentences = [(cuts[k], cuts[k + 1] if k + 1 < len(cuts) else len(masked))
+                 for k in range(len(cuts))]
+    for k, (s, e) in enumerate(sentences):
+        if not any(s <= a < e for a, _b, _w in spans):
+            continue
+        near = masked[s:sentences[k + 1][1] if k + 1 < len(sentences) else e]
+        hit = _TOGETHER.search(near)
+        if hit:
+            out.append(
+                f"'{hit.group(1)}' sits beside a spoken line, and both people "
+                f"mouth it. Give the one who is not speaking an action with "
+                f"closed lips in that sentence instead.")
+            break
+    return out
 
 
 def schema():
@@ -397,6 +476,8 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
                     f"are a person visibly mid-sentence with nothing assigned, "
                     f"and the model fills them itself. Give those seconds more "
                     f"to say, or name the sound they carry.")
+        warnings += [f"shot {i + 1}: {w}" for w in
+                     dialogue_warnings((sh or {}).get("beat"), secs)]
         # Rule 3 inside a hop. A beat that opens on action and speaks later has
         # frames with a picture and no sound, and the model fills them with
         # dialogue nobody wrote -- the same failure as a silent hop, one

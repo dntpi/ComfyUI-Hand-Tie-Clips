@@ -107,9 +107,16 @@ plain = HT.compile_previs([
     [192] * 3)[0]
 ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,')",
    "(S1)" not in plain and "<d>" not in plain and "says" not in plain, plain)
-ck("plain beats: first sentence per window, and the last beat's last sentence that names a person",
+# Changed by PREVIS_SOUND. The old text was
+#   "... At 00:05.667 @cook sips. At 00:08.500 @cook sips."
+# and the beat that ends "The low hum of the refrigerator." lost it -- which is
+# the bug _sound_sentence exists for: a moment is a picture, and a previs whose
+# text names only pictures gives its audio branch nothing to do but invent a
+# voice (chain_00147: 6 invented words, all in the first 4 s).
+ck("plain beats: first sentence per window, the sound sentence, and the closing moment",
    plain == ("At 00:00.000 @cook chops herbs. At 00:02.833 @cook looks out of the window. "
-             "At 00:05.667 @cook sips. At 00:08.500 @cook sips."), plain)
+             "At 00:05.667 @cook sips. The low hum of the refrigerator. "
+             "At 00:08.500 @cook sips."), plain)
 ending = HT.compile_previs([
     {"beat": "@dex walks under the awning."},
     {"beat": "@dex steps out into the rain. He walks toward the camera down the street, and (S1) says, "
@@ -118,6 +125,74 @@ ck("a closing sentence that opens on a pronoun is the ending, with the beat's pe
    ending.endswith("At 00:05.667 @dex walks toward the camera down the street."), ending)
 ck("without moments: each beat's first sentence, and the last beat's last sentence",
    no_moment == "At 00:00.000 First thing. At 00:02.833 Third. At 00:05.667 Fourth.", no_moment)
+
+print("\nthe moment carries its beat's sound, so the audio branch has a target")
+# chain_00147's kept previs (seed 219378) invented "Looks to be I'm hard." (5
+# words, window 0) and "Yeah." (1 word, window 1) from a previs whose text named
+# pictures only. audio_cut hid it: that run's window 3 -- the club bass, mean
+# -10.1 dB -- had zero points under AUDIO_QUIET_DB in 88 probes, so on one window
+# in six the invention would have reached the film.
+snd = HT._sound_sentence("@dex walks down a busy night street. A sizzling grill, crowd chatter, "
+                         "footsteps on wet pavement.")
+ck("a beat ending on a sound names it", snd == "A sizzling grill, crowd chatter, footsteps on wet pavement.", snd)
+ck("a beat ending on an action does not",
+   HT._sound_sentence("@dex walks down the street. He turns to the window.") == "",
+   HT._sound_sentence("@dex walks down the street. He turns to the window."))
+ck("a beat ending on a person does not",
+   HT._sound_sentence("@dex walks to the cart. He leans on it.") == "",
+   HT._sound_sentence("@dex walks to the cart. He leans on it."))
+ck("a one-sentence beat has nothing to add",
+   HT._sound_sentence("@dex walks down the street.") == "")
+ck("a two-word tail is a clause, not a sound bed",
+   HT._sound_sentence("@dex walks down the street. Fourth.") == "",
+   HT._sound_sentence("@dex walks down the street. Fourth."))
+ck("the sound carries no dialogue of its own",
+   not any(x in HT._sound_sentence(b) for b in (
+       "@dex walks. (S1) says, <d>[English] hello.</d> The low hum of the refrigerator.",
+   ) for x in ("<d>", "(S1)", "says")))
+ck("the closing moment is never given a sound",
+   not HT.compile_previs(
+       [{"beat": "@dex steps out into the rain. Steady rain, distant traffic."},
+        {"beat": "@dex walks toward the camera. He walks toward the camera down the street."}],
+       [192, 192])[0].split("At ")[-1].count("Steady rain"))
+_off = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."},
+                          {"beat": "@dex turns. He walks toward the camera down the street."}],
+                         [192, 192], sound=False)[0]
+_on = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."},
+                         {"beat": "@dex turns. He walks toward the camera down the street."}],
+                        [192, 192])[0]
+ck("sound=False restores the exact old text (the A/B lever)",
+   _off == ("At 00:00.000 @dex walks. "
+            "At 00:02.833 @dex turns. "
+            "At 00:05.667 @dex walks toward the camera down the street."), _off)
+ck("and the default is the sound-carrying one", "The low hum of the refrigerator." in _on, _on)
+ck("PREVIS_SOUND is on by default, so a plain plan needs no extra input",
+   HT.PREVIS_SOUND is True)
+# the movement test that produced the finding: every beat ends on a real sound
+_move = [{"beat": "@dex walks down a busy night street of neon shop signs, rolling his shoulders. "
+                  "He slows at a street food cart, leans on its counter. "
+                  "A sizzling grill, crowd chatter, footsteps on wet pavement."},
+         {"beat": "@dex lowers his arms as rain starts to fall, looks up and laughs. "
+                  "He jogs under a striped shop awning, shakes the water from his sleeves. "
+                  "Rain pattering on the canvas awning, the bass beat muffled behind him."},
+         {"beat": "@dex watches the rain from under the awning, grins and steps back out into it. "
+                  "He walks toward the camera down the glistening street. "
+                  "Steady rain, distant traffic, footsteps splashing."}]
+_t = HT.compile_previs(_move, [192] * 3)[0]
+ck("all three movement-test beats name their sound",
+   all(s in _t for s in ("A sizzling grill, crowd chatter, footsteps on wet pavement.",
+                         "Rain pattering on the canvas awning, the bass beat muffled behind him.",
+                         "Steady rain, distant traffic, footsteps splashing.")), _t)
+ck("and the bass line the sound vocabulary misses is still carried",
+   "A thumping bass beat fills the street, with cheers from inside the club."
+   in HT.compile_previs(
+       [{"beat": "@dex hears a bass beat from the doorway. He steps into the light. "
+                 "A thumping bass beat fills the street, with cheers from inside the club."}],
+       [192])[0],
+   HT.compile_previs(
+       [{"beat": "@dex hears a bass beat from the doorway. He steps into the light. "
+                 "A thumping bass beat fills the street, with cheers from inside the club."}],
+       [192])[0])
 
 print("\nthe crossing-line lint (the lab's join-1 repeat)")
 rep = [dict(plan[0]), dict(plan[1])]

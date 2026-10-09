@@ -56,6 +56,31 @@ SPLIT_WPS = 3.5             # H3's speaking rate in a previs: chain_00140 said 7
                             # the line's start and the end of window B, 1.9 s
 PREVIS_SEED_OFFSET = 7919    # previs seed = the section's first hop seed + this
 
+# Whether a moment carries its beat's sound sentence as well as its picture.
+#
+# ON by default. A moment is a picture, and the previs's audio branch has no
+# target if the text names none -- so it invents a voice, and every word it
+# invents inside a window is pinned onto the hop that opens there. Measured on
+# chain_00147's kept previs: 6 invented words, all in the first 4 s, from a plan
+# that wrote no dialogue into the previs at all. `_sound_sentence` has the
+# numbers and the shape test.
+#
+# It is a module constant and not a widget because a hand-tie plan must stay
+# plain ("plug and play"): the author writes beats and gets a previs that names
+# its own sounds, with nothing to switch on. It is here so the behaviour can be
+# turned off to A/B the fix, not to be configured.
+PREVIS_SOUND = True
+
+# How long a trailing sentence must be to count as a sound bed rather than another
+# clause. A narrowband bed is a noun phrase naming a thing or two -- "The low hum
+# of the refrigerator." is 6 words, "Steady rain, distant traffic, footsteps
+# splashing." is 6 -- and every sound sentence in the 5-beat movement test is 6 or
+# more. A one- or two-word tail is a clause the author wrote as an action, and
+# appending it tells the previs nothing: it names no sound, so the audio branch is
+# left exactly as untargeted as before, and it pads a 0.92 s window for nothing.
+# 4 leaves a margin on both sides of the observed 6.
+MIN_SOUND_WORDS = 4
+
 
 # --- sections and geometry ------------------------------------------------
 
@@ -161,22 +186,76 @@ def _last_sentence(text):
     return parts[-1] if parts else ""
 
 
+_SUBJ = re.compile(r"^(He|She|They|His|Hers|Their)\b")
+
+
+def _sound_sentence(text):
+    """The beat's trailing sound sentence, or "".
+
+    A moment is a picture. The previs is the one generate every hop follows, so a
+    text that describes only pictures leaves its audio branch with no target at
+    all, and H3 fills it with the most likely thing there is -- a voice. Measured
+    on chain_00147's kept previs (seed 219378, six hops' worth of windows):
+    **6 invented words, all inside the first 4 s**, "Looks to be I'm hard."
+    (window 0) and "Yeah." (window 1), against a plan that put 20 words of
+    dialogue into the hops and none into the previs. Those words are pinned onto
+    whichever hop opens at that window.
+
+    `audio_cut` only saved that run by luck: it needs a point inside the window
+    where both hops are under AUDIO_QUIET_DB, and the same previs's window 3 --
+    the club bass, mean -10.1 dB -- has **zero** such points in 88 probes. On one
+    window in six the invention would have reached the film.
+
+    The discriminator is the sentence's SHAPE, not a keyword list. A beat's last
+    sentence is its sound when the author wrote one ("A sizzling grill, crowd
+    chatter, footsteps on wet pavement.") and is another action when they did not
+    ("She turns to the window."). So: the last sentence, provided it neither
+    names a person nor opens on a pronoun. `planner._SOUND` was tried first and
+    is not it -- its narrowband vocabulary is the right test for a wordless HOP's
+    sound bed, and it misses "A thumping bass beat fills the street", which is
+    the loudest thing in the plan.
+    """
+    ns = _no_speech(text)
+    parts = [p.strip() for p in _SENT.split(ns) if p.strip()]
+    if len(parts) < 2:
+        return ""                      # one sentence: nothing but the moment
+    cand = parts[-1]
+    if _WHO_RE.search(cand) or _SUBJ.match(cand):
+        return ""                      # the beat ends on an action, not a sound
+    if len(cand.split()) < MIN_SOUND_WORDS:
+        return ""                      # too short to be a sound bed (see above)
+    return cand
+
+
+def moments(shots, sound=PREVIS_SOUND):
+    """One moment per window: shot k's `moment` (else the first sentence of its beat)
+    for window k, and the last shot's `moment_end` (else its beat's last sentence)
+    for the closing window.
+
+    `sound` appends each beat's trailing sound sentence to its own moment, so the
+    previs's audio branch has a named non-voice target. The CLOSING moment is
+    left alone deliberately: it is the film's last frame, and it is read as a
+    picture, where a sound sentence would be a second thing at the end of the
+    film.
+    """
+    out = []
+    for sh in shots:
+        beat = (sh or {}).get("beat")
+        m = str((sh or {}).get("moment") or "").strip() or _first_sentence(beat)
+        if m and sound:
+            snd = _sound_sentence(beat)
+            if snd and snd not in m:
+                m = m.rstrip() + " " + snd
+        out.append(m)
+    last = shots[-1] or {}
+    out.append(str(last.get("moment_end") or "").strip()
+               or _last_sentence(last.get("beat")))
+    return out
+
+
 def _stamp(seconds):
     s = max(0.0, seconds)
     return "%02d:%06.3f" % (int(s // 60), s - 60 * int(s // 60))
-
-
-def moments(shots):
-    """One moment per window: shot k's `moment` (else the first sentence of its beat)
-    for window k, and the last shot's `moment_end` (else its beat's last sentence)
-    for the closing window."""
-    out = []
-    for sh in shots:
-        m = str((sh or {}).get("moment") or "").strip()
-        out.append(m or _first_sentence((sh or {}).get("beat")))
-    last = shots[-1] or {}
-    out.append(str(last.get("moment_end") or "").strip() or _last_sentence(last.get("beat")))
-    return out
 
 
 def _lead_s(spoken_s):
@@ -184,7 +263,7 @@ def _lead_s(spoken_s):
     return min(LEAD_MAX_S, spoken_s / 2.0)
 
 
-def compile_previs(shots, hop_frames, fps=FPS):
+def compile_previs(shots, hop_frames, fps=FPS, sound=None):
     """The previs's timed description: `At MM:SS.mmm <moment>` per window.
 
     A moment that carries a spoken line starts ahead of its window, by half the
@@ -192,10 +271,14 @@ def compile_previs(shots, hop_frames, fps=FPS):
     its first word: both hops tied to that window then share the middle of the
     sentence, and each says its own end of it. A line in the closing moment
     instead ENDS where the previs ends, so the film's last hop finishes it.
+
+    `sound` defaults to PREVIS_SOUND and appends each beat's sound sentence to
+    its own moment. It does not disturb the lead-in arithmetic: `_spoken_s`
+    counts words only inside `<d>`, and a sound sentence has none.
     """
     lay = layout(hop_frames)
     rows = []
-    ms = moments(shots)
+    ms = moments(shots, PREVIS_SOUND if sound is None else sound)
     for k, (w, m) in enumerate(zip(lay["windows"], ms)):
         if not m:
             continue

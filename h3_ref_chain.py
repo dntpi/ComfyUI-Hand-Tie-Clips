@@ -3965,6 +3965,7 @@ class HandTieClips:
         write_pos = 0
         ht_hop_start = 0           # hand-tie: where the last written hop starts
         ht_section_starts = []     # hand-tie: where each section starts, for deflicker
+        ht_cuts = []               # hand-tie: where each tied join landed, for detail_settle
         # Where each join actually landed. Recorded rather than derived,
         # because it can no longer BE derived: `seam.seam_positions()` solves
         # for a uniform hop length from (total, hops, overlap), and a restart
@@ -5428,6 +5429,7 @@ class HandTieClips:
                         "%+.1f" % (-float(v) * 255) for v in _bend)
                         + f" /255 across its length to meet hop {i + 1}", flush=True)
                 ht_hop_start = int(write_pos)
+                ht_cuts.append(int(write_pos))
                 master_imgs[write_pos:write_pos + keep_n] = imgs
                 write_pos += keep_n
                 master_wav = _batch_wav(master_wav)
@@ -5614,6 +5616,11 @@ class HandTieClips:
                         for a, b in zip(ht_section_starts, _ends)] or [0.0])
             print(f"[{TAG}] hand-tie deflicker: largest correction {_fix * 255:.1f} /255",
                   flush=True)
+            for _c in ht_cuts:
+                _g = _ht.detail_settle(master_imgs, _c)
+                if _g:
+                    print(f"[{TAG}] hand-tie detail at f{_c}: softest gain {min(_g):.3f}",
+                          flush=True)
         if hop_store is not None:
             hop_store.sweep(keep=hop_keys)
 

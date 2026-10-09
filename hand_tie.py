@@ -26,6 +26,7 @@ tools/check_hand_tie.py runs without a server:
     tone_match()        a hop pulled onto its window's tone (torch)
     seam_bend()         the outgoing hop bent to meet the next one's first frame
     deflicker()         one- and two-frame level blinks taken out of a section
+    detail_settle()     the swell of detail after a cut flattened
     settings_errors()   what hand-tie refuses, before anything samples
     hop_key_fields()    what a hand-tie hop's cache key carries instead of prev_key
     film_frames()       a section's delivered length
@@ -329,6 +330,11 @@ def tone_match(images, head, tail=None, frames=WINDOW):
 SEAM_STILL = 4.0 / 255   # a pixel is "still" if it moves less than this on both sides
 SEAM_MIN_STILL = 0.05    # below this share of still pixels the step is not trusted
 DEFLICKER = 7            # frames in the running median that defines the film's level
+DETAIL_SIGMA = 2.5       # px: below this scale is "detail" (the fine and mid bands)
+DETAIL_PRE = 12          # frames before a cut whose detail is the level to start from
+DETAIL_SPAN = 30         # frames after a cut that are held to the line (the swell)
+DETAIL_POST = 12         # frames after the span whose detail is the level to end on
+DETAIL_FLOOR = 0.8       # the most detail is ever taken out of a frame
 
 
 def seam_step(prev_tail, images, start, still=SEAM_STILL):
@@ -410,6 +416,53 @@ def deflicker(master, frames=DEFLICKER, still=SEAM_STILL):
             master[t] = (master[t].float() + corr[t].to(master.device).view(1, 1, -1)
                          ).clamp(0.0, 1.0).to(master.dtype)
     return float(corr.abs().max())
+
+
+def _detail_split(frame, sigma=DETAIL_SIGMA):
+    """(base, detail energy) of one [H,W,C] frame: a separable gaussian blur and the
+    mean absolute difference from it."""
+    import torch  # noqa: PLC0415
+    import torch.nn.functional as F  # noqa: PLC0415
+    x = frame.float()
+    r = int(3 * sigma + 0.5)
+    k = torch.exp(-torch.arange(-r, r + 1, dtype=torch.float32) ** 2 / (2 * sigma * sigma))
+    k = (k / k.sum()).to(x.device)
+    y = x.permute(2, 0, 1)[:, None]
+    y = F.conv2d(F.pad(y, (r, r, 0, 0), mode="reflect"), k.view(1, 1, 1, -1))
+    y = F.conv2d(F.pad(y, (0, 0, r, r), mode="reflect"), k.view(1, 1, -1, 1))
+    base = y[:, 0].permute(1, 2, 0)
+    return base, float((x - base).abs().mean())
+
+
+def detail_settle(master, cut):
+    """Flatten the swell of detail after a cut, in place. -> the gains used, or None.
+
+    The incoming hop opens on its head window and sharpens as it leaves it: on
+    chain_00144 fine detail rose +12% (mid +7%) over the half second after join 1
+    and settled back. Brightness cannot show this and a grade cannot fix it. For the
+    DETAIL_SPAN frames after the cut, each frame's detail (frame minus its blur) is
+    scaled so its energy follows a straight line from the level before the cut to
+    the level after the span. It only ever softens (gain <= 1, floor DETAIL_FLOOR);
+    nothing outside the span moves. Replay on 00144: join 1 +12% -> +5%.
+    """
+    import torch  # noqa: PLC0415
+    n = int(master.shape[0])
+    a, b = cut + DETAIL_SPAN, min(n, cut + DETAIL_SPAN + DETAIL_POST)
+    if cut - DETAIL_PRE < 0 or b - a < 4:
+        return None
+    pre = sorted(_detail_split(master[t])[1] for t in range(cut - DETAIL_PRE, cut))
+    post = sorted(_detail_split(master[t])[1] for t in range(a, b))
+    e0, e1 = pre[len(pre) // 2], post[len(post) // 2]
+    gains = []
+    for j in range(DETAIL_SPAN):
+        t = cut + j
+        base, e = _detail_split(master[t])
+        g = max(DETAIL_FLOOR, min(1.0, (e0 + (e1 - e0) * j / float(DETAIL_SPAN)) / max(e, 1e-6)))
+        if g < 1.0:
+            f = master[t].float()
+            master[t] = (base + g * (f - base)).clamp(0.0, 1.0).to(master.dtype)
+        gains.append(g)
+    return gains
 
 
 # --- what hand-tie refuses, and what it keys ------------------------------------

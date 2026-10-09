@@ -204,6 +204,25 @@ ck("one- and two-frame blinks are removed", float((film - ref)[:, 8:, 8:].abs().
 ck("a level change that lasts is kept", abs(float((film[45] - film[35])[8:, 8:].mean()) * 255 - 6.0) < 0.3)
 ck("the largest correction is reported", abs(fix * 255 - 3.0) < 0.3, "%.2f" % (fix * 255))
 
+print("\ndetail settle (chain_00144: detail swelled +12% after join 1)")
+torch.manual_seed(2)
+H2, W2 = 32, 48
+tex = torch.rand(1, H2, W2, 3)
+smooth = HT._detail_split(tex[0])[0][None]
+film = smooth.repeat(80, 1, 1, 1) + (tex - smooth).repeat(80, 1, 1, 1)
+swell = torch.ones(80)
+swell[40:70] = 1.0 + 0.15 * torch.sin(torch.linspace(0, 3.14159, 30))   # the swell after a cut at 40
+film = smooth + swell.view(-1, 1, 1, 1) * (tex - smooth)
+before = film.clone()
+g = HT.detail_settle(film, 40)
+e = [HT._detail_split(film[t])[1] for t in range(80)]
+ck("the swell is flattened to within 2% of the level", max(e[40:70]) / e[30] < 1.02,
+   "%.3f" % (max(e[40:70]) / e[30]))
+ck("it only softens, never sharpens", min(g) >= HT.DETAIL_FLOOR and max(g) <= 1.0, (min(g), max(g)))
+ck("frames outside the span are untouched",
+   torch.equal(film[:40], before[:40]) and torch.equal(film[70:], before[70:]))
+ck("a cut too close to the start is left alone", HT.detail_settle(before.clone(), 5) is None)
+
 print("\nthe cut sits at the window START (the previous hop's tail span is dropped)")
 # raw hops of chain_00142: the tail span, guided at -22, stepped -11/255; the head,
 # guided at 0, -3 at worst. run() rewinds the master by the overlap and writes each
@@ -217,6 +236,9 @@ ck("run() tones a hop on its head window only (its tail span is not delivered)",
 ck("run() bends the outgoing hop to the incoming one, then deflickers each section",
    "_ht.seam_bend(master_imgs, ht_hop_start, write_pos, imgs)" in src
    and "_ht.deflicker(master_imgs[a:b])" in src)
+ck("run() settles detail at each tied cut, never at a restart",
+   "ht_cuts.append(int(write_pos))" in src and "_ht.detail_settle(master_imgs, _c)" in src
+   and src.index("ht_cuts.append") > src.index("elif ht:"))
 _pos, _cuts = 0, []
 for _k in range(4):
     if _k:

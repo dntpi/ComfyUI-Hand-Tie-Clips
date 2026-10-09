@@ -373,9 +373,9 @@ def main():
     _h1 = oc[2].split("===== hop 1 prompt =====")[1].split("===== hop 2 prompt =====")[0]
     _h2 = oc[2].split("===== hop 2 prompt =====")[1]
     ck("hand_tie: hop 1's prompt ends the crossing line with <|cutoff|>",
-       "<d>[English] I keep thinking the<|cutoff|></d>" in _h1, _h1[-120:])
-    ck("hand_tie: hop 2's prompt continues the same sentence",
-       "continues the same sentence, <d>[English] thinking the snow will stop by noon.</d>" in _h2, _h2[:200])
+       "<d>[English] I keep thinking the snow will stop<|cutoff|></d>" in _h1, _h1[-120:])
+    ck("hand_tie: hop 2's prompt finishes the same sentence, from after the window",
+       "finishes the same sentence, <d>[English] by noon.</d>" in _h2, _h2[:200])
     ck("plan keeps moment / moment_end only when written",
        "moment" in P.parse_plan(json.dumps(ht_plan))[1]
        and "moment" not in P.parse_plan(json.dumps(ht_plan))[0]

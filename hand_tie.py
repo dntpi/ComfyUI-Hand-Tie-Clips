@@ -49,6 +49,8 @@ REF_HOP, REF_SPACING = 192, 68   # the measured case: 8 s hop, 2.8 s of previs p
 MIN_SPACING = 34            # windows never overlap
 SPEECH_WPS = 2.5            # words a second, as planner.SPEECH_WPS
 LEAD_MAX_S = 1.0            # a line starts at most this far ahead of its window
+SPLIT_WPS = 3.5             # H3's speaking rate in a previs: chain_00140 said 7 words between
+                            # the line's start and the end of window B, 1.9 s
 PREVIS_SEED_OFFSET = 7919    # previs seed = the section's first hop seed + this
 
 
@@ -112,15 +114,40 @@ def _spoken_s(text):
     return words / SPEECH_WPS
 
 
+_SPEECH = re.compile(
+    r"(?:,?\s*(?:and\s+)?)?(?:\(S\d+\)\s*)?\b(?:says|asks|whispers|shouts|replies|adds|mutters|calls|"
+    r"continues|answers|sings)\b[^<.]{0,40}?<d>.*?</d>", re.S)
+_WHO_RE = re.compile(r"@[A-Za-z0-9_]+|<Subject \d+>")
+
+
+def _no_speech(text):
+    """A beat with its spoken lines taken out, speech verb and speaker tag included.
+
+    A moment derived from a plain beat must not carry a dangling "(S1) says,":
+    the previs would then put a voice at the window with no words to say, and
+    both hops tied to it would inherit invented speech. A plain plan's lines stay
+    inside their own hop (user 2026-10-09: no extra input for hand-tie)."""
+    t = _SPEECH.sub(".", text or "")
+    t = _D.sub("", t)
+    t = re.sub(r"\(S\d+\)\s*", "", t)
+    t = re.sub(r"\s*\.\s*\.", ".", t)
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
 def _first_sentence(text):
-    t = _D.sub("", text or "").strip()
+    t = _no_speech(text)
     return _SENT.split(t, 1)[0].strip() if t else ""
 
 
 def _last_sentence(text):
-    t = _D.sub("", text or "").strip()
-    parts = [p for p in _SENT.split(t) if p.strip()]
-    return parts[-1].strip() if parts else ""
+    """The beat's last sentence that names a person, else its last sentence: a
+    beat usually ends on its sound ("the low hum of the refrigerator"), which is
+    not a frame."""
+    parts = [p.strip() for p in _SENT.split(_no_speech(text)) if p.strip()]
+    for p in reversed(parts):
+        if _WHO_RE.search(p):
+            return p
+    return parts[-1] if parts else ""
 
 
 def _stamp(seconds):
@@ -205,8 +232,7 @@ def split_crossing(shots, fps=FPS):
     film's first frame and is left to the beat.
     """
     out = [dict(s or {}) for s in shots or []]
-    per_s = 1.0 / SPEECH_WPS
-    n_win = max(1, int(round(WINDOW / float(fps) / per_s)))
+    n_win = max(1, int(round(WINDOW / float(fps) * SPLIT_WPS)))
     for k in range(1, len(out)):
         parts = _line_parts(out[k].get("moment"))
         if not parts:
@@ -214,16 +240,21 @@ def split_crossing(shots, fps=FPS):
         prefix, lang, words = parts
         if not words:
             continue
-        n_before = int(round(_lead_s(len(words) * per_s) / per_s))
-        head = " ".join(words[:min(len(words), n_before + n_win)])
-        rest = " ".join(words[min(n_before, len(words) - 1):])
+        # The film cuts at the END of the shared window: hop k-1 is kept through
+        # it, hop k only after it. So each word goes to the hop that is on screen
+        # when it is spoken. Starting hop k at the window's START repeated the
+        # window's words after the cut ("will stop" twice, chain_00140).
+        lead = _lead_s(len(words) / SPEECH_WPS)
+        n_cut = min(len(words) - 1, int(round(lead * SPLIT_WPS)) + n_win)
+        head = " ".join(words[:max(1, n_cut)])
+        rest = " ".join(words[max(1, n_cut):])
         sid = _SID.search(prefix)
         who = _WHO.search(prefix)
         speaker = ("%s %s" % (who.group(0) if who else "", sid.group(0) if sid else "")).strip()
         lead = (prefix + " " if prefix else "")
         out[k - 1]["beat"] = ("%s %s<d>%s %s%s</d>" % (
             str(out[k - 1].get("beat") or "").rstrip(), lead, lang, head, CUTOFF)).strip()
-        out[k]["beat"] = ("%s continues the same sentence, <d>%s %s</d> %s" % (
+        out[k]["beat"] = ("%s finishes the same sentence, <d>%s %s</d> %s" % (
             speaker or "The speaker", lang, rest, str(out[k].get("beat") or "").lstrip())).strip()
     if out:
         parts = _line_parts(out[-1].get("moment_end"))

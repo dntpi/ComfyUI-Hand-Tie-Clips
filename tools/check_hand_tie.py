@@ -99,6 +99,17 @@ ck("a speaking moment is led in so the window lands mid-line (window B 2.833 -> 
 ck("the closing line is placed to end with the previs (11.333 + 0.917 - 2.0 = 10.250)",
    "At 00:10.250 <Subject 1> chops again" in text, text[-160:])
 no_moment = HT.compile_previs([{"beat": "First thing. Second thing."}, {"beat": "Third. Fourth."}], [192, 192])[0]
+plain = HT.compile_previs([
+    {"beat": "@cook chops herbs. She turns to the window."},
+    {"beat": "@cook looks out of the window and (S1) says, <d>[English] I keep thinking the snow will "
+             "stop by noon.</d> She steps to the sink."},
+    {"beat": "@cook sips, and (S1) says, <d>[English] Right.</d> The low hum of the refrigerator."}],
+    [192] * 3)[0]
+ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,')",
+   "(S1)" not in plain and "<d>" not in plain and "says" not in plain, plain)
+ck("plain beats: first sentence per window, and the last beat's last sentence that names a person",
+   plain == ("At 00:00.000 @cook chops herbs. At 00:02.833 @cook looks out of the window. "
+             "At 00:05.667 @cook sips. At 00:08.500 @cook sips."), plain)
 ck("without moments: each beat's first sentence, and the last beat's last sentence",
    no_moment == "At 00:00.000 First thing. At 00:02.833 Third. At 00:05.667 Fourth.", no_moment)
 
@@ -110,11 +121,15 @@ ck("the plan that writes the line once is clean", HT.crossing_lints(plan) == [])
 
 print("\nthe crossing line, split between the two hops that share its window")
 split = HT.split_crossing(plan)
-ck("hop 1 ends on the line's opening up to the window, cut by core's <|cutoff|> token",
-   split[0]["beat"].endswith("<d>[English] I keep thinking the<|cutoff|></d>"), split[0]["beat"][-90:])
-ck("hop 2 picks the same sentence up from the start of the window",
-   split[1]["beat"].startswith("<Subject 1> (S1) continues the same sentence, <d>[English] thinking the snow "
-                               "will stop by noon.</d>"), split[1]["beat"][:110])
+# chain_00140 (2026-10-09): by the end of window B the previs had said "I keep thinking
+# the snow will stop" (7 words, ~3.5 a second); the film cuts at the window's END, so hop
+# 2 gets only what follows. Starting hop 2 at the window's start said "will stop" twice.
+ck("hop 1 says the line through the end of the shared window, cut by core's <|cutoff|>",
+   split[0]["beat"].endswith("<d>[English] I keep thinking the snow will stop<|cutoff|></d>"),
+   split[0]["beat"][-90:])
+ck("hop 2 says only what follows the window: no word twice across the cut",
+   split[1]["beat"].startswith("<Subject 1> (S1) finishes the same sentence, <d>[English] by noon.</d>"),
+   split[1]["beat"][:110])
 ck("the last hop gets the moment_end line whole",
    split[3]["beat"].endswith("<d>[English] Right. Soup won't make itself.</d>"), split[3]["beat"][-80:])
 ck("the input shots are not modified", "<d>" not in plan[0]["beat"] and "continues" not in plan[1]["beat"])

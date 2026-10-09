@@ -93,6 +93,21 @@ for cls in ("h3e-tl-newprevis", "h3e-tl-cutpoint", "h3e-tl-previswarn",
             "h3e-warnchip", "h3e-tl-sizebtn", "h3e-run-gstate"):
     ck("stylesheet has .%s" % cls, ".%s" % cls in css)
 
+print("\nA4: the surface swap has to be able to hide RUN")
+# `hidden` is only `display: none` in the UA sheet, and ANY author `display`
+# on the element outranks it. `.h3e-root > .h3e-run` sets `display: flex`, so
+# without an explicit `[hidden]` rule the attribute does nothing and RUN stays
+# stacked under every tab -- which is the thing A4 exists to remove, failing
+# silently and looking like the feature simply did not work.
+ck(".h3e-run is given display:flex, so [hidden] needs its own rule",
+   re.search(r"\.h3e-root\s*>\s*\.h3e-run\s*\{[^}]*display:\s*flex", css))
+ck("and it has one", re.search(r"\.h3e-root\s*>\s*\.h3e-run\[hidden\]\s*\{[^}]*display:\s*none", css))
+# Same class of trap for the tab bodies: .h3e-scroll has no display, so its
+# `hidden` works -- but the panes inside it are flex, which is why
+# .h3e-pane[hidden] already carries a rule.
+ck("the tab panes keep their own [hidden] rule",
+   re.search(r"\.h3e-pane\[hidden\]\s*\{[^}]*display:\s*none", css))
+
 print()
 if FAIL:
     print("PREVIS WARN: %d FAILURE(S)\n  %s" % (len(FAIL), "\n  ".join(FAIL)))

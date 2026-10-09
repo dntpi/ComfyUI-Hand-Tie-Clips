@@ -1112,20 +1112,30 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 .h3e-root > .h3e-scroll > .h3e-writer > summary::after { content: ""; }
 
 .h3e-root > .h3e-run {
-    /* `0 0 auto`. It must NOT shrink: flex divides a deficit in proportion to
-     * each item's content height, and the scroller's content is far taller, so
-     * a shrinkable RUN loses most of the space and clips its lower groups. The
-     * scroller absorbs all the shrinking; its min-height is the floor that
-     * stops RUN taking the whole panel, and max-height below is the ceiling. */
-    flex: 0 0 auto;
-    /* Was 55%, when the scroller above held all four authoring sections and
-     * could always spare the room. It holds one pane now, in a 480px-tall box,
-     * so RUN taking over half of it would leave the script with almost none. */
-    max-height: 40%;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
+      /* `0 0 auto`. It must NOT shrink: flex divides a deficit in proportion to
+       * each item's content height, and the scroller's content is far taller, so
+       * a shrinkable RUN loses most of the space and clips its lower groups. The
+       * scroller absorbs all the shrinking; its min-height is the floor that
+       * stops RUN taking the whole panel, and max-height below is the ceiling. */
+      flex: 0 0 auto;
+      /* Was 55%, when the scroller above held all four authoring sections and
+       * could always spare the room. It holds one pane now, in a 480px-tall box,
+       * so RUN taking over half of it would leave the script with almost none. */
+      max-height: 40%;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+  }
+  /* A4: RUN is a SURFACE now, shown and hidden by the entry module. This rule
+   * is NOT redundant -- the `display: flex` above outranks the UA sheet's
+   * `[hidden] { display: none }`, so without it the attribute does nothing and
+   * RUN sits under every tab, which is the exact stacking A4 removes. Same
+   * reason `.h3e-pane[hidden]` needs its own rule a hundred lines up. */
+  .h3e-root > .h3e-run[hidden] { display: none !important; }
+  /* When RUN IS the surface it is the only pane on screen, so the 40% ceiling
+   * from the stacked days would clip two thirds of it. Full height, and it
+   * scrolls internally instead. */
+  .h3e-root > .h3e-run:not([hidden]) { max-height: none; flex: 1 1 auto; }
 /* Always open, so the disclosure triangle would be a control that does
  * nothing. The summary stays as the header and digest bar. */
 .h3e-root > .h3e-run > .h3e-run-sum {

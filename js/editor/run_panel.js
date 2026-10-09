@@ -586,14 +586,18 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
     build();
     render();
 
-    // Always open. Collapsing made sense while RUN was the last child of the
-    // scroller and cost a screenful; pinned to the bottom it is the one
-    // section you touch on every queue, so a toggle only ever hid it.
-    // `<details>` is kept for the summary bar's markup, forced open and with
-    // its disclosure suppressed -- see the CSS.
+    // Always open, and the summary cannot close it. Both were right when RUN
+    // was the last child of the scroller, where collapsing it hid the one
+    // section you touch on every queue. A4 made RUN a SURFACE: the entry
+    // module shows and hides the whole thing and opens it itself, so forcing
+    // it open here fought the surface swap -- entering RUN set `open = true`,
+    // then a toggle event snapped it back, and leaving RUN left an open <details>
+    // in the flow that would show through the tab strip.
+    //
+    // So the state is the caller's. `root.open` is only forced open here for
+    // the case nobody else is driving: the summary click is suppressed so a
+    // stray click cannot fold the surface away while it is on screen.
     root.open = true;
-    root.addEventListener("toggle", () => { root.open = true; });
-    // A click on the summary would otherwise close it before that fires.
     sum.addEventListener("click", (e) => e.preventDefault());
     // Values change behind the panel's back -- `control_after_generate` bumps
     // the seed on every queue, and undo rewrites widgets wholesale -- so what

@@ -1034,23 +1034,29 @@ def register():
             trim = max(0, min(240, int(request.query.get("trim") or 0)))
         except ValueError:
             trim = 0
+        try:
+            tail = max(0, min(240, int(request.query.get("tail") or 0)))
+        except ValueError:
+            tail = 0
 
         def build(hs, path):
             ma, mb = hs.meta(a), hs.meta(b)
             sa, sb = hs.audio(a), hs.audio(b)
             if None in (ma, mb, sa, sb):
                 return False
-            ia, ib = _strip.seam_indices(ma["frames"], mb["frames"], trim, fps=hs.fps)
+            ia, ib = _strip.seam_indices(ma["frames"], mb["frames"], trim, fps=hs.fps,
+                                         tail_frames=tail)
             fa = hs.frames(a, _strip.CLIP_H, ia)
             fb = hs.frames(b, _strip.CLIP_H, ib)
             if fa is None or fb is None:
                 return False
-            imgs, wav = _strip.seam(fa, sa[0], fb, sb[0], sa[1], trim, fps=hs.fps)
+            imgs, wav = _strip.seam(fa, sa[0], fb, sb[0], sa[1], trim, fps=hs.fps,
+                                    tail_frames=tail)
             _strip.encode_clip(imgs, wav, sa[1], path, fps=hs.fps)
             return True
 
         try:
-            resp = await _serve_clip(f"seam_{a}_{b}_{trim}", build)
+            resp = await _serve_clip(f"seam_{a}_{b}_{trim}_{tail}", build)
         except Exception as exc:  # noqa: BLE001
             print(f"[{TAG}] seam_clip failed for {a[:8]}|{b[:8]}: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)}, status=500)

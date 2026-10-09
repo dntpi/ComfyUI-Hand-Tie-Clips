@@ -122,9 +122,10 @@ def main():
        "hop_starts" in src
        and "start_at=hop_starts" in src)
     # hop_trims == not hop_is_start, except under pin_mech=hand_tie, where every
-    # hop is assembled as a start yet still trims its overlap.
+    # hop is assembled as a start yet still trims its overlap -- from the
+    # previous hop's tail, so its own first frame is the one delivered.
     ck("contact sheet first-frame follows the trim (hop_trims)",
-       "imgs[overlap_n] if hop_trims else imgs[0]" in src
+       "imgs[overlap_n] if (hop_trims and not ht) else imgs[0]" in src
        and "hop_trims = i > 0 and not hop_restart" in src)
     ck("overlap leaves the hop key on a restart",
        "overlap_n if not hop_is_start" in src)

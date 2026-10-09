@@ -105,14 +105,16 @@ def _mono_or_stereo(wav):
     return np.ascontiguousarray(wav[:2])
 
 
-def seam(prev_tail, prev_wav, next_head, next_wav, sr, trim_frames, fps=FPS):
+def seam(prev_tail, prev_wav, next_head, next_wav, sr, trim_frames, fps=FPS, tail_frames=0):
     """The join as the master delivers it: `(frames uint8, wav [C,S])`.
 
     `prev_tail` is the last frames of the previous hop; `next_head` is the
     next hop's frames starting AFTER its first `trim_frames` -- the overlap a
     continuation regenerates and the master throws away (0 for a restart).
     The audio is cut to match: the previous hop's last `len(prev_tail)`
-    frames of sound, then the next hop's from `trim_frames` on. Pass the
+    frames of sound, then the next hop's from `trim_frames` on. Hand-tie cuts
+    the other side: `tail_frames` of the previous hop's sound are dropped
+    from its end and `trim_frames` is 0. Pass the
     hops' whole waveforms; the windows are taken here, so picture and sound
     come from the same arithmetic.
     """
@@ -126,7 +128,8 @@ def seam(prev_tail, prev_wav, next_head, next_wav, sr, trim_frames, fps=FPS):
     a_n = int(round(a.shape[0] * per))
     b_skip = int(round(max(0, int(trim_frames)) * per))
     b_n = int(round(b.shape[0] * per))
-    a_part = a_wav[:, -a_n:]
+    a_end = a_wav.shape[1] - int(round(max(0, int(tail_frames)) * per))
+    a_part = a_wav[:, max(0, a_end - a_n):a_end]
     b_part = b_wav[:, b_skip:b_skip + b_n]
     ch = max(a_part.shape[0], b_part.shape[0])
     if a_part.shape[0] < ch:
@@ -136,11 +139,16 @@ def seam(prev_tail, prev_wav, next_head, next_wav, sr, trim_frames, fps=FPS):
     return np.concatenate([a, b], axis=0), np.concatenate([a_part, b_part], axis=1)
 
 
-def seam_indices(prev_frames, next_frames, trim_frames, seconds=SEAM_SECONDS, fps=FPS):
-    """Which frames of each hop a join clip shows: `(prev_idx, next_idx)`."""
+def seam_indices(prev_frames, next_frames, trim_frames, seconds=SEAM_SECONDS, fps=FPS,
+                 tail_frames=0):
+    """Which frames of each hop a join clip shows: `(prev_idx, next_idx)`.
+
+    `tail_frames` is hand-tie's cut: the previous hop's last frames are dropped
+    instead of the next hop's first."""
     k = max(1, int(round(seconds * fps)))
     trim = max(0, int(trim_frames))
-    prev_idx = list(range(max(0, int(prev_frames) - k), int(prev_frames)))
+    end = int(prev_frames) - max(0, int(tail_frames))
+    prev_idx = list(range(max(0, end - k), end))
     next_idx = list(range(trim, min(int(next_frames), trim + k)))
     return prev_idx, next_idx
 

@@ -185,6 +185,26 @@ ck("the cut frames of the hop are untouched", torch.equal(out[:22], hop[:22]))
 busy = torch.rand(40, H, W, 3)
 ck("a seam with no still pixels is left alone", HT.seam_blend(left, torch.cat([torch.zeros(22, H, W, 3), busy]), 22)[1] is None)
 
+print("\nthe cut sits at the window START (the previous hop's tail span is dropped)")
+# raw hops of chain_00142: the tail span, guided at -22, stepped -11/255; the head,
+# guided at 0, -3 at worst. run() rewinds the master by the overlap and writes each
+# later hop whole; the seam blend reads the two frames before the rewound cut.
+ck("run() rewinds the master and writes a hand-tie hop whole",
+   "write_pos -= overlap_n" in src and "master_imgs[write_pos:write_pos + keep_n] = imgs" in src)
+ck("run() drops the previous hop's tail audio, not this hop's head",
+   "master_wav[..., :-dropped]" in src)
+ck("the seam blend measures the frames before the window start",
+   "master_imgs[write_pos - overlap_n - 2:write_pos - overlap_n]" in src
+   and "_ht.seam_blend(_before, imgs, 0)" in src)
+_pos, _cuts = 0, []
+for _k in range(4):
+    if _k:
+        _pos -= HT.WINDOW
+        _cuts.append(_pos)
+    _pos += 192
+ck("4 x 8 s: cuts at 170/340/510, the film still 702 frames",
+   _cuts == [170, 340, 510] and _pos == HT.film_frames([192] * 4), (_cuts, _pos))
+
 print("\nrefusals")
 ck("overlap 22 + last_frame_guide off is fine", HT.settings_errors(22, "off") == [])
 ck("overlap 5 is refused", len(HT.settings_errors(5)) == 1)

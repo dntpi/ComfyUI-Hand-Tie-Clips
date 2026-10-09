@@ -986,9 +986,18 @@ def stitch(seg):
             raise ValueError(f"hop {h['hop']}: its kept frames start at VAE "
                              f"phase {k % 5}, the joined latent is at "
                              f"{steps % 5}")
-        kept = v[:, :, k:]
+        # Hand-tie cuts the previous hop's tail instead of this hop's head.
+        tail = int(h.get("tail") or 0)
+        end = int(v.shape[2])
+        if tail:
+            end = tokens_to_reach(frames_in(end) - tail)
+            if frames_in(end) != frames_in(int(v.shape[2])) - tail:
+                raise ValueError(f"hop {h['hop']}: a tail cut of {tail} frames is "
+                                 "not a whole number of latent steps")
+        kept = v[:, :, k:end]
         vids.append(kept)
-        auds.append(a[..., round(drop * FRAME_RESCALE):])
+        auds.append(a[..., round(drop * FRAME_RESCALE):
+                      int(a.shape[-1]) - round(tail * FRAME_RESCALE)])
         steps += int(kept.shape[2])
     return torch.cat(vids, dim=2), torch.cat(auds, dim=-1)
 

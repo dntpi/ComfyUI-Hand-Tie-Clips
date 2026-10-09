@@ -443,10 +443,13 @@ export function createTimeline(node, { editor, onChange } = {}) {
                 + (playable ? "Click to play the join." : "Nothing cached to play.");
             if (playable) {
                 mark.classList.add("h3e-tl-click");
-                const trim = g.restart ? 0 : (b.overlap ?? t.ov);
+                const ov = g.restart ? 0 : (b.overlap ?? t.ov);
+                // Hand-tie cuts the previous hop's tail, not this hop's head.
+                const tie = b.pin_mech === "hand_tie";
+                const cut = tie ? `trim=0&tail=${ov}` : `trim=${ov}`;
                 mark.addEventListener("click", () => openPlayer(
                     `join ${i}|${i + 1}${g.restart ? " (restart cut)" : ""}`,
-                    `${SEAM_URL}?a=${a.key}&b=${b.key}&trim=${trim}`));
+                    `${SEAM_URL}?a=${a.key}&b=${b.key}&${cut}`));
             }
             seamRow.body.appendChild(place(mark, g.start * scale - 4));
         }

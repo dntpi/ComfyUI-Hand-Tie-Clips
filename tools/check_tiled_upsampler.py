@@ -306,6 +306,19 @@ def chain_checks(tu):
     ck("stitched latent's frame count equals what the chain delivered",
        tu.frames_in(sv.shape[2]) == at_frame)
 
+    # Hand-tie cuts the other side of the same overlap: the previous hop's
+    # tail, this hop whole. Same film back.
+    tied = [dict(h, drop=0, tail=(22 if n < 2 else 0), frames=(170 if n < 2 else 192))
+            for n, h in enumerate(hops)]
+    tv, ta = tu.stitch(tied)
+    ck("a hand-tie stitch (tail cut) gives back the same film latent",
+       torch.equal(tv, sv) and ta.shape == sa.shape, f"{tv.shape[2]} steps")
+    try:
+        tu.stitch([dict(tied[0], tail=20), tied[1]])
+        ck("an off-grid tail cut is refused", False)
+    except ValueError as e:
+        ck("an off-grid tail cut is refused", "whole number" in str(e))
+
     bad = dict(hops[1], drop=20)
     try:
         tu.stitch([hops[0], bad])

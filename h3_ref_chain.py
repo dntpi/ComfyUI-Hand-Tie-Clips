@@ -5327,10 +5327,14 @@ class HandTieClips:
                 imgs, (_ho, _to) = _ht.tone_match(imgs, _wp[_k], _wp[_k + 1])
                 tone_note = ("hand-tie head " + "/".join("%+.1f" % (float(v) * 255) for v in _ho)
                              + ", tail " + "/".join("%+.1f" % (float(v) * 255) for v in _to) + " /255")
-                if hop_trims and prev_imgs is not None:
+                if hop_trims and master_imgs is not None and write_pos >= overlap_n + 2:
                     # What tone_match leaves at the cut itself, faded out over a
                     # second after it (chain_00141 flickered 3/255 at two joins).
-                    imgs, _step = _ht.seam_blend(prev_imgs, imgs, overlap_n)
+                    # The cut is at the window START (see the master write), so
+                    # the frames before it are the previous hop's last two
+                    # before its tail span, already in the master.
+                    _before = master_imgs[write_pos - overlap_n - 2:write_pos - overlap_n]
+                    imgs, _step = _ht.seam_blend(_before, imgs, 0)
                     if _step is not None:
                         tone_note += (", seam " + "/".join("%+.1f" % (float(v) * 255) for v in _step)
                                       + " /255 faded over 1 s")
@@ -5405,6 +5409,32 @@ class HandTieClips:
                         f"frames (no overlap trim)",
                         flush=True,
                     )
+            elif ht:
+                # Hand-tie cuts at the START of the shared window, not its end.
+                # Both hops render that window; the previous hop renders it
+                # under the -22 guide, which steps its level frame to frame
+                # (raw hops of chain_00142: -11/255 at frame -5, +4..+6 at -20),
+                # while this hop renders it under the frame-0 guide and holds
+                # (-3 at worst). So the previous hop's tail span is overwritten
+                # and this hop is written whole. Same film length.
+                keep_n = int(imgs.shape[0])
+                write_pos -= overlap_n
+                if write_pos + keep_n > total_frames:
+                    raise ValueError(
+                        f"{TAG}: hop {i + 1} overruns the preallocated master "
+                        f"({write_pos + keep_n} > {total_frames}). A hop decoded a "
+                        f"different length than planned.")
+                seam_marks.append(int(write_pos))
+                master_imgs[write_pos:write_pos + keep_n] = imgs
+                write_pos += keep_n
+                master_wav = _batch_wav(master_wav)
+                dropped = min(_audio_samples(overlap_n, sr), int(master_wav.shape[-1]) - 1)
+                master_wav = _xfade_audio(master_wav[..., :-dropped], audio["waveform"], sr)
+                print(
+                    f"[{TAG}] hop {i + 1}: cut at the window start, dropped hop {i}'s "
+                    f"last {overlap_n} frames / {dropped} audio samples",
+                    flush=True,
+                )
             else:
                 if imgs.shape[0] <= overlap_n:
                     raise ValueError(
@@ -5430,13 +5460,17 @@ class HandTieClips:
 
             if upsample_on:
                 _up = _latents.from_dict(up_latent) if up_latent is not None else None
+                if ht and hop_trims and upsample_hops:
+                    # The master cut the previous hop's tail span, not this head.
+                    upsample_hops[-1]["tail"] = int(overlap_n)
+                    upsample_hops[-1]["frames"] -= int(overlap_n)
                 upsample_hops.append({
                     "hop": i + 1,
                     "video": (_up[0] if _up and len(_up) == 2 else None),
                     "audio": (_up[1] if _up and len(_up) == 2 else None),
                     "cond": up_cond,
                     "start": not hop_trims,
-                    "drop": int(overlap_n) if hop_trims else 0,
+                    "drop": int(overlap_n) if (hop_trims and not ht) else 0,
                     "frames": int(keep_n),
                     # pin_only caches the REFINED latent, not the delivered one
                     "stand_in": bool(cached is not None
@@ -5449,7 +5483,7 @@ class HandTieClips:
                 # (hop 1 or a restart) gives all of them, a continuation
                 # gives what survives the overlap trim. Showing imgs[0] on
                 # a continuation would show a frame the master never contains.
-                _f0 = imgs[overlap_n] if hop_trims else imgs[0]
+                _f0 = imgs[overlap_n] if (hop_trims and not ht) else imgs[0]
                 _row_seed = (int(shot["seed"]) if shot.get("seed") is not None
                              else ((int(seed) + i) if seed_per_shot else int(seed)))
                 sheet_rows.append({

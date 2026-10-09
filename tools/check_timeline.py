@@ -110,6 +110,14 @@ def test_strip():
        f"{wav.shape} {wav[0, 24 * per]}")
     ia, ib = strip.seam_indices(48, 60, 0, seconds=1.0)
     ck("a restart join drops nothing", ib[0] == 0 and len(ib) == 24)
+    ia, ib = strip.seam_indices(48, 60, 0, seconds=1.0, tail_frames=22)
+    ck("a hand-tie join cuts the previous hop's tail, not the next head",
+       ia == list(range(2, 26)) and ib == list(range(0, 24)), f"{ia[:2]} {ib[:2]}")
+    pw2 = torch.arange(48 * per, dtype=torch.float32).repeat(2, 1)[None]
+    imgs, wav = strip.seam(prev[ia], pw2, nxt[ib], nw, sr, 0, tail_frames=22)
+    ck("its audio drops the same tail and keeps the next head",
+       wav.shape == (2, 48 * per) and int(wav[0, 0]) == 2 * per
+       and int(wav[0, 24 * per]) == 0, f"{wav.shape} {wav[0, 0]} {wav[0, 24 * per]}")
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "c.mp4")

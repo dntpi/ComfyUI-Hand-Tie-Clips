@@ -3963,6 +3963,8 @@ class HandTieClips:
         master_imgs = (None if (dry or previs_only)
                        else _alloc_master(total_frames, height, width))
         write_pos = 0
+        ht_hop_start = 0           # hand-tie: where the last written hop starts
+        ht_section_starts = []     # hand-tie: where each section starts, for deflicker
         # Where each join actually landed. Recorded rather than derived,
         # because it can no longer BE derived: `seam.seam_positions()` solves
         # for a uniform hop length from (total, hops, overlap), and a restart
@@ -5320,24 +5322,15 @@ class HandTieClips:
             # hop 1's tone.
             tone_note = ""
             if ht:
-                # Both hops at a join land on the same window's tone, so the cut
-                # meets on one level (lab: 1.7 -> 0.6 /255 at the worst join).
+                # The HEAD window only: the tail span is cut from the film, and
+                # guided at -22 it renders ~10 /255 brighter than what is kept
+                # (chain_00144), so matching it darkened the kept frames. The join
+                # is closed by seam_bend at the master write.
                 _si, _k = ht_pos[i]
                 _wp, _ws = ht_windows[_si]
-                imgs, (_ho, _to) = _ht.tone_match(imgs, _wp[_k], _wp[_k + 1])
+                imgs, (_ho, _to) = _ht.tone_match(imgs, _wp[_k], None)
                 tone_note = ("hand-tie head " + "/".join("%+.1f" % (float(v) * 255) for v in _ho)
-                             + ", tail " + "/".join("%+.1f" % (float(v) * 255) for v in _to) + " /255")
-                if hop_trims and master_imgs is not None and write_pos >= overlap_n + 2:
-                    # What tone_match leaves at the cut itself, faded out over a
-                    # second after it (chain_00141 flickered 3/255 at two joins).
-                    # The cut is at the window START (see the master write), so
-                    # the frames before it are the previous hop's last two
-                    # before its tail span, already in the master.
-                    _before = master_imgs[write_pos - overlap_n - 2:write_pos - overlap_n]
-                    imgs, _step = _ht.seam_blend(_before, imgs, 0)
-                    if _step is not None:
-                        tone_note += (", seam " + "/".join("%+.1f" % (float(v) * 255) for v in _step)
-                                      + " /255 faded over 1 s")
+                             + " /255")
                 print(f"[{TAG}] hop {i + 1} tone: {tone_note}", flush=True)
             if tone_on and not ht:
                 if i > 0 and prev_imgs is not None:
@@ -5395,6 +5388,8 @@ class HandTieClips:
                         f"different length than planned.")
                 if i > 0:
                     seam_marks.append(int(write_pos))
+                ht_hop_start = int(write_pos)
+                ht_section_starts.append(int(write_pos))
                 master_imgs[write_pos:write_pos + keep_n] = imgs
                 write_pos += keep_n
                 if i == 0:
@@ -5425,6 +5420,14 @@ class HandTieClips:
                         f"({write_pos + keep_n} > {total_frames}). A hop decoded a "
                         f"different length than planned.")
                 seam_marks.append(int(write_pos))
+                # The previous hop, already in the master, bent to meet this
+                # hop's first frame (both are on their head windows' tone).
+                _bend = _ht.seam_bend(master_imgs, ht_hop_start, write_pos, imgs)
+                if _bend is not None:
+                    print(f"[{TAG}] hop {i} bent " + "/".join(
+                        "%+.1f" % (-float(v) * 255) for v in _bend)
+                        + f" /255 across its length to meet hop {i + 1}", flush=True)
+                ht_hop_start = int(write_pos)
                 master_imgs[write_pos:write_pos + keep_n] = imgs
                 write_pos += keep_n
                 master_wav = _batch_wav(master_wav)
@@ -5603,6 +5606,14 @@ class HandTieClips:
             print(f"[{TAG}] note: wrote {write_pos} of {total_frames} planned "
                   f"frames; trimming", flush=True)
             master_imgs = master_imgs[:write_pos]
+        if ht and master_imgs is not None:
+            # One- and two-frame level blinks (every guided head dips -3 /255
+            # at its frame 17), per section: a restart is a real cut.
+            _ends = ht_section_starts[1:] + [int(write_pos)]
+            _fix = max([_ht.deflicker(master_imgs[a:b])
+                        for a, b in zip(ht_section_starts, _ends)] or [0.0])
+            print(f"[{TAG}] hand-tie deflicker: largest correction {_fix * 255:.1f} /255",
+                  flush=True)
         if hop_store is not None:
             hop_store.sweep(keep=hop_keys)
 

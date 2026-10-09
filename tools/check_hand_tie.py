@@ -167,35 +167,56 @@ try:
 except ValueError as e:
     ck("a hop too short for two spans is refused", True, str(e)[:50])
 
-print("\nseam blend (chain_00141's brightness flicker)")
+print("\nseam bend (chain_00144: the flash after each join)")
 torch.manual_seed(1)
 H, W = 24, 32
 bg = torch.rand(1, H, W, 3) * 0.5 + 0.2
-left = bg.repeat(6, 1, 1, 1).clone()
-right = (bg + 4.0 / 255).repeat(40, 1, 1, 1).clone()           # the next hop sits 4/255 brighter
-right[:, :8, :8] = torch.rand(40, 8, 8, 3)                     # and something moves in one corner
-hop = torch.cat([torch.zeros(22, H, W, 3), right], 0)         # its first 22 frames are cut
-st, share = HT.seam_step(left, hop, 22)
+master = bg.repeat(60, 1, 1, 1).clone()                         # the outgoing hop, frames 10..49
+nxt = (bg + 4.0 / 255).repeat(40, 1, 1, 1).clone()             # the next hop sits 4/255 brighter
+nxt[:, :8, :8] = torch.rand(40, 8, 8, 3)                       # and something moves in one corner
+st, share = HT.seam_step(master[48:50], nxt, 0)
 ck("the step is measured on still pixels, ignoring the moving corner",
    abs(float(st.mean()) * 255 + 4.0) < 0.05 and share > 0.8, "%s, %.0f%% still" % ((st * 255).tolist(), share * 100))
-out, st2 = HT.seam_blend(left, hop, 22)
-ck("after the blend the cut has no level step", abs(float((out[22] - left[-1])[:, 8:, :].mean()) * 255) < 0.05)
-ck("the correction fades to nothing over 1 s", torch.allclose(out[22 + HT.SEAM_FADE:], hop[22 + HT.SEAM_FADE:]))
-ck("the cut frames of the hop are untouched", torch.equal(out[:22], hop[:22]))
+before = master.clone()
+st2 = HT.seam_bend(master, 10, 50, nxt)
+ck("after the bend the cut has no level step", abs(float((nxt[0] - master[49])[8:, 8:].mean()) * 255) < 0.15,
+   "%.2f/255" % (float((nxt[0] - master[49])[8:, 8:].mean()) * 255))
+ck("the bend starts at nothing on the outgoing hop's first frame", torch.equal(master[10], before[10]))
+ck("it never steps more than step/length per frame",
+   float((master[11:50] - master[10:49]).abs().max()) * 255 < 4.0 / 39 + 0.01)
+ck("frames before the hop and the next hop are untouched",
+   torch.equal(master[:10], before[:10]) and torch.equal(master[50:], before[50:]))
 busy = torch.rand(40, H, W, 3)
-ck("a seam with no still pixels is left alone", HT.seam_blend(left, torch.cat([torch.zeros(22, H, W, 3), busy]), 22)[1] is None)
+ck("a seam with no still pixels is left alone", HT.seam_bend(before.clone(), 10, 50, busy) is None)
+
+print("\ndeflicker (the frame-17 dip every guided head has)")
+film = bg.repeat(80, 1, 1, 1).clone()
+film[:, :8, :8] = torch.rand(80, 8, 8, 3)                      # motion in one corner
+film[40:] += 6.0 / 255                                         # a real level change that lasts
+film[17] -= 3.0 / 255                                          # a one-frame blink
+film[60:62] += 2.0 / 255                                       # a two-frame blink
+ref = film.clone()
+ref[17] += 3.0 / 255
+ref[60:62] -= 2.0 / 255
+fix = HT.deflicker(film)
+ck("one- and two-frame blinks are removed", float((film - ref)[:, 8:, 8:].abs().max()) * 255 < 0.3,
+   "%.2f/255" % (float((film - ref)[:, 8:, 8:].abs().max()) * 255))
+ck("a level change that lasts is kept", abs(float((film[45] - film[35])[8:, 8:].mean()) * 255 - 6.0) < 0.3)
+ck("the largest correction is reported", abs(fix * 255 - 3.0) < 0.3, "%.2f" % (fix * 255))
 
 print("\nthe cut sits at the window START (the previous hop's tail span is dropped)")
 # raw hops of chain_00142: the tail span, guided at -22, stepped -11/255; the head,
 # guided at 0, -3 at worst. run() rewinds the master by the overlap and writes each
-# later hop whole; the seam blend reads the two frames before the rewound cut.
+# later hop whole; the outgoing hop is bent to meet it, and is toned on its head only.
 ck("run() rewinds the master and writes a hand-tie hop whole",
    "write_pos -= overlap_n" in src and "master_imgs[write_pos:write_pos + keep_n] = imgs" in src)
 ck("run() drops the previous hop's tail audio, not this hop's head",
    "master_wav[..., :-dropped]" in src)
-ck("the seam blend measures the frames before the window start",
-   "master_imgs[write_pos - overlap_n - 2:write_pos - overlap_n]" in src
-   and "_ht.seam_blend(_before, imgs, 0)" in src)
+ck("run() tones a hop on its head window only (its tail span is not delivered)",
+   "_ht.tone_match(imgs, _wp[_k], None)" in src)
+ck("run() bends the outgoing hop to the incoming one, then deflickers each section",
+   "_ht.seam_bend(master_imgs, ht_hop_start, write_pos, imgs)" in src
+   and "_ht.deflicker(master_imgs[a:b])" in src)
 _pos, _cuts = 0, []
 for _k in range(4):
     if _k:
@@ -226,7 +247,7 @@ tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read(
 mods = {n.module if isinstance(n, ast.ImportFrom) else a.name
         for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
         for a in (n.names if isinstance(n, ast.Import) else [n])}
-ck("imports only stdlib + torch", mods <= {"re", "torch"}, sorted(m for m in mods if m))
+ck("imports only stdlib + torch", mods <= {"re", "torch", "torch.nn.functional"}, sorted(m for m in mods if m))
 
 print("\nall ok" if not FAILS else "\n%d FAILED: %s" % (len(FAILS), FAILS))
 sys.exit(1 if FAILS else 0)

@@ -23,7 +23,9 @@ tools/check_hand_tie.py runs without a server:
     compile_previs()    the previs's timed description from the shots
     crossing_lints()    beats that repeat a line their head window already says
     tone_offsets()      the per-frame tone ramp (torch)
-    tone_match()        a hop pulled onto its two windows' tone (torch)
+    tone_match()        a hop pulled onto its window's tone (torch)
+    seam_bend()         the outgoing hop bent to meet the next one's first frame
+    deflicker()         one- and two-frame level blinks taken out of a section
     settings_errors()   what hand-tie refuses, before anything samples
     hop_key_fields()    what a hand-tie hop's cache key carries instead of prev_key
     film_frames()       a section's delivered length
@@ -324,9 +326,9 @@ def tone_match(images, head, tail=None, frames=WINDOW):
     return (images + off.view(n, 1, 1, -1)).clamp(0.0, 1.0), (head_off, tail_off)
 
 
-SEAM_FADE = 24           # frames (1 s) over which the residual step is faded out
 SEAM_STILL = 4.0 / 255   # a pixel is "still" if it moves less than this on both sides
 SEAM_MIN_STILL = 0.05    # below this share of still pixels the step is not trusted
+DEFLICKER = 7            # frames in the running median that defines the film's level
 
 
 def seam_step(prev_tail, images, start, still=SEAM_STILL):
@@ -348,35 +350,66 @@ def seam_step(prev_tail, images, start, still=SEAM_STILL):
     return (a1 - b0)[mask].median(dim=0).values, share
 
 
-def seam_blend(prev_tail, images, start, fade=SEAM_FADE):
-    """Remove the level step left at a cut, fading it out after the cut.
+def seam_bend(master, start, cut, images):
+    """Bend the outgoing hop, in place, so its last kept frame meets the next hop's first.
 
-    tone_match pulls each hop onto its windows by a ramp fitted over 22-frame
-    spans, which is right on average and can still leave a few /255 between the
-    last frame kept of hop k and the first frame kept of hop k+1 (chain_00141: a
-    still-pixel step of 4 /255 at join 1 and 2 at join 3, seen as a brightness
-    flicker). The step (`seam_step`) is added to hop k+1 at the cut and faded
-    linearly to nothing over `fade` frames: invisible as a drift, gone as a step.
-    Post only: hand-tie hops read no other hop, so nothing is generated from these
-    pixels.
+    Each hop is pulled onto its HEAD window only. Its tail span is not delivered (the
+    film cuts at the window start), and it is the wrong thing to measure: guided at
+    -22, it renders about 10 /255 brighter than the window and than the hop's own
+    frames before it (chain_00144: 109.7 against 96.4 and 99.0). Ramping a hop toward
+    that span darkened the frames the film keeps, and fixing the step that left at the
+    cut by fading the next hop showed as a brightening over the second after each join.
+    What is left between two head-matched hops is 1-2 /255; it is spread from 0 at
+    the outgoing hop's first frame to the full step at its last, which nobody sees.
 
-    prev_tail [>=2,H,W,C] the last frames delivered before the cut; images the
-    whole hop, its first delivered frame at `start`. -> (images, step per channel)
+    master [N,H,W,C]; the outgoing hop occupies master[start:cut]; images is the
+    incoming hop, first frame delivered at the cut. -> step per channel, or None.
     """
     import torch  # noqa: PLC0415
-    n = int(images.shape[0])
-    if prev_tail is None or int(prev_tail.shape[0]) < 2 or start + 1 >= n:
-        return images, None
-    step, _share = seam_step(prev_tail, images, start)
+    n = int(cut) - int(start)
+    if n < 2:
+        return None
+    step, _share = seam_step(master[cut - 2:cut], images, 0)
     if step is None:
-        return images, None
-    span = min(int(fade), n - start)
-    w = torch.linspace(1.0, 0.0, span + 1)[:span]
-    out = images.clone()
-    out[start:start + span] = (out[start:start + span]
-                               + (w.view(-1, 1, 1, 1) * step.view(1, 1, 1, -1)).to(out.dtype)
-                               ).clamp(0.0, 1.0)
-    return out, step
+        return None
+    w = torch.linspace(0.0, 1.0, n, device=step.device).view(-1, 1, 1, 1)
+    master[start:cut] = (master[start:cut].float() - w * step.view(1, 1, 1, -1)
+                         ).clamp(0.0, 1.0).to(master.dtype)
+    return step
+
+
+def deflicker(master, frames=DEFLICKER, still=SEAM_STILL):
+    """Remove level blinks of a frame or two, in place, over a finished section.
+
+    The film's level, per channel, is the running sum of each frame's still-pixel
+    step; its running median over `frames` is the level the film should have, and
+    the difference is the blink. That takes out the one-frame dip every guided head
+    has where its 17-frame VAE cycle meets the guide's end (frame 17: -3 /255, back
+    by 19), and leaves any change that lasts longer than half the window. Additive,
+    so a level moves, not a contrast. -> the largest correction in /1 units.
+    """
+    import torch  # noqa: PLC0415
+    import torch.nn.functional as F  # noqa: PLC0415
+    n = int(master.shape[0])
+    if n < frames:
+        return 0.0
+    d = torch.zeros(n, int(master.shape[-1]))
+    for t in range(1, n):
+        a, b = master[t - 1].float(), master[t].float()
+        lo = master[t - 2].float() if t >= 2 else a
+        hi = master[t + 1].float() if t + 1 < n else b
+        mask = ((a - lo).abs().amax(-1) < still) & ((hi - b).abs().amax(-1) < still)
+        if float(mask.float().mean()) >= SEAM_MIN_STILL:
+            d[t] = (b - a)[mask].median(dim=0).values.cpu()
+    level = d.cumsum(0)
+    r = frames // 2
+    padded = F.pad(level.T[None], (r, r), mode="replicate")[0]
+    corr = padded.unfold(1, frames, 1).median(-1).values.T - level
+    for t in range(n):
+        if float(corr[t].abs().max()) > 0.0:
+            master[t] = (master[t].float() + corr[t].to(master.device).view(1, 1, -1)
+                         ).clamp(0.0, 1.0).to(master.dtype)
+    return float(corr.abs().max())
 
 
 # --- what hand-tie refuses, and what it keys ------------------------------------

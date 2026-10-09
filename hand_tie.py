@@ -465,6 +465,43 @@ def previs_cuts(frames):
     return out
 
 
+AUDIO_QUIET_DB = -35.0   # dBFS: the outgoing hop is quiet enough to leave here
+AUDIO_PROBE_S = 0.04     # seconds of sound judged at each candidate point (the xfade)
+AUDIO_STEP_S = 0.01
+
+
+def audio_cut(out_tail, in_head, sr):
+    """Samples past the picture cut at which the sound should switch hops.
+
+    Both hops render the window, so the sound can switch anywhere inside it and
+    stay in sync. chain_00147 showed two words broken at the picture cut:
+    the outgoing hop was still finishing "tonight" (0.11 s past the cut), and the
+    incoming hop opened on a fragment of a word the PREVIS had invented ("air",
+    0.35 s): its window sound is pinned to the incoming hop's frame 0, so that hop
+    repeats it. The sound leaves at the first point where BOTH hops are quiet
+    (below AUDIO_QUIET_DB); failing that, where the outgoing one is; failing that
+    (one continuous sound, rain or music, across the window) at the picture cut.
+
+    out_tail / in_head: [..., S] the outgoing hop's window-span sound and the
+    incoming hop's, same length. -> samples (0 .. S - probe).
+    """
+    import torch  # noqa: PLC0415
+    a = out_tail.float().reshape(-1, out_tail.shape[-1]).mean(0)
+    b = in_head.float().reshape(-1, in_head.shape[-1]).mean(0)
+    s = min(int(a.shape[-1]), int(b.shape[-1]))
+    w, step = max(1, int(AUDIO_PROBE_S * sr)), max(1, int(AUDIO_STEP_S * sr))
+    db = lambda x: 20.0 * float(torch.log10(x.pow(2).mean().sqrt() + 1e-9))  # noqa: E731
+    out_quiet = None
+    for p in range(0, s - w + 1, step):
+        la, lb = db(a[p:p + w]), db(b[p:p + w])
+        if la < AUDIO_QUIET_DB:
+            if lb < AUDIO_QUIET_DB:
+                return p
+            if out_quiet is None:
+                out_quiet = p
+    return out_quiet or 0
+
+
 def _detail_split(frame, sigma=DETAIL_SIGMA):
     """(base, detail energy) of one [H,W,C] frame: a separable gaussian blur and the
     mean absolute difference from it."""

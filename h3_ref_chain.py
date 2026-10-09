@@ -5468,10 +5468,16 @@ class HandTieClips:
                 write_pos += keep_n
                 master_wav = _batch_wav(master_wav)
                 dropped = min(_audio_samples(overlap_n, sr), int(master_wav.shape[-1]) - 1)
-                master_wav = _xfade_audio(master_wav[..., :-dropped], audio["waveform"], sr)
+                _in = _batch_wav(audio["waveform"])
+                # The sound leaves the outgoing hop at its first quiet point in
+                # the window, not mid-word at the picture cut (chain_00147).
+                _late = _ht.audio_cut(master_wav[..., -dropped:], _in[..., :dropped], sr)
+                master_wav = _xfade_audio(master_wav[..., :int(master_wav.shape[-1]) - dropped + _late],
+                                          _in[..., _late:], sr)
                 print(
                     f"[{TAG}] hop {i + 1}: cut at the window start, dropped hop {i}'s "
-                    f"last {overlap_n} frames / {dropped} audio samples",
+                    f"last {overlap_n} frames; its sound runs {_late / float(sr):.2f}s on "
+                    f"to a quiet point",
                     flush=True,
                 )
             else:

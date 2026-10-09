@@ -255,8 +255,18 @@ print("\nthe cut sits at the window START (the previous hop's tail span is dropp
 # later hop whole; the outgoing hop is bent to meet it, and is toned on its head only.
 ck("run() rewinds the master and writes a hand-tie hop whole",
    "write_pos -= overlap_n" in src and "master_imgs[write_pos:write_pos + keep_n] = imgs" in src)
-ck("run() drops the previous hop's tail audio, not this hop's head",
-   "master_wav[..., :-dropped]" in src)
+ck("run() switches the sound inside the window at audio_cut's point (picture still cuts at its start)",
+   "_ht.audio_cut(master_wav[..., -dropped:], _in[..., :dropped], sr)" in src)
+SR = 32000
+quiet = 0.001 * torch.randn(1, 2, 29333)                        # room tone, about -60 dB
+word = quiet.clone(); word[..., :3500] += 0.3 * torch.randn(1, 2, 3500)    # a word ending 0.11 s in
+echo = quiet.clone(); echo[..., :11000] += 0.2 * torch.randn(1, 2, 11000)  # the previs's word, 0.34 s
+p1 = HT.audio_cut(word, quiet, SR)
+ck("the sound waits for the outgoing word to end (chain_00147: 'tonight')", 3500 <= p1 <= 3500 + 0.03 * SR, p1 / SR)
+p2 = HT.audio_cut(word, echo, SR)
+ck("... and skips the incoming hop's echo of a previs word ('air')", 11000 <= p2 <= 11000 + 0.03 * SR, p2 / SR)
+rain = 0.1 * torch.randn(1, 2, 29333)
+ck("one continuous sound across the window switches at the picture cut", HT.audio_cut(rain, rain, SR) == 0)
 ck("run() tones a hop on its head window only (its tail span is not delivered)",
    "_ht.tone_match(imgs, _wp[_k], None)" in src)
 ck("run() bends the outgoing hop to the incoming one, then deflickers each section",

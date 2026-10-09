@@ -244,6 +244,29 @@ def main():
        not dead, f"{len(css_classes)} styled" if not dead
        else f"{len(dead)} dead: " + ", ".join(dead[:6]))
 
+    # The height guard, under Node. It is the one piece of this panel that used
+    # to move the node on its own every frame, and the shrink path plus the
+    # deadband are pure arithmetic -- exactly the kind of thing that reads
+    # correct and is not. Needs Node; skipped loudly without it, like the
+    # forecast in check_timeline.py.
+    print("\nheight guard")
+    import shutil
+    import subprocess
+    node_exe = shutil.which("node")
+    if not node_exe:
+        print("  skip the height guard: Node is not on PATH "
+              "(tools/height_guard_test.mjs)")
+    else:
+        loader = "file:///" + os.path.join(HERE, "tools",
+                                           "app_stub_loader.mjs").replace("\\", "/")
+        got = subprocess.run(
+            [node_exe, "--import", loader, os.path.join(HERE, "tools", "height_guard_test.mjs")],
+            capture_output=True, text=True, timeout=60)
+        for line in got.stdout.splitlines():
+            print("  " + line.strip() if line.strip() else "")
+        ck("the height guard fits both ways and stops", got.returncode == 0,
+           got.stderr[-300:])
+
     print()
     if FAIL:
         print(f"UI CHECK: {len(FAIL)} FAILURE(S)")

@@ -326,15 +326,39 @@ function mountEditor(node) {
                 videoSwap.render?.();
             }
             // The panel does not follow the node's height on its own; see the
-            // note on installHeightGuard. sync() grows the node if the pane now
-            // showing needs more room than the last one did.
-            node._h3HeightGuard?.sync();
+            // note on installHeightGuard. sync() resizes the node to what is
+            // now showing, up OR down, which is the whole of A2: the Script
+            // tab is tall and Media is short, so a switch has to be able to
+            // make the node smaller as well as bigger.
+            node._h3HeightGuard?.sync("tab " + id);
             node.graph?.setDirtyCanvas?.(true, true);
         },
     });
     root.appendChild(tabs.strip);
     root.appendChild(tabs.bodies);
     root.appendChild(runPanel.root);
+
+    // A2's manual pin, on the tab strip so it is reachable without opening
+    // RUN. Freezing the height is the answer to "I sized this node and it
+    // moved anyway" -- which is the only complaint a fit-to-content node can
+    // legitimately earn.
+    const pinBtn = button(
+        "⇕", "Pin the node's height: stop it following the panel",
+        () => {
+            const on = node._h3HeightGuard?.togglePin();
+            if (!on) node._h3HeightGuard?.sync("unpin");
+            paintPin();
+        }, "h3e-btn h3e-pin");
+    function paintPin() {
+        const on = !!node._h3HeightGuard?.pinned;
+        pinBtn.classList.toggle("h3e-on", on);
+        pinBtn.title = on
+            ? "Height pinned - the node keeps this size until you unpin"
+            : "Pin the node's height: stop it following the panel";
+    }
+    tabs.strip.appendChild(pinBtn);
+    tabs.strip.appendChild(el("span", "h3e-stripgap", ""));
+    node._h3PaintPin = paintPin;
 
     const domWidget = node.addDOMWidget("h3_editor", "h3_editor", root, {
         serialize: false,
@@ -343,7 +367,11 @@ function mountEditor(node) {
     });
     domWidget.serialize = false;
 
-    installHeightGuard(node, domWidget, { minHeight: EDITOR_MIN_H, minWidth: NODE_MIN_WIDTH });
+    installHeightGuard(node, domWidget, {
+        minHeight: EDITOR_MIN_H,
+        minWidth: NODE_MIN_WIDTH,
+        root,   // A2: the height target is measured off this, not declared per tab.
+    });
 
     function applyVisibility() {
         // The rail always owns ref_plan; the plan widget's visibility follows
@@ -404,6 +432,7 @@ function mountEditor(node) {
     mediaStrip.render();
     editor.render();
     syncBadges();
+    paintPin();
 
     // `control_after_generate` bumps the seed widget as the prompt is queued,
     // and undo rewrites widgets wholesale -- both behind this panel's back.

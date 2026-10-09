@@ -231,7 +231,9 @@ export function setWidgetVisibility(node, hiddenNames) {
  * panelHeight() reports 0, so computeSize() returns pure chrome. The flag also
  * breaks the recursion, since computeSize() calls back into us.
  */
-export function installHeightGuard(node, domWidget, { minHeight = 420, minWidth = 520 } = {}) {
+export function installHeightGuard(node, domWidget, {
+    minHeight = 420, minWidth = 520, root = null, pinProp = "h3_height_pin",
+} = {}) {
     if (node._h3HeightGuard) return node._h3HeightGuard;
 
     let measuring = false;
@@ -263,28 +265,120 @@ export function installHeightGuard(node, domWidget, { minHeight = 420, minWidth 
     // bottom of the panel; 4 would do, 8 leaves room for the frontend to
     // change its mind about padding.
     const SLACK = 8;
+    const MAX_HEIGHT = 6000;
+
+    // The resize deadband. Below this the node is left alone, so a rounding
+    // difference between two layout passes cannot restart the growth loop the
+    // note above is about -- that loop needs every pass to find one more pixel
+    // than the last, and a deadband makes "one more pixel" unreachable.
+    const TOLERANCE = 3;
     const nodeHeight = () => Math.max(minHeight, +(node.size?.[1]) || minHeight);
     const nodeWidth = () => Math.max(minWidth, +(node.size?.[0]) || minWidth);
+
+    // The pin. Once set, nothing the panel does changes the height: the node
+    // keeps whatever size it has until the pin is lifted. Stored on the node,
+    // so a saved workflow remembers it -- a pinned node that silently unfroze
+    // on reload would be its own bug report.
+    const isPinned = () => !!(node.properties && node.properties[pinProp]);
+    const setPinned = (on) => {
+        node.properties ??= {};
+        node.properties[pinProp] = !!on;
+        node.graph?.setDirtyCanvas?.(true, true);
+        return isPinned();
+    };
+
+    // Set the node to exactly `panelPx` of panel, in BOTH directions. This is
+    // the fixpoint that makes shrinking safe: afterwards panelHeight() ==
+    // panelPx, so the next arrange pass measures that same number back and
+    // asks for the same size. The grow-only path had no such target, which is
+    // why it could only ever move one way.
+    const fit = (panelPx, reason) => {
+        if (measuring || isPinned()) return;
+        // The floor is chrome + minHeight + SLACK, NOT minHeight: `nodeHeight()`
+        // floors the node at minHeight, so a smaller request here would be
+        // clamped straight back up to minHeight and panelHeight() would then
+        // report `minHeight - chrome` -- under the minimum the caller was told
+        // it could count on. (The old grow-only path got this right by only
+        // ever growing, so the two terms could not be confused.)
+        const floor = chrome() + minHeight + SLACK;
+        const want = Math.min(MAX_HEIGHT, Math.max(floor, chrome() + panelPx + SLACK));
+        const have = nodeHeight();
+        // Logged on the crossing, not every frame, so "it settles" is legible.
+        // Left on deliberately: the brief asks for one session of evidence
+        // that the node has stopped moving.
+        if (Math.abs(want - have) > TOLERANCE) {
+            node.setSize([nodeWidth(), want]);
+            console.log(`[HandTieClips] height ${have} -> ${want} (${reason})`);
+        }
+        node.graph?.setDirtyCanvas?.(true, true);
+    };
+
+    // The natural height of what is mounted: every visible top-level section's
+    // own content height, plus the flex gaps between them and the root's
+    // padding. Measured from the DOM rather than declared per panel, so a new
+    // tab reports nothing and RUN becoming its own view (A4) is picked up for
+    // free -- including its absence when the other surface is showing.
+    const naturalHeight = () => {
+        if (!root) return null;
+        const kids = [...root.children].filter(
+            (c) => !c.hidden && c.getClientRects().length > 0);
+        if (!kids.length) return null;
+        const cs = getComputedStyle(root);
+        const gap = parseFloat(cs.rowGap) || 0;
+        const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        let sum = 0;
+        for (const k of kids) sum += k.scrollHeight;
+        return sum + gap * (kids.length - 1) + pad;
+    };
+
+    // Coalesced into one frame. A re-render, a plan load and a tab switch each
+    // ask in the same tick, and measuring per request would resize the node
+    // three times for one visual change.
+    let rafId = 0;
+    const schedule = (reason) => {
+        if (rafId || isPinned()) return;
+        const run = () => {
+            rafId = 0;
+            if (isPinned()) return;
+            const want = naturalHeight();
+            if (want != null) fit(want, reason);
+        };
+        if (typeof requestAnimationFrame === "function") {
+            rafId = requestAnimationFrame(run);
+        } else {
+            run();   // no rAF (a headless check): fit immediately
+        }
+    };
 
     const guard = {
         get minHeight() { return minHeight; },
         /** The node's own height is the authority; nothing mirrors it. */
         get _h() { return nodeHeight(); },
+        get pinned() { return isPinned(); },
+        setPinned,
+        togglePin() { return setPinned(!isPinned()); },
         panelHeight() {
             if (measuring) return 0;
             return Math.max(minHeight, nodeHeight() - chrome() - SLACK);
         },
-        /** Grow the node if it is too short to hold a minimum panel. Never
-         *  shrinks it -- the node's height is the user's to choose. */
-        sync() {
-            const need = chrome() + minHeight + SLACK;
-            if (nodeHeight() < need - 1) node.setSize([nodeWidth(), need]);
-            node.graph?.setDirtyCanvas?.(true, true);
+        /** Fit the node to what is on screen -- up AND down. */
+        sync(reason = "fit") {
+            schedule(reason);
         },
         /** Ask for a taller panel, e.g. after adding a card. */
         grow(px) {
-            node.setSize([nodeWidth(), Math.max(minHeight, nodeHeight() + px)]);
+            if (isPinned()) return;
+            node.setSize([nodeWidth(),
+                Math.min(MAX_HEIGHT, Math.max(minHeight, nodeHeight() + px))]);
             node.graph?.setDirtyCanvas?.(true, true);
+        },
+        /** Drop the pin and let the node find its size again. */
+        unpin() {
+            // Clear first, then fit. Reading setPinned's RESULT as "was it
+            // pinned" inverted this and silently skipped the refit, which is
+            // the one thing unpin is for.
+            setPinned(false);
+            schedule("unpin");
         },
     };
     node._h3HeightGuard = guard;

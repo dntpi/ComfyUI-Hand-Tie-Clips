@@ -960,7 +960,24 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
     overflow: hidden;
 }
 
-
+/* A2's height pin. It sits inside the tab strip's border, so it is inset and
+ * square-off the corners: flex 0 so it never takes a quarter, and a top-border
+ * of its own to close the seam the strip's radius would otherwise cut. */
+.h3e-root .h3e-pin {
+    flex: 0 0 auto;
+    width: 26px;
+    border-left: 1px solid var(--h3-border);
+    border-radius: 0;
+    color: var(--h3-faint);
+}
+.h3e-root .h3e-pin.h3e-on {
+    background: color-mix(in srgb, var(--h3-accent) 34%, var(--h3-sunken));
+    color: var(--h3-text);
+}
+/* Nothing renders here; it only pushes the pin off the strip's right edge. */
+.h3e-root .h3e-stripgap {
+    flex: 0 0 0px;
+}
 .h3e-root .h3e-tab {
     /* Equal quarters regardless of label length, so the strip does not reflow
      * when a badge appears or its count gains a digit. `min-width: 0` lets a

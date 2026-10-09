@@ -453,10 +453,13 @@ export function createPlanEditor(node, { onChange }) {
     /** Append a shot that continues the chain; returns its 0-based index.
      *  `freeId`, not `s${n}`: after a delete or a reorder `s${n}` can already
      *  be taken, and two shots sharing an id share a cache pointer. */
-    function appendShot() {
+    function appendShot({ extend = false } = {}) {
         const shot = blankShot(shots.length);
         shot.id = freeId();
         if (shots.length) shot.directives = { join: "continuous" };
+        // "+ extend" after a render: under hand-tie this shot opens its own
+        // previs, continuing the film, so nothing already rendered moves.
+        if (shots.length && extend) shot.anchor = "extend";
         shots.push(shot);
         commit();
         return shots.length - 1;
@@ -706,7 +709,7 @@ export function createPlanEditor(node, { onChange }) {
             const anchorL = el("label", "h3e-field");
             anchorL.appendChild(el("span", null, "anchor"));
             const anchorS = el("select", "h3e-input");
-            for (const [v, label] of [["", "relay (default)"], ["restart", "restart"]]) {
+            for (const [v, label] of [["", "relay (default)"], ["restart", "restart"], ["extend", "extend (hand-tie: own previs)"]]) {
                 const o = el("option", null, label);
                 o.value = v;
                 anchorS.appendChild(o);

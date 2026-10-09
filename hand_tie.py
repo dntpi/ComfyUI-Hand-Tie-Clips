@@ -6,7 +6,17 @@ long chains drift or cut. Hand-tie removes the relay. One PREVIS generate covers
 a whole section (a chain start and its continuations); 22-frame WINDOWS cut from
 it tie the hops together: hop k is guided by window k at frame 0 and window k+1
 at frame -22 (picture and sound, stock MiniMaxH3AddGuide), and no hop reads
-another. The film cuts each join inside the shared window (22-frame overlap).
+another. The film cuts each join at the start of the shared window.
+
+One window per hop: a section's last hop is tied at its start only and ends where
+its beat takes it. (A closing window used to pin that last hop's end too. No hop
+shares it, and the previs had to reach the ending to draw it: chain_00150's three
+takes all cut there, to "walks toward the camera".) A run longer than one previs
+holds -- PREVIS_MAX, 6 hops of 8 s -- is split into CHAINED sections, as is a shot
+marked anchor=extend (what "+ extend" writes): a chained section's previs is pinned
+at frame 0 on the frames the hop before it actually rendered, so the join between
+sections is an ordinary hand-tie join, at the cost of one copy step there, and
+the hops already rendered keep their previs and their cache.
 
 Measured in HTC-Lab (lab name "bridge clips", 2026-10-07/08, see DEVLOG): over 4
 hops the Motion-Context arm ratcheted x1.053 / x1.042 at joins 2-3 and drifted to
@@ -17,6 +27,7 @@ This module is the arithmetic and the text, with no ComfyUI imports, so
 tools/check_hand_tie.py runs without a server:
 
     sections()          a plan's hops grouped into sections (one previs each)
+    chained()           whether a section continues the hop before it
     spacing()           previs frames between two windows for one hop
     layout()            window starts and previs length for a section
     window_audio()      a window's slice of the previs soundtrack, in seconds
@@ -47,7 +58,7 @@ import re
 FPS = 24
 WINDOW = 22                 # frames per window; also the only overlap hand-tie accepts
 GRID = 17                   # H3 latent cycle (1,4,4,4,4): a window starts on 17q
-PREVIS_MAX = 362            # 15.1 s, H3's trained ceiling; = 5 hops of 8 s
+PREVIS_MAX = 362            # 15.1 s, H3's trained ceiling; = 6 hops of 8 s
 REF_HOP, REF_SPACING = 192, 68   # the measured case: 8 s hop, 2.8 s of previs per hop
 MIN_SPACING = 34            # windows never overlap
 SPEECH_WPS = 2.5            # words a second, as planner.SPEECH_WPS
@@ -84,14 +95,36 @@ MIN_SOUND_WORDS = 4
 
 # --- sections and geometry ------------------------------------------------
 
-def sections(shots):
-    """[[hop index, ...], ...]: hop 0 and every anchor=restart open a section."""
-    out = []
+def _anchor(sh):
+    return str((sh or {}).get("anchor") or "")
+
+
+def sections(shots, hop_frames=None):
+    """[[hop index, ...], ...]: one previs each.
+
+    Hop 0 and every anchor=restart open a section (a cut, as everywhere). So do
+    anchor=extend and a hop that would push the previs past PREVIS_MAX; those
+    sections are CHAINED (see `chained`) and continue the film without a cut.
+    Without `hop_frames` only the shot fields split.
+    """
+    out, frames = [], []
     for i, sh in enumerate(shots or []):
-        if i == 0 or str((sh or {}).get("anchor") or "") == "restart":
+        f = int(hop_frames[i]) if hop_frames is not None else None
+        full = (f is not None and out
+                and layout(frames + [f])["previs"] > PREVIS_MAX)
+        if i == 0 or _anchor(sh) in ("restart", "extend") or full:
             out.append([])
+            frames = []
         out[-1].append(i)
+        if f is not None:
+            frames.append(f)
     return out
+
+
+def chained(shots, section):
+    """True when a section continues the hop before it (no cut): its previs is
+    pinned at frame 0 on that hop's last frames, and its first window IS them."""
+    return bool(section) and section[0] > 0 and _anchor(shots[section[0]]) != "restart"
 
 
 def spacing(hop_frames):
@@ -103,12 +136,13 @@ def spacing(hop_frames):
 def layout(hop_frames):
     """Window starts and previs length for one section's hops.
 
-    -> {"windows": [w0, ..., wn], "spacings": [...], "previs": frames}
-    There is one window more than hops: hop k is tied to windows k and k+1.
+    -> {"windows": [w0, ..., w(n-1)], "spacings": [...], "previs": frames}
+    One window per hop: hop k is tied to window k at its start and to window k+1
+    at its end; the section's last hop is tied at its start only.
     """
     if not hop_frames:
         raise ValueError("hand-tie: a section needs at least one hop")
-    sp = [spacing(int(f)) for f in hop_frames]
+    sp = [spacing(int(f)) for f in hop_frames[:-1]]
     w = [0]
     for s in sp:
         w.append(w[-1] + s)
@@ -117,7 +151,7 @@ def layout(hop_frames):
 
 def max_hops(hop_frames=REF_HOP):
     """How many hops of this length one previs can hold."""
-    return (PREVIS_MAX - WINDOW) // spacing(hop_frames)
+    return (PREVIS_MAX - WINDOW) // spacing(hop_frames) + 1
 
 
 def window_audio(start, fps=FPS):
@@ -229,14 +263,10 @@ def _sound_sentence(text):
 
 def moments(shots, sound=PREVIS_SOUND):
     """One moment per window: shot k's `moment` (else the first sentence of its beat)
-    for window k, and the last shot's `moment_end` (else its beat's last sentence)
-    for the closing window.
+    for window k. There is no closing moment: the last hop ends where its beat goes.
 
     `sound` appends each beat's trailing sound sentence to its own moment, so the
-    previs's audio branch has a named non-voice target. The CLOSING moment is
-    left alone deliberately: it is the film's last frame, and it is read as a
-    picture, where a sound sentence would be a second thing at the end of the
-    film.
+    previs's audio branch has a named non-voice target.
     """
     out = []
     for sh in shots:
@@ -247,9 +277,6 @@ def moments(shots, sound=PREVIS_SOUND):
             if snd and snd not in m:
                 m = m.rstrip() + " " + snd
         out.append(m)
-    last = shots[-1] or {}
-    out.append(str(last.get("moment_end") or "").strip()
-               or _last_sentence(last.get("beat")))
     return out
 
 
@@ -284,9 +311,7 @@ def compile_previs(shots, hop_frames, fps=FPS, sound=None):
             continue
         t = w / float(fps)
         sp = _spoken_s(m)
-        if sp and k == len(ms) - 1:
-            t = max(0.0, (w + WINDOW) / float(fps) - sp)
-        elif sp:
+        if sp:
             t = max(0.0, t - _lead_s(sp))
         rows.append("At %s %s" % (_stamp(t), m))
     return " ".join(rows), lay
@@ -660,14 +685,9 @@ def settings_errors(overlap_frames, last_frame_guide="off", shots=None, hop_fram
         err.append("pin_mech=hand_tie ties every hop's last 22 frames to its next window; "
                    "last_frame_guide=%s would put a second guide on the same frames. "
                    "Set it to off." % last_frame_guide)
-    if shots is not None and hop_frames is not None:
-        for sec in sections(shots):
-            frames = [hop_frames[i] for i in sec]
-            lay = layout(frames)
-            if lay["previs"] > PREVIS_MAX:
-                err.append("hand-tie: shots %d-%d make a %d-frame previs; one previs holds at most "
-                           "%d frames (%d hops of 8 s). Add anchor=restart to split the section."
-                           % (sec[0] + 1, sec[-1] + 1, lay["previs"], PREVIS_MAX, max_hops()))
+    if shots and _anchor(shots[0]) == "extend":
+        err.append("hand-tie: shot 1 has anchor=extend, but there is no hop before it to "
+                   "continue. Remove the anchor from shot 1.")
     return err
 
 
@@ -678,6 +698,7 @@ def hop_key_fields(head_digest, tail_digest, head_audio_digest=None, tail_audio_
     leaves it cached; editing a moment changes the previs, hence both digests.
     """
     out = {"pin": "hand_tie", "head": str(head_digest), "tail": str(tail_digest)}
+    # tail None: a section's last hop, tied at its start only.
     if head_audio_digest is not None or tail_audio_digest is not None:
         out["head_audio"] = str(head_audio_digest)
         out["tail_audio"] = str(tail_audio_digest)

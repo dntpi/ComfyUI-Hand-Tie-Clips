@@ -49,12 +49,16 @@ OVERLAP_FRAMES = ast.literal_eval(src[src.index("OVERLAP_FRAMES = {") + len("OVE
 
 print("geometry (the lab's numbers)")
 lay = HT.layout([192] * 4)
-ck("4 x 8 s: windows 0/68/136/204/272", lay["windows"] == [0, 68, 136, 204, 272], lay["windows"])
-ck("4 x 8 s: a 294-frame previs (12.25 s)", lay["previs"] == 294, lay["previs"])
+# One window per hop: the closing window is gone (chain_00150: every take cut to
+# reach it), so the last hop is tied at its start only.
+ck("4 x 8 s: one window per hop, 0/68/136/204", lay["windows"] == [0, 68, 136, 204], lay["windows"])
+ck("4 x 8 s: a 226-frame previs (9.4 s)", lay["previs"] == 226, lay["previs"])
 ck("4 x 8 s: a 702-frame film", HT.film_frames([192] * 4) == 702, HT.film_frames([192] * 4))
 ck("the 22-frame window is the node's 0.9 s overlap", OVERLAP_FRAMES["0.9 s"] == HT.WINDOW)
-ck("5 x 8 s fill the budget exactly", HT.layout([192] * 5)["previs"] == HT.PREVIS_MAX == 362)
-ck("max_hops() at 8 s is 5", HT.max_hops(192) == 5, HT.max_hops(192))
+ck("6 x 8 s fill the budget exactly", HT.layout([192] * 6)["previs"] == HT.PREVIS_MAX == 362)
+ck("max_hops() at 8 s is 6", HT.max_hops(192) == 6, HT.max_hops(192))
+ck("every section previs is 17q+5, a length H3 renders",
+   all(HT.layout([192] * k)["previs"] % 17 == 5 for k in range(1, 7)))
 
 print("\nthe 17-frame grid, for every hop length the node offers up to 15 s")
 lengths = sorted({v for k, v in DURATION_FRAMES.items() if 124 <= v <= 362})
@@ -74,6 +78,16 @@ print("\nsections")
 shots = [{"beat": "a"}, {"beat": "b"}, {"beat": "c", "anchor": "restart"}, {"beat": "d"}, {"beat": "e"}]
 ck("hop 1 and every restart open a section", HT.sections(shots) == [[0, 1], [2, 3, 4]], HT.sections(shots))
 ck("one shot is one section", HT.sections([{"beat": "x"}]) == [[0]])
+twelve = [{"beat": "x"} for _ in range(12)]
+ck("12 x 8 s split into two previs of 6, the second CHAINED (no cut)",
+   HT.sections(twelve, [192] * 12) == [list(range(6)), list(range(6, 12))]
+   and [HT.chained(twelve, s) for s in HT.sections(twelve, [192] * 12)] == [False, True],
+   HT.sections(twelve, [192] * 12))
+ext = [{"beat": "x"} for _ in range(4)] + [{"beat": "y", "anchor": "extend"}]
+ck("anchor=extend opens a chained section, leaving the rendered one as it was",
+   HT.sections(ext, [192] * 5) == [[0, 1, 2, 3], [4]]
+   and [HT.chained(ext, s) for s in HT.sections(ext, [192] * 5)] == [False, True])
+ck("a restart is never chained", not HT.chained(shots, [2, 3, 4]))
 
 print("\nwindow sound")
 a, d = HT.window_audio(68)
@@ -90,14 +104,14 @@ plan = [
 ]
 plan[-1]["moment_end"] = "<Subject 1> chops again and (S1) says, <d>[English] Right. Soup won't make itself.</d>"
 text, lay = HT.compile_previs(plan, [192] * 4)
-ck("one timed line per window, in order", text.count("At ") == 5, text)
+ck("one timed line per window, in order", text.count("At ") == 4, text)
 ck("plain moments sit on their window: 00:00.000, 00:05.667, 00:08.500",
    all(s in text for s in ("At 00:00.000 <Subject 1> chops", "At 00:05.667 <Subject 1> leans",
                            "At 00:08.500 <Subject 1> lifts")))
 ck("a speaking moment is led in so the window lands mid-line (window B 2.833 -> 1.833)",
    "At 00:01.833 <Subject 1> turns to the window" in text, text)
-ck("the closing line is placed to end with the previs (11.333 + 0.917 - 2.0 = 10.250)",
-   "At 00:10.250 <Subject 1> chops again" in text, text[-160:])
+ck("there is no closing moment: moment_end does not reach the previs",
+   "chops again" not in text, text[-160:])
 no_moment = HT.compile_previs([{"beat": "First thing. Second thing."}, {"beat": "Third. Fourth."}], [192, 192])[0]
 plain = HT.compile_previs([
     {"beat": "@cook chops herbs. She turns to the window."},
@@ -113,18 +127,14 @@ ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,
 # the bug _sound_sentence exists for: a moment is a picture, and a previs whose
 # text names only pictures gives its audio branch nothing to do but invent a
 # voice (chain_00147: 6 invented words, all in the first 4 s).
-ck("plain beats: first sentence per window, the sound sentence, and the closing moment",
+ck("plain beats: first sentence per window with its sound sentence, nothing after the last",
    plain == ("At 00:00.000 @cook chops herbs. At 00:02.833 @cook looks out of the window. "
-             "At 00:05.667 @cook sips. The low hum of the refrigerator. "
-             "At 00:08.500 @cook sips."), plain)
-ending = HT.compile_previs([
-    {"beat": "@dex walks under the awning."},
-    {"beat": "@dex steps out into the rain. He walks toward the camera down the street, and (S1) says, "
-             "<d>[English] Worth it.</d> Steady rain."}], [192, 192])[0]
-ck("a closing sentence that opens on a pronoun is the ending, with the beat's person in its place",
-   ending.endswith("At 00:05.667 @dex walks toward the camera down the street."), ending)
-ck("without moments: each beat's first sentence, and the last beat's last sentence",
-   no_moment == "At 00:00.000 First thing. At 00:02.833 Third. At 00:05.667 Fourth.", no_moment)
+             "At 00:05.667 @cook sips. The low hum of the refrigerator."), plain)
+ck("_last_sentence still reads a pronoun ending (kept for moment_end's split)",
+   HT._last_sentence("@dex steps out. He walks toward the camera.") == "@dex walks toward the camera.",
+   HT._last_sentence("@dex steps out. He walks toward the camera."))
+ck("without moments: each beat's first sentence, one per hop",
+   no_moment == "At 00:00.000 First thing. At 00:02.833 Third.", no_moment)
 
 print("\nthe moment carries its beat's sound, so the audio branch has a target")
 # chain_00147's kept previs (seed 219378) invented "Looks to be I'm hard." (5
@@ -150,11 +160,6 @@ ck("the sound carries no dialogue of its own",
    not any(x in HT._sound_sentence(b) for b in (
        "@dex walks. (S1) says, <d>[English] hello.</d> The low hum of the refrigerator.",
    ) for x in ("<d>", "(S1)", "says")))
-ck("the closing moment is never given a sound",
-   not HT.compile_previs(
-       [{"beat": "@dex steps out into the rain. Steady rain, distant traffic."},
-        {"beat": "@dex walks toward the camera. He walks toward the camera down the street."}],
-       [192, 192])[0].split("At ")[-1].count("Steady rain"))
 _off = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."},
                           {"beat": "@dex turns. He walks toward the camera down the street."}],
                          [192, 192], sound=False)[0]
@@ -162,9 +167,7 @@ _on = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."
                          {"beat": "@dex turns. He walks toward the camera down the street."}],
                         [192, 192])[0]
 ck("sound=False restores the exact old text (the A/B lever)",
-   _off == ("At 00:00.000 @dex walks. "
-            "At 00:02.833 @dex turns. "
-            "At 00:05.667 @dex walks toward the camera down the street."), _off)
+   _off == "At 00:00.000 @dex walks. At 00:02.833 @dex turns.", _off)
 ck("and the default is the sound-carrying one", "The low hum of the refrigerator." in _on, _on)
 ck("PREVIS_SOUND is on by default, so a plain plan needs no extra input",
    HT.PREVIS_SOUND is True)
@@ -367,11 +370,16 @@ print("\nrefusals")
 ck("overlap 22 + last_frame_guide off is fine", HT.settings_errors(22, "off") == [])
 ck("overlap 5 is refused", len(HT.settings_errors(5)) == 1)
 ck("last_frame_guide is refused", len(HT.settings_errors(22, "before_restart")) == 1)
-big = [{"beat": "x"} for _ in range(6)]
-e = HT.settings_errors(22, "off", big, [192] * 6)
-ck("6 hops of 8 s in one section are refused, naming the fix", len(e) == 1 and "anchor=restart" in e[0], e)
-big[3]["anchor"] = "restart"
-ck("the same 6 hops split by a restart are fine", HT.settings_errors(22, "off", big, [192] * 6) == [])
+big = [{"beat": "x"} for _ in range(7)]
+e = HT.settings_errors(22, "off", big, [192] * 7)
+ck("7 hops of 8 s are not refused: they chain into two sections", e == [], e)
+ck("run() pins a chained previs on the previous hop's real frames and uses them as window 0",
+   "MiniMaxH3AddGuide, \"the chained previs pin\"" in src and "image=prev_imgs, audio=prev_audio" in src
+   and "pics[0] = prev_imgs[-_ht.WINDOW:].clone()" in src and '**({"from": _from} if _from else {})' in src)
+ck("run() ties a section's last hop at its start only",
+   "if _k + 1 < len(_wp) else []" in src and "_store.tensor_digest(_wp[_k + 1]) if _tl else None" in src)
+ck("anchor=extend on shot 1 is refused (nothing to continue)",
+   len(HT.settings_errors(22, "off", [{"beat": "x", "anchor": "extend"}], [192])) == 1)
 
 print("\ncache key")
 k = HT.hop_key_fields("aa", "bb")

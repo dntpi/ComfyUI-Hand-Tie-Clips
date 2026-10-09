@@ -28,7 +28,7 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import { el, button, widgetByName, findNodeByQualifiedId } from "./widget_utils.js";
-import { NOT_KEYED, forecastPlan, parseJson, shotSig } from "./timeline_model.js";
+import { NOT_KEYED, forecastPlan, framesOf, parseJson, shotSig } from "./timeline_model.js";
 
 const RUN_PROP = "h3_timeline_run";
 const PENDING_PROP = "h3_timeline_pending";
@@ -177,6 +177,8 @@ export function createTimeline(node, { editor, onChange } = {}) {
             seedCtl: String(widgetByName(node, "control_after_generate")?.value || "fixed"),
             refsNow: parseJson(widgetByName(node, "ref_plan")?.value)?.refs || [],
             tie: String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie",
+            frames: shots.map((s) => framesOf(s.duration
+                || widgetByName(node, "duration")?.value)),
         });
     }
 
@@ -390,7 +392,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         ext.title = "Add a shot that continues from the last one. The shots before "
             + "it stay cached, so the next queue renders only the new hop.";
         ext.addEventListener("click", () => {
-            const idx = editor.appendShot();
+            const idx = editor.appendShot({ extend: true });
             inspected = editor.shots()[idx] || null;
             render();
             scroller.scrollLeft = scroller.scrollWidth;

@@ -197,9 +197,9 @@ def test_wiring():
        "editor.toggleSolo(" in tl and "editor.toggleLock(" in tl)
     ck("geometry comes from editor.timing()", "editor.timing()" in tl)
     pe = open(os.path.join(HERE, "js", "editor", "plan_editor.js"), encoding="utf-8").read()
-    ck("extend appends through the editor, with a free id",
-       "function appendShot()" in pe and "shot.id = freeId();" in pe
-       and "editor.appendShot()" in tl)
+    ck("extend appends through the editor, with a free id, marked anchor=extend",
+       "function appendShot({ extend = false } = {})" in pe and "shot.id = freeId();" in pe
+       and 'shot.anchor = "extend"' in pe and "editor.appendShot({ extend: true })" in tl)
     ck("a block opens the SCRIPT card itself, not a copy",
        "function cardFor(index)" in pe and "editor.cardFor(idx)" in tl)
     ck("a shot is removed through the editor, the card's × included",

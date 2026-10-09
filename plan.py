@@ -68,7 +68,13 @@ TONE_VALUES = ("", "free", "rebase")
 #
 # It is a CUT, by construction: the hop opens on the reference photograph's
 # pose, not where the previous hop ended.
-ANCHOR_VALUES = ("", "restart")
+#
+# "extend" is what the TIMELINE's "+ extend" writes. Under pin_mech=hand_tie it
+# opens a CHAINED section: a new previs pinned on the frames the hop before it
+# actually rendered, so the hops already rendered keep their previs and their
+# cache and only the new hops render. No cut. Every other pin mechanism reads
+# it as "" (an ordinary continuation).
+ANCHOR_VALUES = ("", "restart", "extend")
 
 
 def _tone_field(v, where):
@@ -85,7 +91,7 @@ def _tone_field(v, where):
 
 
 def _anchor_field(v, where):
-    """Validate a shot's `anchor`. -> "" | "restart"."""
+    """Validate a shot's `anchor`. -> "" | "restart" | "extend"."""
     if v in (None, "", False):
         return ""
     v = str(v).strip().lower()

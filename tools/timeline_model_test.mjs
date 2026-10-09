@@ -1,5 +1,5 @@
 // The timeline forecast's rules, under Node. Run by tools/check_timeline.py.
-import { forecastPlan, shotSig } from "../js/editor/timeline_model.js";
+import { forecastPlan, shotSig, tieSections, framesOf } from "../js/editor/timeline_model.js";
 
 let failed = 0;
 const ck = (name, ok, detail = "") => {
@@ -122,5 +122,34 @@ ck("hand-tie: a change stays in its own section (stops at the restart)",
    fc.state.join() === "keeps,keeps,render,render", fc.state.join());
 fc = forecastPlan({ shots: base, rec, now, tie: true });
 ck("hand-tie: nothing edited, nothing re-renders", fc.state.every((s) => s === "keeps"), fc.state.join());
+
+ck("framesOf matches DURATION_FRAMES (8 s 192, 5 s 124, 15 s 362, 30 s 719)",
+   [framesOf("8 s"), framesOf("5 s"), framesOf("15 s"), framesOf("30 s")].join() === "192,124,362,719");
+const twelve = Array.from({ length: 12 }, (_, i) => shot(`t${i}`, "x"));
+const secs = tieSections(twelve, twelve.map(() => 192));
+ck("hand-tie: 12 x 8 s is two sections of 6, the second chained",
+   secs.map((s) => s.hops.length).join() === "6,6" && secs.map((s) => s.chained).join() === "false,true",
+   JSON.stringify(secs));
+// "+ extend" after a render: only the new shot renders.
+const extd = [...base, shot("s5", "e", { anchor: "extend" })];
+fc = forecastPlan({ shots: extd, rec, now: snapOf(extd), tie: true, frames: extd.map(() => 192) });
+ck("hand-tie: + extend (anchor=extend) renders only the new shot",
+   fc.state.join() === "keeps,keeps,keeps,keeps,render", fc.state.join());
+// Editing a shot in section 1 moves the chained section 2 as well.
+const recT = recOf(twelve, snapOf(twelve));
+const twelveE = twelve.map((s) => ({ ...s }));
+twelveE[2].beat = "x2";
+fc = forecastPlan({ shots: twelveE, rec: recT, now: snapOf(twelveE), tie: true,
+                    frames: twelve.map(() => 192) });
+ck("hand-tie: an edit in section 1 moves the chained section 2 too",
+   fc.state.every((s) => s === "render") && String(fc.cause[8]).includes("the section before it moved"),
+   fc.state.join() + " " + fc.cause[8]);
+const twelveL = twelve.map((s) => ({ ...s }));
+twelveL[9].beat = "x9";
+fc = forecastPlan({ shots: twelveL, rec: recT, now: snapOf(twelveL), tie: true,
+                    frames: twelve.map(() => 192) });
+ck("hand-tie: an edit in section 2 leaves section 1 cached",
+   fc.state.join() === "keeps,keeps,keeps,keeps,keeps,keeps,render,render,render,render,render,render",
+   fc.state.join());
 
 process.exit(failed ? 1 : 0);

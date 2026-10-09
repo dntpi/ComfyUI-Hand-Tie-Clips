@@ -442,7 +442,36 @@
     letter-spacing: var(--h3-track);
     text-transform: uppercase;
     color: var(--h3-muted);
+    /* A5: the group header is now a <summary>, so it is clickable and carries
+     * the disclosure triangle. It must LOOK like the old label still, or
+     * every group reads as a control and the panel as a form. */
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    list-style: none;
 }
+.h3e-run-label::-webkit-details-marker { display: none; }
+.h3e-run-label::marker { content: ""; }
+/* Our own triangle, so the collapsed state is legible without a marker glyph
+ * that varies by browser and sits on the wrong side of the label. */
+.h3e-run-label::before {
+    content: "▸";
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    transition: transform .12s ease;
+}
+details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg); }
+/* The off-state text next to the title: "REFINE · off". */
+.h3e-run-gstate {
+    color: var(--h3-faint);
+    font-weight: var(--h3-weight-label);
+    letter-spacing: 0;
+    text-transform: none;
+}
+/* A disabled group: dimmed, but still one click from the dials. */
+.h3e-run-group.h3e-run-off > .h3e-run-label { color: var(--h3-faint); }
+.h3e-run-group.h3e-run-off > .h3e-run-label .h3e-run-gstate { color: var(--h3-faint); }
 /* auto-FILL, not auto-fit: auto-fit collapses the empty tracks, so the two
  * dials in CACHE stretched to half the panel each while the four in OUTPUT sat
  * at a quarter. Keeping the empty tracks lines every group up on one grid. */

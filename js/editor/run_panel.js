@@ -130,6 +130,33 @@ const GROUPS = [
  */
 const WIDE = new Set(["seed"]);
 
+/**
+ * The dial whose OFF value makes a whole group a no-op (A5).
+ *
+ * When the master is off, the group collapses to one dimmed line so a default
+ * run shows the knobs that do something, not 65 dials behind three switches
+ * that are all off. A group with no master (output, sampling, join) is always
+ * drawn open -- there is no "off" that makes the canvas or the sampler
+ * meaningless, so a collapsed line would only be a speed bump.
+ *
+ * The OFF VALUE, not just the name: `hop_refine` also has `pin_only`, which is
+ * NOT off -- it still refines for the join. Matching on the widget's own
+ * option list keeps this correct if Python renames or reorders the values.
+ */
+const GROUP_MASTER = {
+    "refine": "hop_refine",
+    "realism boost": "realism_boost",
+    "upsample": "upsample",
+    // cache_hops and dry_run both default to off, and both own dials that do
+    // nothing while they are: a budget for a cache that is off, and a preview
+    // range for a preview that is not running. They are the fourth and fifth
+    // collapsed groups on a default run, which is most of why the default
+    // count lands near the brief's 21 rather than near 65.
+    "cache": "cache_hops",
+    "preview": "dry_run",
+};
+const OFF_VALUES = new Set(["off", "disabled", "none"]);
+
 const SUPPRESSED_WHY = {
     chains: "the shot list sets the hop count",
     hop_script: "a shot plan forces it to `next`",
@@ -359,6 +386,28 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
         builtFor = [...skip].sort().join(",");
 
         for (const [title, names] of GROUPS) {
+            const master = GROUP_MASTER[title];
+            // When the master is off the whole group is one dimmed line. Its
+            // dials are still BUILT -- only the details is closed -- because
+            // an undrawn dial reappears as a raw widget below the panel, and a
+            // raw `upsample_denoise` is worse than a collapsed group the user
+            // opened once to find it.
+            const isOff = master
+                ? OFF_VALUES.has(String(widgetByName(node, master)?.value ?? "").toLowerCase())
+                : false;
+
+            const group = el("details", "h3e-run-group");
+            group.open = !isOff;
+            const det = el("summary", "h3e-run-label");
+            // The state lives IN the summary, so a collapsed group still says
+            // what it is and that it is off -- a bare "REFINE" with a closed
+            // triangle reads like an empty section, not a disabled feature.
+            const state = el("span", "h3e-run-gstate");
+            det.appendChild(el("span", null, title));
+            det.appendChild(state);
+            group.appendChild(det);
+            if (isOff) group.classList.add("h3e-run-off");
+
             const grid = el("div", "h3e-grid");
             let n = 0;
             for (const name of names) {
@@ -414,10 +463,29 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
                 n += 1;
             }
             if (!n) continue;                      // nothing found: draw nothing
-            const group = el("div", "h3e-run-group");
-            group.appendChild(el("div", "h3e-run-label", title));
             group.appendChild(grid);
             body.appendChild(group);
+            // Repaint this group's off-state whenever anything is re-read, so
+            // flipping hop_refine to `full` un-collapses the dials it was
+            // hiding without waiting for a rebuild.
+            if (master) {
+                const mark = () => {
+                    const off = OFF_VALUES.has(
+                        String(widgetByName(node, master)?.value ?? "").toLowerCase());
+                    group.classList.toggle("h3e-run-off", off);
+                    state.textContent = off ? " · off" : "";
+                    state.title = off
+                        ? `${master} is off; open to adjust it anyway`
+                        : "";
+                    // Opening a group by hand is a deliberate request to see
+                    // the dials, so a user who opened an off group keeps it
+                    // open until they collapse it themselves. Only the OFF
+                    // transition auto-closes, and only going off.
+                    if (off) group.open = false;
+                };
+                readers.push(mark);
+                state.textContent = "";
+            }
         }
 
         speedNote = el("div", "h3e-note h3e-note-hint");

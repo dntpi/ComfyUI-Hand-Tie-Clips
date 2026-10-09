@@ -176,6 +176,10 @@ def _speed_mode_table():
 def _payload():
     from .h3_ref_chain import (
         ASPECTS, DURATION_FRAMES, OVERLAP_FRAMES, RESOLUTIONS, FPS, _canvas)
+    # Imported here, not at module top, for the same reason h3_ref_chain is:
+    # planner reads the prompt pack off disk and pulls in the rest of this
+    # module, so a top-level import is a cycle.
+    from . import planner as _planner
 
     return {
         # axis -> option -> the sentence it compiles to. Order matters: AXES is
@@ -211,6 +215,15 @@ def _payload():
         "canvas": {res: {asp: list(_canvas(res, asp)) for asp in ASPECTS}
                    for res in RESOLUTIONS},
         "fps": FPS,
+
+        # Duration label -> the beat's own word/line band, parsed out of the
+        # writer's prompt by planner.beat_table(). The shot cards print
+        # "47 / 35-60 words" under every beat, and that band is the SAME table
+        # the model was given -- read from the prompt, not restated, so the
+        # number the user is judged against cannot drift from the number the
+        # model was asked for. Labels are whitespace-normalised here because
+        # the prompt's table is aligned with spaces ("8 s" vs "8  s").
+        "beat_table": {k: list(v) for k, v in _planner.beat_table().items()},
     }
 
 

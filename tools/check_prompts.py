@@ -200,8 +200,44 @@ ck("all 13 numbered rules were found", len(_rules) == 13,
 for _key in sorted(set(_a) & set(_b)):
     _x = " ".join(_a[_key].split())
     _y = " ".join(_b[_key].split())
-    ck("%s matches" % _key, _x == _y,
-       "" if _x == _y else "SYSTEM %d chars vs AUTHORING %d" % (len(_x), len(_y)))
+ck("%s matches" % _key, _x == _y,
+   "" if _x == _y else "SYSTEM %d chars vs AUTHORING %d" % (len(_x), len(_y)))
+
+# ------------------------------------------------------- beat_table (A7's band)
+# The shot cards print "47 / 35-60 words" under every beat, and that band is
+# this table -- read out of the prompt rather than restated, so the number the
+# user is judged against is the number the model was asked for. If the table
+# stops parsing, the cards quietly fall back to a bare count with no band, which
+# looks like the UI working. Pin that it parses, and pin the 8 s row exactly:
+# a silent edit to the prompt table must fail here rather than quietly widen
+# every card's band.
+from h3p import planner as PLANNER   # noqa: E402
+
+_bt = PLANNER.beat_table()
+ck("beat_table parses rows out of the prompt", bool(_bt), repr(_bt))
+ck("every duration has a band", len(_bt) >= 5,
+   "%d: %s" % (len(_bt), sorted(_bt)))
+# A band is (min_words, max_words, min_lines, max_lines) with min <= max; a row
+# that parses with min > max would make every beat read as "over".
+ck("every band is ordered and positive",
+   all(0 < w0 <= w1 and 0 < l0 <= l1 for (w0, w1, l0, l1) in _bt.values()),
+   repr(_bt))
+ck("the 8 s band is 35-60 words, 1-2 lines",
+   _bt.get("8 s") == (35, 60, 1, 2), repr(_bt.get("8 s")))
+# The routes publish these labels and the cards look them up by the duration
+# widget's own value, so a label with a stray double space ("8  s") would look
+# up nothing and every card would silently lose its band.
+ck("labels are whitespace-normalised for the JS lookup",
+   all("  " not in k and k == k.strip() for k in _bt),
+   repr([k for k in _bt if "  " in k or k != k.strip()]))
+# The prompt table carries bands for the lengths it documents (5-15 s). The
+# node's duration combo offers more than that, and a card at a length with no
+# row is supposed to fall back to a bare count -- that is a supported state,
+# not a defect. What must hold is that the DOCUMENTED lengths are covered, so
+# the common hops are the ones that get a target.
+ck("every documented length has a band",
+   {"5 s", "7 s", "8 s", "10 s", "15 s"} <= set(_bt),
+   "missing: %s" % sorted({"5 s", "7 s", "8 s", "10 s", "15 s"} - set(_bt)))
 
 print()
 for n in NOTE:

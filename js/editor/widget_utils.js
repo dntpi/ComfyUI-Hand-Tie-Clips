@@ -57,9 +57,10 @@ export function vocab() {
                 // `_failed` is read by the editors, which show a retry strip --
                 // it used to be set here and never looked at again, so a failed
                 // fetch just produced a mysteriously featureless panel.
-                return { axes: [], vocab: {}, defaults: {}, retention: {},
-                         durations: {}, overlaps: {}, max_ref_images: 9, fps: 24,
-                         _failed: true, _error: String(err && err.message || err) };
+return { axes: [], vocab: {}, defaults: {}, retention: {},
+                           durations: {}, overlaps: {}, beat_table: {},
+                           max_ref_images: 9, fps: 24,
+                           _failed: true, _error: String(err && err.message || err) };
             });
     }
     return _vocabPromise;

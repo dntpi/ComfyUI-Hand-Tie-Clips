@@ -628,6 +628,44 @@ export function createPlanEditor(node, { onChange }) {
         beat.addEventListener("change", () => { writeWidget(); onChange?.(); });
         body.appendChild(beat);
 
+        // A7: the beat's word count against the band for its length, e.g.
+        // "47 / 35-60 words". The band comes from /vocab, which reads it out of
+        // the writer's own prompt table via planner.beat_table() -- so this is
+        // the number the model was ASKED for, not a second set of numbers typed
+        // into JavaScript and left to drift.
+        //
+        // Word count is `split()` on whitespace, the same rule count_beat uses
+        // on the Python side. A CJK beat undercounts by the same factor on both
+        // sides, which keeps the two honest about each other even though the
+        // absolute number is low; the LINE count is the one to read there.
+        const wordCount = el("div", "h3e-beatcount");
+        body.appendChild(wordCount);
+        const paintCount = () => {
+            const label = shot.duration || durationWidget?.value || "";
+            const band = (V?.beat_table || {})[label];
+            const n = String(shot.beat || "").trim().split(/\s+/).filter(Boolean).length;
+            if (!band) {
+                wordCount.textContent = n ? `${n} words` : "";
+                wordCount.classList.remove("h3e-over");
+                wordCount.title = band ? "" : "No band for this length.";
+                return;
+            }
+            const [w0, w1] = band;
+            const over = n > w1 || (n > 0 && n < w0);
+            wordCount.textContent = `${n} / ${w0}-${w1} words`;
+            // Over the ceiling is the one that matters -- a beat past the band
+            // is a hop whose dialogue overruns it (planner's SPEECH_MAX_SHARE
+            // lint). Under is shown in the neutral colour, not a warning: a
+            // short beat that names silence is correct, and flagging it would
+            // push the user to pad.
+            wordCount.classList.toggle("h3e-over", over);
+            wordCount.title = over
+                ? `Outside the ${w0}-${w1} word band for a ${label} hop.`
+                : "";
+        };
+        beat.addEventListener("input", paintCount);
+        paintCount();
+
         // directive row
         const dirs = el("div", "h3e-dirs");
         for (const axis of (V?.axes || [])) {
@@ -687,6 +725,9 @@ export function createPlanEditor(node, { onChange }) {
         durL.appendChild(el("span", null, "duration"));
         const durSel = select(Object.keys(V?.durations || {}), shot.duration || "", (v) => {
             shot.duration = v || null;
+            // The band is per-length, so changing the length changes the
+            // target the same beat is measured against.
+            paintCount();
             commit();
         }, { blankLabel: `${durationWidget?.value || "chain"} (default)` });
         durSel.title = "Override this hop's length. Must be longer than the overlap.";

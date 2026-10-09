@@ -306,6 +306,20 @@
 /* pin_mech=hand_tie: the previs line under each beat. */
 .h3e-moment { margin-top: 4px; border-left: 2px solid var(--h3-accent, #6aa0ff); font-style: italic; }
 
+/* A7: the beat's word count against the band for its length. Tabular so the
+ * number does not shuffle the label while it is being typed, and faint unless
+ * it is outside the band -- this is information, not a scoreboard. */
+.h3e-beatcount {
+    margin-top: 3px;
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    font-variant-numeric: tabular-nums;
+    min-height: 14px;
+}
+.h3e-beatcount.h3e-over {
+    color: var(--h3-warn);
+}
+
 /* -- Simple mode: the prompt widget drawn in the SCRIPT tab ---------------- */
 
 .h3e-simple { display: flex; flex-direction: column; gap: var(--h3-gap-sm); }

@@ -4289,14 +4289,22 @@ class HandTieClips:
                     if hop_store is not None:
                         hop_store.put(_p_key, _p_imgs, _p_wav, _p_sr,
                                       {"previs": _si + 1, "block": pblock[:400]})
-                _cuts = _ht.previs_cuts(_p_imgs[:_p_len])
+                _all = _ht.previs_cuts(_p_imgs[:_p_len])
+                # Only a cut inside a window costs the film anything; one between
+                # windows is carried by the hop as a camera move (00150, the vlog).
+                _cuts = _ht.window_cuts(_all, _lay["windows"])
+                _gap = [c for c in _all if c not in _cuts]
+                if _gap:
+                    print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts between "
+                          "windows at " + ", ".join(f"f{c} ({c / FPS:.2f}s)" for c in _gap)
+                          + "; the hop there carries it as a camera move", flush=True)
                 if _best is None or len(_cuts) < len(_best[3]):
                     _best = (_p_imgs, _p_wav, _p_sr, _cuts, _p_seed)
                 if not _cuts:
                     break
                 _again = _ht.same_cut(_last_cuts, _cuts)
                 _last_cuts = _cuts
-                print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} hard-cuts at "
+                print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts INSIDE a window at "
                       + ", ".join(f"f{c} ({c / FPS:.2f}s)" for c in _cuts)
                       + ("; the same place as the last take, so the text asks for it: "
                          "no more takes" if _again
@@ -5530,8 +5538,15 @@ class HandTieClips:
                 # The sound leaves the outgoing hop at its first quiet point in
                 # the window, not mid-word at the picture cut (chain_00147).
                 _late = _ht.audio_cut(master_wav[..., -dropped:], _in[..., :dropped], sr)
-                master_wav = _xfade_audio(master_wav[..., :int(master_wav.shape[-1]) - dropped + _late],
-                                          _in[..., _late:], sr)
+                # The 40 ms crossfade overlaps its two sides, so it used to eat 40 ms
+                # of timeline at every join: 11 joins = sound 440 ms ahead of the
+                # lips by hop 12 (chain_00153, HTCChainPreview "drift -440 ms").
+                # The outgoing hop's dropped tail has the sound to spare, so the
+                # left side runs on by the fade length and the length is kept.
+                _xf = min(max(1, int(sr * 40 / 1000.0)), dropped - _late)
+                master_wav = _xfade_audio(
+                    master_wav[..., :int(master_wav.shape[-1]) - dropped + _late + _xf],
+                    _in[..., _late:], sr)
                 print(
                     f"[{TAG}] hop {i + 1}: cut at the window start, dropped hop {i}'s "
                     f"last {overlap_n} frames; its sound runs {_late / float(sr):.2f}s on "
@@ -5839,6 +5854,7 @@ class HandTieClips:
         # preview status — that strip is ~22 px and will render the dump.
         _v_secs = float(master_imgs.shape[0]) / FPS
         _a_secs = float(master_wav.shape[-1]) / float(sr) if sr else 0.0
+
         _push_preview(
             unique_id,
             f"done · {int(master_imgs.shape[0])}f · {_v_secs:.1f}s",

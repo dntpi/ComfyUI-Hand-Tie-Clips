@@ -28,7 +28,7 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import { el, button, widgetByName, findNodeByQualifiedId } from "./widget_utils.js";
-import { NOT_KEYED, forecastPlan, framesOf, parseJson, shotSig } from "./timeline_model.js";
+import { NOT_KEYED, forecastPlan, framesOf, parseJson, shotSig, tieSections } from "./timeline_model.js";
 
 const RUN_PROP = "h3_timeline_run";
 const PENDING_PROP = "h3_timeline_pending";
@@ -71,11 +71,40 @@ export function createTimeline(node, { editor, onChange } = {}) {
     const playerHead = el("div", "h3e-tl-player-head");
     const playerTitle = el("span", "h3e-tl-player-title");
     playerHead.appendChild(playerTitle);
+    // A8: S/M/L. The cached hop is short and thin, and `width:100%` stretched it
+    // to the full panel width regardless of its aspect -- a 9:16 portrait film
+    // rendered as a tall skinny strip with letterbox either side, and a 16:9
+    // one filled the whole node and pushed the seam row off screen. Three sizes
+    // cycle on click; the chosen one is remembered so it survives a redraw.
+    const PLAYER_SIZES = ["S", "M", "L"];
+    const SIZE_W = { S: 240, M: 400, L: 560 };
+    let playerSize = 1;
+    const sizeBtn = button("M", "Player size: small / medium / large", () => {
+        playerSize = (playerSize + 1) % PLAYER_SIZES.length;
+        paintPlayerSize();
+    }, "h3e-btn h3e-tl-sizebtn");
+    function paintPlayerSize() {
+        sizeBtn.textContent = PLAYER_SIZES[playerSize];
+        video.style.maxWidth = SIZE_W[PLAYER_SIZES[playerSize]] + "px";
+    }
+    playerHead.appendChild(sizeBtn);
     playerHead.appendChild(button("×", "Close the player", () => closePlayer(),
                                   "h3e-btn h3e-x"));
     const video = el("video", "h3e-tl-video");
     video.controls = true;
     video.preload = "metadata";
+    // Aspect from the clip itself, once the metadata lands: a 9:16 film gets a
+    // tall box and a 16:9 one a wide box, at the SAME width, so the two are
+    // directly comparable and neither is stretched.
+    video.addEventListener("loadedmetadata", () => {
+        const w = video.videoWidth, h = video.videoHeight;
+        if (w && h) {
+            player.classList.toggle("h3e-portrait", h > w);
+            player.classList.toggle("h3e-landscape", w >= h);
+        }
+        paintPlayerSize();
+    });
+    paintPlayerSize();
     const playerNote = el("div", "h3e-note h3e-note-hint",
         "The cached hop, before tone correction and without the 40 ms join "
         + "crossfade. A preview, not the master.");
@@ -133,8 +162,24 @@ export function createTimeline(node, { editor, onChange } = {}) {
 
     function onPreview(e) {
         const data = e.detail;
-        if (!data?.timeline || data.node_id == null) return;
+        if (data?.node_id == null) return;
         if (findNodeByQualifiedId(app.graph, data.node_id) !== node) return;
+        // A10: the final "done" push carries the hand-tie previs warnings and
+        // no per-hop timeline record, so it would be dropped by the guard
+        // below. It has to be handled BEFORE that check or the warning never
+        // reaches the node -- which is the entire reason it is in the payload.
+        if (Array.isArray(data.ht_previs_warn)) {
+            const rec0 = run();
+            if (rec0) {
+                rec0.previs_warn = data.ht_previs_warn;
+                props()[RUN_PROP] = rec0;
+                // The status bar chip (A10, first half) reads the same record.
+                node._h3Warn?.show(data.ht_previs_warn);
+                render();
+            }
+            return;
+        }
+        if (!data?.timeline) return;
         const hop = Number(data.hop) || 0;
         if (hop < 1) return;
         let rec = run();
@@ -313,6 +358,33 @@ export function createTimeline(node, { editor, onChange } = {}) {
             geo.push({ start: f, frames: raw - trim, restart: i > 0 && isStart(i) });
             f += raw - trim;
         });
+
+        // A9: where the hand-tie previews begin. Since 2fbc025 a long hand-tie
+        // plan splits into CHAINED sections -- one previs per section, several
+        // hops cut from it -- and "+ extend" opens a new one with anchor=extend.
+        // The consequence the user cannot see is that editing hop 2 re-renders
+        // hops 1-12, because they were all cut from one previs. That reads as a
+        // bug unless the boundary is drawn, so it is drawn here.
+        //
+        // tieSections() is hand_tie.sections()/chained() ported, and is the same
+        // function the forecast tests. NOT recomputed here: a second
+        // implementation in the timeline is a second thing to disagree with the
+        // renderer about, which is the failure this whole file exists to avoid.
+        const tieOn = String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie";
+        const sections = tieOn
+            ? tieSections(shots, shots.map((s) => framesOf(
+                s.duration || widgetByName(node, "duration")?.value)))
+            : [];
+        // hop index -> "new previs" (a fresh section) or "" (continues).
+        const newPrevis = new Map();
+        sections.forEach((sec, n) => {
+            if (n === 0) return;
+            sec.hops.forEach((hi) => newPrevis.set(hi, true));
+        });
+        // An anchor=extend shot opens a section in its own right.
+        shots.forEach((s, i) => {
+            if (i > 0 && s?.anchor === "extend") newPrevis.set(i, true);
+        });
         const W = Math.ceil(f * scale);
         const rec = run();
         const fc = forecast(shots);
@@ -331,6 +403,35 @@ export function createTimeline(node, { editor, onChange } = {}) {
             status.textContent = "no run recorded yet -- queue with cache_hops on";
         }
 
+        // A10: the previs warnings, placed on the film. `rec.previs_warn` is
+        // [{section, seed, cuts, first_hop, label}] from run(). The cut frames
+        // index the SECTION's frames; the section's first hop is where its
+        // first window lands in the film, so hop `first_hop` at
+        // `first_hop's start + cut` is where the cut appears on the strip. A
+        // cut in a later window of the section lands on a later hop; the
+        // window-to-hop stride is the hop length, so `cut / hopFrames` picks the
+        // hop. Good enough to place a warning you can click, and exact for the
+        // common single-window case.
+        const previsWarn = new Map();
+        if (rec && Array.isArray(rec.previs_warn) && tieOn) {
+            for (const w of rec.previs_warn) {
+                const first = Number(w.first_hop) || 0;
+                const g0 = geo[first];
+                if (!g0) continue;
+                const hopFrames = t.lengths[first] || g0.frames || 192;
+                for (const c of (w.cuts || [])) {
+                    const hopIdx = Math.min(shots.length - 1,
+                        first + Math.floor(Number(c) / hopFrames));
+                    if (!previsWarn.has(hopIdx)) previsWarn.set(hopIdx, []);
+                    previsWarn.get(hopIdx).push({
+                        frame: Number(c) % hopFrames,
+                        label: w.label || `previs ${w.section} cuts at f${c}`,
+                    });
+                }
+            }
+        }
+
+        // The runway: extend past the last block by one hop width.
         const track = el("div", "h3e-tl-track");
         track.style.width = `${W + EXTEND_W + 48}px`;
 
@@ -380,8 +481,15 @@ export function createTimeline(node, { editor, onChange } = {}) {
             peek.title = beat;
             b.appendChild(peek);
             const tags = [...new Set((beat.match(/@[A-Za-z0-9_]+/g) || []))].join(" ");
+            // A9: a thin marker on the block that opens a hand-tie section, and
+            // the same fact in the meta line. "new previs" is the wording that
+            // explains the forecast: a whole section is re-rendered from one
+            // previs, so the hops after this one re-run with it.
+            const isNewPrevis = newPrevis.get(i);
+            b.classList.toggle("h3e-tl-newprevis", Boolean(isNewPrevis));
             b.appendChild(el("div", "h3e-tl-meta",
-                `${clock(g.frames / fps)} ${g.frames}f${g.restart ? " · restart" : ""}${tags ? " · " + tags : ""}`));
+                `${clock(g.frames / fps)} ${g.frames}f${g.restart ? " · restart" : ""}`
+                + `${isNewPrevis ? " · new previs" : ""}${tags ? " · " + tags : ""}`));
             plan.body.appendChild(place(b, g.start * scale, g.frames * scale - 2));
         });
         // Extend: append a shot that continues from the last one. Everything
@@ -455,6 +563,27 @@ export function createTimeline(node, { editor, onChange } = {}) {
                     `${SEAM_URL}?a=${a.key}&b=${b.key}&${cut}`));
             }
             seamRow.body.appendChild(place(mark, g.start * scale - 4));
+            // A9: where a hand-tie section begins, on the seam row as well as
+            // on the block. The join at a new previs is NOT a restart -- it
+            // continues the film -- but everything from here to the next
+            // boundary is cut from a different take, so it re-renders together.
+            if (isNewPrevis) {
+                const cutMark = el("span", "h3e-tl-cutpoint");
+                cutMark.textContent = "❋";
+                cutMark.title = `A new hand-tie previs starts at hop ${i + 1}. `
+                    + "Everything from here to the next one was cut from that take, "
+                    + "so editing it re-renders the whole section.";
+                seamRow.body.appendChild(place(cutMark, g.start * scale - 4));
+            }
+            // A10: the previs warning lands on the frame where it cuts, which
+            // is inside this hop, not on its join. `previsWarn` maps hop index
+            // -> [{frame, label}] from the run record.
+            for (const w of (previsWarn.get(i) || [])) {
+                const warnMark = el("span", "h3e-tl-previswarn");
+                warnMark.textContent = "⚠";
+                warnMark.title = w.label;
+                seamRow.body.appendChild(place(warnMark, (g.start + w.frame) * scale - 4));
+            }
         }
         track.appendChild(seamRow.row);
 

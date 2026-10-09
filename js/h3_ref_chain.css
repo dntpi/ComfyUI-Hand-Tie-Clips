@@ -1450,6 +1450,29 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 }
 .h3e-tl-block.h3e-tl-locked { border-color: color-mix(in srgb, var(--h3-accent) 60%, transparent); }
 .h3e-tl-block.h3e-tl-restart { border-left: 3px solid var(--h3-warn); }
+
+/* A9: the block that opens a hand-tie section. A thin accent edge on the LEFT,
+ * where a restart's warning-coloured edge already sits, so the two read as the
+ * same kind of fact (something starts here) in two colours. The restart edge is
+ * amber because a cut is a fault; this one is accent because a new previs is
+ * ordinary -- it is what the "+ extend" button is for. */
+.h3e-tl-block.h3e-tl-newprevis { border-left: 3px solid var(--h3-accent); }
+/* A9: the same boundary on the seam row, where the joins actually are. */
+.h3e-tl-cutpoint {
+    position: absolute;
+    color: var(--h3-accent);
+    font-size: var(--h3-fs-xs);
+    cursor: help;
+}
+/* A10: a previs cut, at the frame it happens. Amber like a restart because the
+ * film has a fault in it -- this one is not a planned cut, it is a take that
+ * broke. */
+.h3e-tl-previswarn {
+    position: absolute;
+    color: var(--h3-warn);
+    font-size: var(--h3-fs-xs);
+    cursor: help;
+}
 .h3e-tl-bhead { display: flex; align-items: center; gap: 3px; }
 .h3e-tl-no { font-weight: 700; margin-right: auto; }
 .h3e-root .h3e-tl-mini { padding: 0 4px; font-size: var(--h3-fs-xs); line-height: 14px; }
@@ -1498,9 +1521,30 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 
 .h3e-tl-player { margin-top: 6px; border-top: 1px solid var(--h3-line); padding-top: 4px; }
 .h3e-tl-player[hidden] { display: none; }
-.h3e-tl-player-head { display: flex; align-items: center; justify-content: space-between; }
-.h3e-tl-player-title { font-size: var(--h3-fs-xs); color: var(--h3-muted); }
-.h3e-tl-video { width: 100%; max-height: 360px; background: #000; margin-top: 3px; }
+.h3e-tl-player-head { display: flex; align-items: center; justify-content: space-between; gap: var(--h3-gap-sm); }
+.h3e-tl-player-title { font-size: var(--h3-fs-xs); color: var(--h3-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h3e-root .h3e-tl-sizebtn { flex: 0 0 auto; min-width: 26px; }
+
+/* A8. The video is sized by the FILM's aspect, not the node's width.
+ * `width: 100%` gave a 9:16 portrait film a full-panel-wide letterbox and a
+ * 16:9 one a box so tall it pushed the seam row off the node -- and the user
+ * is rendering portrait now. An explicit ratio keeps the picture's own shape
+ * at every size, so a cached hop is judged on its own terms.
+ *
+ * Before the metadata arrives there is no ratio to honour, so it falls back to
+ * the landscape box rather than collapsing to nothing. */
+.h3e-tl-video {
+    display: block;
+    background: #000;
+    margin-top: 3px;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 420px;
+}
+.h3e-tl-player.h3e-portrait .h3e-tl-video { aspect-ratio: 9 / 16; max-height: 460px; }
+.h3e-tl-player.h3e-landscape .h3e-tl-video { aspect-ratio: 16 / 9; }
 
 .h3e-tl-block { cursor: pointer; }
 .h3e-tl-block.h3e-tl-selected { border-color: var(--h3-accent); background: var(--h3-accent-wash); }

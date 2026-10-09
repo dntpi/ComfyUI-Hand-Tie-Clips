@@ -625,36 +625,6 @@ export function createPlanEditor(node, { onChange }) {
         beat.addEventListener("change", () => { writeWidget(); onChange?.(); });
         body.appendChild(beat);
 
-        // pin_mech=hand_tie: the previs is compiled from these, so they sit
-        // under the beat rather than in `advanced`. Not drawn in other modes,
-        // where nothing reads them (a written value is kept either way).
-        if (String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie") {
-            const momentBox = (key, placeholder, hint) => {
-                const t = el("textarea", "h3e-beat h3e-moment");
-                t.rows = 2;
-                t.value = shot[key] || "";
-                t.placeholder = placeholder;
-                t.title = hint;
-                t.addEventListener("input", () => { shot[key] = t.value; writeWidget(); });
-                t.addEventListener("change", () => { writeWidget(); onChange?.(); });
-                return t;
-            };
-            body.appendChild(momentBox("moment",
-                index === 0
-                    ? "moment: the film's first frame (blank = the beat's first sentence)"
-                    : "moment: what is on screen as this hop starts (blank = the beat's first sentence)",
-                "hand-tie: the previs shows this at the start of this hop, and this hop and the one "
-                + "before it are tied to it. A pose and a place, one sentence. A spoken line that "
-                + "crosses the join goes here, once, as <d>[English] ...</d> -- the node splits it "
-                + "between the two hops. Do not repeat it in the beat."));
-            if (index === shots.length - 1) {
-                body.appendChild(momentBox("moment_end",
-                    "moment end: what is on screen as the film ends (blank = the beat's last sentence)",
-                    "hand-tie: the previs ends on this, and the last hop is tied to it. A line here "
-                    + "is spoken so that it ends with the film."));
-            }
-        }
-
         // directive row
         const dirs = el("div", "h3e-dirs");
         for (const axis of (V?.axes || [])) {
@@ -802,6 +772,38 @@ export function createPlanEditor(node, { onChange }) {
         prose.addEventListener("input", () => { shot.prose = prose.value; writeWidget(); });
         prose.addEventListener("change", () => { writeWidget(); onChange?.(); });
         adv.appendChild(prose);
+
+        // pin_mech=hand_tie only, and optional: blank, the previs uses each
+        // beat's first sentence, so a normal plan needs nothing here. In
+        // `advanced` because hand-tie must not ask for more input than any
+        // other plan (user 2026-10-09). A written value is kept in every mode.
+        if (String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie") {
+            const momentBox = (key, placeholder, hint) => {
+                const t = el("textarea", "h3e-beat h3e-moment");
+                t.rows = 2;
+                t.value = shot[key] || "";
+                t.placeholder = placeholder;
+                t.title = hint;
+                t.addEventListener("input", () => { shot[key] = t.value; writeWidget(); });
+                t.addEventListener("change", () => { writeWidget(); onChange?.(); });
+                return t;
+            };
+            adv.appendChild(momentBox("moment",
+                index === 0
+                    ? "moment: the film's first frame (blank = the beat's first sentence)"
+                    : "moment: what is on screen as this hop starts (blank = the beat's first sentence)",
+                "hand-tie: the previs shows this at the start of this hop, and this hop and the one "
+                + "before it are tied to it. A pose and a place, one sentence. A spoken line that "
+                + "crosses the join goes here, once, as <d>[English] ...</d> -- the node splits it "
+                + "between the two hops. Do not repeat it in the beat."));
+            if (index === shots.length - 1) {
+                adv.appendChild(momentBox("moment_end",
+                    "moment end: what is on screen as the film ends (blank = the beat's last sentence)",
+                    "hand-tie: the previs ends on this, and the last hop is tied to it. A line here "
+                    + "is spoken so that it ends with the film."));
+            }
+        }
+
         body.appendChild(adv);
         card.appendChild(body);
 

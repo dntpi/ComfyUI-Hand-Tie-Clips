@@ -5854,7 +5854,29 @@ class HandTieClips:
         # preview status — that strip is ~22 px and will render the dump.
         _v_secs = float(master_imgs.shape[0]) / FPS
         _a_secs = float(master_wav.shape[-1]) / float(sr) if sr else 0.0
-
+        # A10: the hand-tie previs warnings, so the node can show them. They
+        # were console-only, and the user's point is that nobody would know a
+        # section was cut. The cut frames are PREVIS-LOCAL (they index the
+        # section's own frames, not the film), so each entry carries the first
+        # hop of its section and that hop's window offsets -- enough for the
+        # timeline to place every cut at the right place in the film without
+        # re-deriving the section geometry here. `ht_pos[i][0]` is the section
+        # of hop i, so the section's first hop is the lowest i that maps to it.
+        _warn_payload = []
+        if ht_previs_warn:
+            _first_hop = {}
+            for _hi, (_hsec, _hk) in ht_pos.items():
+                if _hsec not in _first_hop or _hi < _first_hop[_hsec]:
+                    _first_hop[_hsec] = _hi
+            for (_sec, _seed, _cuts) in ht_previs_warn:
+                _warn_payload.append({
+                    "section": int(_sec), "seed": int(_seed),
+                    "cuts": [int(c) for c in _cuts],
+                    "first_hop": int(_first_hop.get(_sec - 1, 0)),
+                    "label": (f"hand-tie previs {_sec} (seed {_seed}) cuts at "
+                              + ", ".join(f"f{c}" for c in _cuts)
+                              + "; check the film there"),
+                })
         _push_preview(
             unique_id,
             f"done · {int(master_imgs.shape[0])}f · {_v_secs:.1f}s",
@@ -5862,6 +5884,7 @@ class HandTieClips:
             meta={"video_s": round(_v_secs, 3), "audio_s": round(_a_secs, 3),
                   "drift_ms": round((_a_secs - _v_secs) * 1000.0, 1),
                   "hops": int(n), "frames": int(master_imgs.shape[0]),
+                  "ht_previs_warn": _warn_payload,
                   "done": True})
 
         if locked is not None and master_wav is not None:

@@ -182,6 +182,10 @@ _SPEECH = re.compile(
 _WHO_RE = re.compile(r"@[A-Za-z0-9_]+|<Subject \d+>")
 
 
+_TALKING = re.compile(
+    r"(?:,\s*|\s+and\s+|\s+)(?:still\s+|keeps\s+)?(?:talking|chatting|speaking|narrating)\b[^,.;]*", re.I)
+
+
 def _no_speech(text):
     """A beat with its spoken lines taken out, speech verb and speaker tag included.
 
@@ -191,6 +195,10 @@ def _no_speech(text):
     inside their own hop (user 2026-10-09: no extra input for hand-tie)."""
     t = _SPEECH.sub(".", text or "")
     t = _D.sub("", t)
+    # A talking cue with no words is worse than none: H3 invents the speech in its
+    # default language and, in a phone vlog, burns in captions for it (a rejected
+    # take of the 9:16 vlog previs, 2026-10-10: Chinese subtitles under "talking into it").
+    t = _TALKING.sub("", t)
     t = re.sub(r"\(S\d+\)\s*", "", t)
     t = re.sub(r"\s*\.\s*\.", ".", t)
     return re.sub(r"\s{2,}", " ", t).strip()
@@ -556,6 +564,19 @@ def same_cut(before, now, near=CUT_SAME_FRAMES):
     """
     return bool(before) and bool(now) and all(
         any(abs(int(c) - int(b)) <= near for b in before) for c in now)
+
+
+def window_cuts(cuts, windows):
+    """The cuts that land INSIDE a window, the only ones worth a new take.
+
+    A previs compresses ~8 s of action into ~2.8 s per hop, so a beat that changes
+    place cuts (chain_00150 f314/f321, the 9:16 vlog f200 and f191). Between two
+    windows that is harmless: the hop is pinned at both ends to clean frames and
+    carries the gap as a camera move (00150's hop 5, the vlog's hop 3). Inside a
+    window the cut is pinned into two hops' guides. `cuts` are first-new-frame
+    indices, so a cut AT a window's first frame leaves that window whole.
+    """
+    return [c for c in cuts if any(w < c < w + WINDOW for w in windows)]
 
 
 def previs_cuts(frames):

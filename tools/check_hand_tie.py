@@ -119,6 +119,12 @@ plain = HT.compile_previs([
              "stop by noon.</d> She steps to the sink."},
     {"beat": "@cook sips, and (S1) says, <d>[English] Right.</d> The low hum of the refrigerator."}],
     [192] * 3)[0]
+ck("a talking cue never reaches the previs (it invents speech + burned-in captions)",
+   HT._first_sentence("@mina walks down the street, holding her phone out and talking into it. x")
+   == "@mina walks down the street, holding her phone out."
+   and HT._first_sentence("@mina slows by a stall, still talking to the phone. x") == "@mina slows by a stall."
+   and HT._first_sentence("@mina keeps walking with the phone held out. x")
+   == "@mina keeps walking with the phone held out.")
 ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,')",
    "(S1)" not in plain and "<d>" not in plain and "says" not in plain, plain)
 # Changed by PREVIS_SOUND. The old text was
@@ -328,6 +334,12 @@ ck("a previs that cuts on every try is a warning in the log and in info",
    "ht_previs_warn.append(" in src and "check the film there" in src)
 ck("a cut the text asks for (same place twice) stops the re-rolls (chain_00150: 13.38/13.42/13.62 s)",
    HT.same_cut([321], [322]) and HT.same_cut([314], [327]) and "if _again:" in src)
+_w = HT.layout([192] * 6)["windows"]
+ck("only a cut INSIDE a window counts: every cut so far fell between windows",
+   HT.window_cuts([314, 321, 200, 191], _w) == [] and HT.window_cuts([145, 210], _w) == [145, 210]
+   and HT.window_cuts([136, 158], _w) == [], HT.window_cuts([314, 321, 200, 191, 145, 210, 136, 158], _w))
+ck("run() re-rolls the previs on window cuts only, and logs the others as bridged",
+   "_cuts = _ht.window_cuts(_all, _lay[\"windows\"])" in src and "the hop there carries it as a camera move" in src)
 ck("a cut that moved, or a new one, is not the same cut",
    not HT.same_cut([321], [261, 327]) and not HT.same_cut([100], [200]) and not HT.same_cut([], [321]))
 
@@ -337,6 +349,25 @@ print("\nthe cut sits at the window START (the previous hop's tail span is dropp
 # later hop whole; the outgoing hop is bent to meet it, and is toned on its head only.
 ck("run() rewinds the master and writes a hand-tie hop whole",
    "write_pos -= overlap_n" in src and "master_imgs[write_pos:write_pos + keep_n] = imgs" in src)
+# chain_00153: 11 joins x a 40 ms overlapping crossfade = sound 440 ms ahead of
+# the lips by hop 12. The fade now borrows from the dropped tail; replay the
+# arithmetic with run()'s own expression over 12 hops of 8 s.
+import math
+def _xfade(l, r, sr, ms=40):
+    k = min(max(1, int(sr * ms / 1000.0)), l.shape[-1], r.shape[-1])
+    t = torch.linspace(0, 1, k)
+    return torch.cat([l[..., :-k], l[..., -k:] * torch.cos(t * math.pi / 2) + r[..., :k] * torch.sin(t * math.pi / 2), r[..., k:]], -1)
+SR, HOP = 32000, int(round(192 / 24 * 32000))
+DROP = int(round(22 / 24 * SR))
+mw = torch.zeros(1, 2, HOP)
+for _ in range(11):
+    late = 0
+    xf = min(max(1, int(SR * 40 / 1000.0)), DROP - late)
+    mw = _xfade(mw[..., :mw.shape[-1] - DROP + late + xf], torch.zeros(1, 2, HOP)[..., late:], SR)
+want = (192 + 11 * 170) / 24 * SR
+ck("12 hand-tie hops keep the soundtrack exactly as long as the film (no 40 ms per join)",
+   abs(mw.shape[-1] - want) <= 11, (mw.shape[-1], want))   # one sample of rounding per join; the old fade lost 1280
+ck("run() borrows the crossfade from the dropped tail", "- dropped + _late + _xf]" in src)
 ck("run() switches the sound inside the window at audio_cut's point (picture still cuts at its start)",
    "_ht.audio_cut(master_wav[..., -dropped:], _in[..., :dropped], sr)" in src)
 SR = 32000

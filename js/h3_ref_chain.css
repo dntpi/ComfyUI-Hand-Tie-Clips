@@ -952,6 +952,59 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
  * Built on `.h3e-mode`, which was already the Simple/Shots toggle's look --
  * one visual language for "pick exactly one of these", not two.
  */
+/* A3's status bar. One row, always mounted, above the tabs. Fixed height so
+ * the strip under it never moves when the text changes length -- a status bar
+ * that shifts the UI when a number gains a digit is worse than one that
+ * truncates. */
+.h3e-statusbar {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    flex: 0 0 auto;
+    height: 20px;
+    padding: 0 6px;
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-muted);
+    font-variant-numeric: tabular-nums;
+    border: 1px solid var(--h3-border-soft);
+    border-radius: var(--h3-radius-sm);
+    background: var(--h3-sunken);
+    overflow: hidden;
+}
+.h3e-statusbar .h3e-run-digest {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+/* A10: the hand-tie previs warning. Amber, because the film rendered -- this
+ * is "look here", not "it failed". */
+.h3e-warnchip {
+    flex: 0 0 auto;
+    padding: 0 5px;
+    border-radius: var(--h3-radius-sm);
+    color: var(--h3-warn);
+    background: color-mix(in srgb, var(--h3-warn) 18%, transparent);
+    cursor: help;
+    white-space: nowrap;
+}
+
+/* A4: the ⚙ RUN control. Not a tab -- it is not in the tab strip's flex, so
+ * it keeps its own width and never competes with a label for a quarter. */
+.h3e-root .h3e-runbtn {
+    flex: 0 0 auto;
+    width: 30px;
+    border-left: 1px solid var(--h3-border);
+    border-radius: 0;
+    color: var(--h3-faint);
+}
+.h3e-root .h3e-runbtn.h3e-on {
+    background: color-mix(in srgb, var(--h3-accent) 34%, var(--h3-sunken));
+    color: var(--h3-text);
+}
+
 .h3e-tabs {
     display: flex;
     flex: 0 0 auto;

@@ -36,6 +36,9 @@ const EDITOR_MODE_PROP = "h3_editor_mode";
 // Which tab is showing. A node property, so it rides the saved workflow and
 // ComfyUI's restored graph rather than resetting to Script on every reload.
 const ACTIVE_TAB_PROP = "h3_active_tab";
+// A4's surface flag. One object rather than a `let showingRun` because
+// createTabs' onShow closure is created before the surface code runs.
+const surface = { showingRun: false };
 // One pane plus the tab strip plus RUN's summary bar. Was 460, when this had to
 // hold four stacked sections before the first scroll.
 const EDITOR_MIN_H = 360;
@@ -330,13 +333,68 @@ function mountEditor(node) {
             // now showing, up OR down, which is the whole of A2: the Script
             // tab is tall and Media is short, so a switch has to be able to
             // make the node smaller as well as bigger.
+            // Skipped while RUN is the surface (A4) -- the tab is not what is
+            // on screen then, and refitting to a hidden tab would fight the
+            // height the user just saw settle on the RUN column. A plain flag
+            // read through an object: onShow is defined before setSurface and
+            // cannot close over a const that is still in its TDZ.
+            if (surface.showingRun) return;
             node._h3HeightGuard?.sync("tab " + id);
             node.graph?.setDirtyCanvas?.(true, true);
         },
     });
+    // A3's status bar: permanent, above the tabs, on every tab and on RUN
+    // itself. The run panel owns the text (it is the only thing that knows
+    // which widget holds what) and this row owns the placement.
+    //
+    // No rhythm/metronome item here, deliberately. On a plain plan equal hop
+    // lengths are normal -- a continuous film wants them -- so surfacing it as
+    // a fault would teach the user to ignore the one row that does report
+    // faults. "Does it land on the music" is a question MV mode asks, and
+    // MV mode puts it on its own card where it means something.
+    const statusBar = el("div", "h3e-statusbar");
+    const statusText = runPanel.digestEl;
+    statusBar.appendChild(statusText);
+    // A10's warning chip. Hidden unless run() reported something; see the
+    // ht_previs_warn field in the preview payload.
+    const warnChip = el("span", "h3e-warnchip");
+    warnChip.hidden = true;
+    statusBar.appendChild(warnChip);
+    node._h3Warn = {
+        // `warns` is [{label, frame}] from the run. Keep the first few: a chip
+        // is a pointer, not a log, and four is already more than fits.
+        show(warns) {
+            if (!warns || !warns.length) {
+                warnChip.hidden = true;
+                warnChip.textContent = "";
+                warnChip.title = "";
+                return;
+            }
+            warnChip.hidden = false;
+            warnChip.textContent = `⚠ ${warns.length} previs cut`
+                + (warns.length === 1 ? "" : "s");
+            warnChip.title = warns.map((w) => w.label).join("\n");
+        },
+    };
+
+    // A4: RUN is its own surface rather than a <details> stacked under every
+    // tab. That stacking is why the Script tab measured about 3,600px: the
+    // authoring surface and all 65 dials were in one column, and the height
+    // guard -- correctly, at the time -- grew the node to hold both. Only one
+    // thing may ask for height at a time.
+    root.appendChild(statusBar);
     root.appendChild(tabs.strip);
     root.appendChild(tabs.bodies);
     root.appendChild(runPanel.root);
+
+    // The ⚙ control. A tab rather than a seventh work tab, because RUN is not
+    // where you write the film -- it is the panel you check before every
+    // queue, and keeping it out of the tab strip is what keeps the strip
+    // legible.
+    const runBtn = button("⚙", "The render controls: canvas, sampler, cache, upscaler",
+        () => setSurface(getSurface() === "run" ? lastTab : "run"),
+        "h3e-btn h3e-mode h3e-runbtn");
+    tabs.strip.appendChild(runBtn);
 
     // A2's manual pin, on the tab strip so it is reachable without opening
     // RUN. Freezing the height is the answer to "I sized this node and it
@@ -356,9 +414,66 @@ function mountEditor(node) {
             ? "Height pinned - the node keeps this size until you unpin"
             : "Pin the node's height: stop it following the panel";
     }
-    tabs.strip.appendChild(pinBtn);
-    tabs.strip.appendChild(el("span", "h3e-stripgap", ""));
-    node._h3PaintPin = paintPin;
+tabs.strip.appendChild(pinBtn);
+tabs.strip.appendChild(el("span", "h3e-stripgap", ""));
+node._h3PaintPin = paintPin;
+
+    // ---- A4: the surface ----------------------------------------------------
+    //
+    // "work" shows a tab; "run" shows the render controls. Remembered in
+    // node.properties beside h3_active_tab rather than in a module variable,
+    // because a reload has to land the user back on the surface they left --
+    // same reason the tab itself is stored there.
+    const SURFACE_PROP = "h3_surface";
+    let lastTab = tabs.active() || "script";
+
+    function getSurface() {
+        const s = node.properties?.[SURFACE_PROP];
+        return s === "run" ? "run" : "work";
+    }
+
+    function setSurface(next) {
+        const run = next === "run";
+        surface.showingRun = run;
+        node.properties ??= {};
+        node.properties[SURFACE_PROP] = run ? "run" : "work";
+        if (!run) {
+            // Leaving RUN puts the work tab back, so the two controls agree.
+            lastTab = tabs.active() || lastTab;
+            tabs.show(lastTab);
+        }
+        tabs.bodies.hidden = run;
+        runPanel.root.hidden = !run;
+        // A <details> cannot be told to be open by `hidden` alone -- if it was
+        // left open, its body is still in the flow and would show through the
+        // tab strip. Open it on entry and close it on exit so exactly one
+        // surface is laid out at a time.
+        runPanel.root.open = run;
+        runBtn.classList.toggle("h3e-on", run);
+        runBtn.title = run
+            ? "Back to the tabs"
+            : "The render controls: canvas, sampler, cache, upscaler";
+        if (run) runPanel.sync();
+        // The height is the surface's, not the tab's: RUN is a long column of
+        // groups and the Script tab is short by comparison.
+        node._h3HeightGuard?.sync(run ? "run" : "tab " + tabs.active());
+    }
+
+    // `r` toggles RUN, unless the user is typing. A keystroke landing in a
+    // textarea is text, not a command, and swallowing the letter is the kind
+    // of thing that makes a shortcut feel broken rather than absent.
+    root.addEventListener("keydown", (e) => {
+        if (e.key !== "r" && e.key !== "R") return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const t = e.target;
+        const tag = t?.tagName || "";
+        const typing = tag === "INPUT" || tag === "TEXTAREA"
+            || t?.isContentEditable === true;
+        if (typing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setSurface(getSurface() === "run" ? "work" : "run");
+    });
 
     const domWidget = node.addDOMWidget("h3_editor", "h3_editor", root, {
         serialize: false,
@@ -405,6 +520,13 @@ function mountEditor(node) {
             // exists by the time we get here.
             const saved = node.properties?.[ACTIVE_TAB_PROP];
             if (saved && saved !== tabs.active()) tabs.show(saved);
+            // Same story for the surface: properties arrive with the workflow,
+            // after the mount already put it on the work tabs. Without this a
+            // workflow saved on RUN came back on Script, and the node's height
+            // jumped on load.
+            if (node.properties?.[SURFACE_PROP]) {
+                setSurface(getSurface());
+            }
             editor.reload();
             rail.render();
             mediaStrip.render();
@@ -424,15 +546,22 @@ function mountEditor(node) {
         writer,
         swap: videoSwap,
         timeline,
-        tabs,
+tabs,
+        // A4: lets the surface be driven from outside the panel (and lets a
+        // checker assert on it without reaching into the DOM).
+        getSurface,
+        setSurface,
     };
 
-    applyVisibility();
+applyVisibility();
     rail.render();
     mediaStrip.render();
     editor.render();
     syncBadges();
     paintPin();
+    // The mount runs before properties arrive, so this only matters for a
+    // fresh node; refresh() re-applies it once a saved workflow lands.
+    setSurface(getSurface());
 
     // `control_after_generate` bumps the seed widget as the prompt is queued,
     // and undo rewrites widgets wholesale -- both behind this panel's back.

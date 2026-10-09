@@ -298,8 +298,14 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
     const root = el("details", "h3e-section h3e-run");
     const sum = el("summary", "h3e-run-sum");
     sum.appendChild(el("span", "h3e-title", "RUN"));
+    // The digest lives HERE, not in the summary. A3 hoisted it to the node's
+    // permanent status bar, because the state it carries (resolution, aspect,
+    // duration, hops, steps, sampler, cache) is the thing you check before
+    // every queue, and burying it under a <details> meant you only saw it on
+    // the one tab where the panel happened to be open. This panel still owns
+    // the text -- it is the only thing that knows which widget holds what --
+    // and the caller decides where the element is mounted.
     const digest = el("span", "h3e-count h3e-run-digest");
-    sum.appendChild(digest);
     root.appendChild(sum);
 
     const body = el("div", "h3e-run-body");
@@ -528,10 +534,14 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
     // carry it and it costs nothing.
 
     return {
-        root,
-        render,
-        sync,
-        /** Names the panel drew; the caller hides exactly these. */
-        ownedNames: () => owned.slice(),
-    };
+root,
+          render,
+          sync,
+          /** The status text, for the caller to mount in the status bar (A3).
+           *  Mounted once and left there, so the node's top row reads the same
+           *  on every tab and on RUN itself. */
+          digestEl: digest,
+          /** Names the panel drew; the caller hides exactly these. */
+          ownedNames: () => owned.slice(),
+      };
 }

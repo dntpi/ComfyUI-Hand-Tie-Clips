@@ -4123,6 +4123,7 @@ class HandTieClips:
         ht_windows = {}      # section -> (window pictures, window sounds)
         ht_previs_info = []
         ht_previs_media = []
+        ht_previs_warn = []     # (section, seed, cuts) of a previs that cut on every try
         if ht:
             for _si, _sec in enumerate(_ht.sections(shots)):
                 _frames = [lengths[j] for j in _sec]
@@ -4176,78 +4177,111 @@ class HandTieClips:
                 pblock = pblock.rstrip() + " " + _suf
 
             _sh = shots[i] or {}
-            _p_seed = ((int(_sh["seed"]) if _sh.get("seed") is not None
+            _p_seed0 = ((int(_sh["seed"]) if _sh.get("seed") is not None
                         else ((int(seed) + i) if seed_per_shot else int(seed)))
                        + _ht.PREVIS_SEED_OFFSET)
             _p_steps = int(_sh.get("steps") or steps)
             _p_len = int(_lay["previs"])
-            _p_key = None
-            _hit = None
-            if hop_store is not None:
-                _p_key = _store.hop_key(None, {
-                    "chain": chain_salt, "previs": pblock, "len": _p_len,
-                    "seed": _p_seed, "steps": _p_steps,
-                    "refs": {k: _store.tensor_digest(t)
-                             for k, t in sorted((hop_images or {}).items())},
-                    "videos": {k: _store.tensor_digest(t)
-                               for k, t in sorted((hop_videos or {}).items())},
-                    "audios": {k: _store.audio_digest(a)
-                               for k, a in sorted((hop_ref_audios or {}).items())},
-                    "start": _store.tensor_digest(start_image),
-                })
-                _hit = hop_store.get(_p_key)
-            if _hit is not None:
-                _p_imgs, _p_wav, _p_sr, _ = _hit
-                print(f"[{TAG}] hand-tie previs {_si + 1}: loaded from cache "
-                      f"({int(_p_imgs.shape[0])}f, key {_p_key[:8]})", flush=True)
-            else:
-                print(f"[{TAG}] hand-tie previs {_si + 1}: rendering {_p_len}f "
-                      f"(seed {_p_seed}, {_p_steps} steps)", flush=True)
-                _push_preview(unique_id, f"previs {_si + 1} sampling…", hop=i + 1, total=n)
-                packed = _core_call(
-                    MiniMaxH3ReferenceToVideo, "the hand-tie previs",
-                    clip=clip, vae=vae, audio_vae=audio_vae, prompt=pblock,
-                    width=int(width), height=int(height), length=_p_len,
-                    ref_image_size=ref_image_size, ref_images=hop_images,
-                    ref_videos=hop_videos,
-                    ref_video_audios=(hop_video_audios or None),
-                    ref_audios=hop_ref_audios,
-                )
-                _pc, _pl = _result(packed)[0], _result(packed)[1]
-                if refmod_image_blocks or refmod_video_blocks:
-                    _pc = _refmod.splice_blocks(
-                        _pc, hop_images, hop_videos,
-                        refmod_image_blocks, refmod_video_blocks)
-                if start_image is not None and (i == 0 or str(_sh.get("anchor") or "") == "restart"):
-                    # The section opens on the photograph, so window A does.
-                    _pc = _result(_core_call(
-                        MiniMaxH3AddGuide, "the previs start image",
-                        positive=_pc, latent=_pl, frame_idx=0,
-                        vae=vae, audio_vae=None, image=start_image[:1], audio=None,
-                    ))[0]
-                _offload_text_encoder(clip, model)
-                if _p_steps not in sigma_cache:
-                    sigma_cache[_p_steps] = _result(_core_call(
-                        BasicScheduler, "the sigma schedule",
-                        model=model, scheduler=scheduler, steps=_p_steps,
-                        denoise=1.0))[0]
-                _pg = _result(_core_call(BasicGuider, "the previs guider",
-                                         model=model, conditioning=_pc))[0]
-                _pn = _result(_core_call(RandomNoise, "the previs noise",
-                                         noise_seed=_p_seed))[0]
-                _ps = _result(_core_call(
-                    SamplerCustomAdvanced, "the previs sampler",
-                    noise=_pn, guider=_pg, sampler=sampler,
-                    sigmas=sigma_cache[_p_steps], latent_image=_pl))[0]
-                _p_imgs, _p_audio = _decode_av(vae, audio_vae, _ps)
-                _p_imgs = _p_imgs.contiguous().cpu()
-                _p_wav = _p_audio["waveform"].contiguous().cpu()
-                _p_sr = int(_p_audio["sample_rate"])
-                del _pc, _pl, _pg, _pn, _ps, packed
-                mm.soft_empty_cache()
+            # The previs is the one thing every hop follows, so it is checked
+            # before any hop renders: a hard cut in it (chain_00146: medium to
+            # wide at 13.08 s) re-renders it on the next seed, PREVIS_TRIES at
+            # most, and the least-cut render is kept. Nobody dry-runs a previs
+            # first, so the node has to.
+            _pc = _pl = None
+            _best = None
+            for _try in range(_ht.PREVIS_TRIES):
+                _p_seed = _p_seed0 + _try * _ht.PREVIS_RETRY_STRIDE
+                _p_key = None
+                _hit = None
                 if hop_store is not None:
-                    hop_store.put(_p_key, _p_imgs, _p_wav, _p_sr,
-                                  {"previs": _si + 1, "block": pblock[:400]})
+                    _p_key = _store.hop_key(None, {
+                        "chain": chain_salt, "previs": pblock, "len": _p_len,
+                        "seed": _p_seed, "steps": _p_steps,
+                        "refs": {k: _store.tensor_digest(t)
+                                 for k, t in sorted((hop_images or {}).items())},
+                        "videos": {k: _store.tensor_digest(t)
+                                   for k, t in sorted((hop_videos or {}).items())},
+                        "audios": {k: _store.audio_digest(a)
+                                   for k, a in sorted((hop_ref_audios or {}).items())},
+                        "start": _store.tensor_digest(start_image),
+                    })
+                    _hit = hop_store.get(_p_key)
+                if _hit is not None:
+                    _p_imgs, _p_wav, _p_sr, _ = _hit
+                    print(f"[{TAG}] hand-tie previs {_si + 1}: loaded from cache "
+                          f"({int(_p_imgs.shape[0])}f, seed {_p_seed}, key {_p_key[:8]})",
+                          flush=True)
+                else:
+                    print(f"[{TAG}] hand-tie previs {_si + 1}: rendering {_p_len}f "
+                          f"(seed {_p_seed}, {_p_steps} steps)", flush=True)
+                    _push_preview(unique_id, f"previs {_si + 1} sampling…", hop=i + 1, total=n)
+                    if _pc is None:
+                        packed = _core_call(
+                            MiniMaxH3ReferenceToVideo, "the hand-tie previs",
+                            clip=clip, vae=vae, audio_vae=audio_vae, prompt=pblock,
+                            width=int(width), height=int(height), length=_p_len,
+                            ref_image_size=ref_image_size, ref_images=hop_images,
+                            ref_videos=hop_videos,
+                            ref_video_audios=(hop_video_audios or None),
+                            ref_audios=hop_ref_audios,
+                        )
+                        _pc, _pl = _result(packed)[0], _result(packed)[1]
+                        del packed
+                        if refmod_image_blocks or refmod_video_blocks:
+                            _pc = _refmod.splice_blocks(
+                                _pc, hop_images, hop_videos,
+                                refmod_image_blocks, refmod_video_blocks)
+                        if start_image is not None and (i == 0 or str(_sh.get("anchor") or "") == "restart"):
+                            # The section opens on the photograph, so window A does.
+                            _pc = _result(_core_call(
+                                MiniMaxH3AddGuide, "the previs start image",
+                                positive=_pc, latent=_pl, frame_idx=0,
+                                vae=vae, audio_vae=None, image=start_image[:1], audio=None,
+                            ))[0]
+                        _offload_text_encoder(clip, model)
+                    if _p_steps not in sigma_cache:
+                        sigma_cache[_p_steps] = _result(_core_call(
+                            BasicScheduler, "the sigma schedule",
+                            model=model, scheduler=scheduler, steps=_p_steps,
+                            denoise=1.0))[0]
+                    _pg = _result(_core_call(BasicGuider, "the previs guider",
+                                             model=model, conditioning=_pc))[0]
+                    _pn = _result(_core_call(RandomNoise, "the previs noise",
+                                             noise_seed=_p_seed))[0]
+                    _ps = _result(_core_call(
+                        SamplerCustomAdvanced, "the previs sampler",
+                        noise=_pn, guider=_pg, sampler=sampler,
+                        sigmas=sigma_cache[_p_steps], latent_image=_pl))[0]
+                    _p_imgs, _p_audio = _decode_av(vae, audio_vae, _ps)
+                    _p_imgs = _p_imgs.contiguous().cpu()
+                    _p_wav = _p_audio["waveform"].contiguous().cpu()
+                    _p_sr = int(_p_audio["sample_rate"])
+                    del _pg, _pn, _ps
+                    mm.soft_empty_cache()
+                    if hop_store is not None:
+                        hop_store.put(_p_key, _p_imgs, _p_wav, _p_sr,
+                                      {"previs": _si + 1, "block": pblock[:400]})
+                _cuts = _ht.previs_cuts(_p_imgs[:_p_len])
+                if _best is None or len(_cuts) < len(_best[3]):
+                    _best = (_p_imgs, _p_wav, _p_sr, _cuts, _p_seed)
+                if not _cuts:
+                    break
+                print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} hard-cuts at "
+                      + ", ".join(f"f{c} ({c / FPS:.2f}s)" for c in _cuts)
+                      + ("; rendering it again on the next seed"
+                         if _try + 1 < _ht.PREVIS_TRIES else ""), flush=True)
+            del _pc, _pl
+            _p_imgs, _p_wav, _p_sr, _cuts, _p_seed = _best
+            if _cuts:
+                print(f"[{TAG}] WARNING: hand-tie previs {_si + 1}: every one of "
+                      f"{_ht.PREVIS_TRIES} renders cuts; using seed {_p_seed} (cuts at "
+                      + ", ".join(f"f{c}" for c in _cuts) + "). The hops will follow "
+                      "those cuts. Change the seed, or simplify the beat that crosses them.",
+                      flush=True)
+                ht_previs_warn.append((_si + 1, _p_seed, _cuts))
+            elif _p_seed != _p_seed0:
+                print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} holds one take",
+                      flush=True)
             if int(_p_imgs.shape[0]) < _p_len:
                 raise ValueError(
                     f"{TAG}: hand-tie previs {_si + 1} decoded {int(_p_imgs.shape[0])} "
@@ -5724,6 +5758,9 @@ class HandTieClips:
                 f"{h - 1}|{h}" for h in unpaired_joins)
         if upsample_note:
             info += chr(10) + upsample_note
+        for _sec, _seed, _cuts in ht_previs_warn:
+            info += (chr(10) + f"hand-tie previs {_sec} (seed {_seed}) cuts at "
+                     + ", ".join(f"f{c}" for c in _cuts) + "; the hops follow it")
         print(f"[{TAG}] {info}", flush=True)
         # The assembled prompts being inspectable is the whole point of the
         # directive layer -- wire `info` to a Preview Text node to read exactly

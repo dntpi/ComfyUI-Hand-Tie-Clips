@@ -229,6 +229,26 @@ ck("frames outside the span are untouched",
    torch.equal(film[:40], before[:40]) and torch.equal(film[70:], before[70:]))
 ck("a cut too close to the start is left alone", HT.detail_settle(before.clone(), 5) is None)
 
+print("\nthe previs checks itself for hard cuts (chain_00146: medium to wide at 13.08 s)")
+torch.manual_seed(3)
+def _scene(seed):
+    g = torch.Generator().manual_seed(seed)
+    coarse = torch.rand(1, 3, 4, 7, generator=g)                       # big shapes: a composition
+    big = torch.nn.functional.interpolate(coarse, size=(64, 112), mode="bilinear", align_corners=False)
+    return (0.8 * big + 0.2 * torch.rand(1, 3, 64, 112, generator=g))[0].permute(1, 2, 0)
+scene_a, scene_b = _scene(10), _scene(11)
+pan = torch.stack([torch.roll(scene_a, shifts=t, dims=1) for t in range(60)])          # a moving camera
+pan += 0.03 * torch.randn_like(pan)                                                   # and rain
+ck("a panning, rainy shot is not a cut", HT.previs_cuts(pan) == [], HT.previs_cuts(pan))
+cut = pan.clone()
+cut[37:] = torch.stack([torch.roll(scene_b, shifts=t, dims=1) for t in range(23)])
+ck("a hard cut to another shot is found at its first new frame", HT.previs_cuts(cut) == [37], HT.previs_cuts(cut))
+ck("run() renders the previs again on a cut, PREVIS_TRIES at most, keeping the least-cut take",
+   "for _try in range(_ht.PREVIS_TRIES):" in src and "_ht.previs_cuts(_p_imgs[:_p_len])" in src
+   and "len(_cuts) < len(_best[3])" in src)
+ck("a previs that cuts on every try is a warning in the log and in info",
+   "ht_previs_warn.append(" in src and "the hops follow it" in src)
+
 print("\nthe cut sits at the window START (the previous hop's tail span is dropped)")
 # raw hops of chain_00142: the tail span, guided at -22, stepped -11/255; the head,
 # guided at 0, -3 at worst. run() rewinds the master by the overlap and writes each

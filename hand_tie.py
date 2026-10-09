@@ -426,6 +426,45 @@ def deflicker(master, frames=DEFLICKER, still=SEAM_STILL):
     return float(corr.abs().max())
 
 
+CUT_RATIO = 6.0          # a cut changes the frame this many times more than its neighbours do
+CUT_COMP_RATIO = 12.0    # ... and the coarse composition this many times more
+CUT_FLOOR = 20.0 / 255   # ... and by at least this much: a jump in a still shot is no cut
+CUT_SPAN = 12            # frames either side that set "its neighbours"
+PREVIS_TRIES = 3         # previs renders before the least-cut one is used anyway
+PREVIS_RETRY_STRIDE = 104729   # seed step between tries: clear of every hop's own seed
+
+
+def previs_cuts(frames):
+    """Frames where the previs hard-cuts to another shot: [index of the first new frame].
+
+    The previs is the single point of failure: every hop follows it, and a cut in it
+    becomes a cut in the film (chain_00135 split two kitchens; chain_00146 jumped
+    from a medium to a wide at 13.08 s). Nobody runs a previs-only dry run first, so
+    the node checks its own. A cut is a frame whose change is CUT_RATIO times the
+    median change of the CUT_SPAN frames either side, whose coarse composition jumps
+    CUT_COMP_RATIO times, and by at least CUT_FLOOR. Calibrated on films: real cuts
+    9-87x / 25-164x / 52-74 per 255; clean hand-tie films (rain, dancing, walking
+    included) at most 4.2x / 6.6x.
+    """
+    import torch  # noqa: PLC0415
+    import torch.nn.functional as F  # noqa: PLC0415
+    x = frames.float()
+    if int(x.shape[0]) < 2 * CUT_SPAN:
+        return []
+    x = F.avg_pool2d(x.permute(0, 3, 1, 2), 4)                 # quarter size is plenty
+    m = (x[1:] - x[:-1]).abs().mean(dim=(1, 2, 3))
+    small = F.avg_pool2d(x.mean(1, keepdim=True), 8)[:, 0]
+    c = (small[1:] - small[:-1]).abs().mean(dim=(1, 2))
+    n, out = int(m.shape[0]), []
+    for t in range(n):
+        idx = [k for k in range(max(0, t - CUT_SPAN), min(n, t + CUT_SPAN + 1)) if abs(k - t) > 1]
+        lm, lc = float(m[idx].median()), float(c[idx].median())
+        if (float(m[t]) >= CUT_FLOOR and float(m[t]) > CUT_RATIO * max(lm, 1e-4)
+                and float(c[t]) > CUT_COMP_RATIO * max(lc, 1e-4)):
+            out.append(t + 1)
+    return out
+
+
 def _detail_split(frame, sigma=DETAIL_SIGMA):
     """(base, detail energy) of one [H,W,C] frame: a separable gaussian blur and the
     mean absolute difference from it."""

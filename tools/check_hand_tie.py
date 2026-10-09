@@ -110,6 +110,12 @@ ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,
 ck("plain beats: first sentence per window, and the last beat's last sentence that names a person",
    plain == ("At 00:00.000 @cook chops herbs. At 00:02.833 @cook looks out of the window. "
              "At 00:05.667 @cook sips. At 00:08.500 @cook sips."), plain)
+ending = HT.compile_previs([
+    {"beat": "@dex walks under the awning."},
+    {"beat": "@dex steps out into the rain. He walks toward the camera down the street, and (S1) says, "
+             "<d>[English] Worth it.</d> Steady rain."}], [192, 192])[0]
+ck("a closing sentence that opens on a pronoun is the ending, with the beat's person in its place",
+   ending.endswith("At 00:05.667 @dex walks toward the camera down the street."), ending)
 ck("without moments: each beat's first sentence, and the last beat's last sentence",
    no_moment == "At 00:00.000 First thing. At 00:02.833 Third. At 00:05.667 Fourth.", no_moment)
 

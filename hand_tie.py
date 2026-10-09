@@ -142,14 +142,22 @@ def _first_sentence(text):
     return _SENT.split(t, 1)[0].strip() if t else ""
 
 
+_PRONOUN = re.compile(r"^(He|She|They)\b")
+
+
 def _last_sentence(text):
     """The beat's last sentence that names a person, else its last sentence: a
     beat usually ends on its sound ("the low hum of the refrigerator"), which is
-    not a frame."""
+    not a frame. A sentence opening on a pronoun counts, with the beat's first
+    named person put in its place: "He walks toward the camera" is the ending a
+    writer types, and skipping it handed the closing window the beat's opening."""
     parts = [p.strip() for p in _SENT.split(_no_speech(text)) if p.strip()]
+    who = _WHO_RE.search(_no_speech(text))
     for p in reversed(parts):
         if _WHO_RE.search(p):
             return p
+        if who and _PRONOUN.match(p):
+            return _PRONOUN.sub(who.group(0), p, count=1)
     return parts[-1] if parts else ""
 
 

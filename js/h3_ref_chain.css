@@ -51,18 +51,20 @@
     --h3-gap: 8px;
     --h3-gap-sm: 5px;
     /* Square. Kept as tokens rather than deleted so a rounded variant is one
-     * edit, and so no rule has to change to get there. */
-    --h3-radius: 0px;
-    --h3-radius-sm: 0px;
+     * edit, and so no rule has to change to get there. `--h3-radius-sm` is the
+     * input/control radius, so a field stays a little tighter than the cards
+     * and wells around it. */
+    --h3-radius: 4px;
+    --h3-radius-sm: 3px;
     --h3-row-h: 28px;
 
     /* A type scale, which this sheet did not have. Hierarchy was carried by
      * four literal sizes plus alpha, with nothing bold anywhere, which is why
      * it read flat. */
-    --h3-fs-xs: 9px;
-    --h3-fs-sm: 10px;
-    --h3-fs: 11px;
-    --h3-fs-lg: 12px;
+    --h3-fs-xs: 11px;
+    --h3-fs-sm: 12px;
+    --h3-fs: 13px;
+    --h3-fs-lg: 15px;
     --h3-weight-label: 700;
     /* One label idiom. Seven different letter-spacings were doing this job. */
     --h3-track: .14em;
@@ -180,7 +182,7 @@
     background: var(--h3-sunken);
     color: var(--h3-muted);
     padding: 5px 12px;
-    font-size: 11px;
+    font-size: var(--h3-fs);
 }
 .h3e-root .h3e-mode:hover { background: color-mix(in srgb, var(--h3-accent) 12%, var(--h3-sunken)); color: var(--h3-text); }
 .h3e-root .h3e-mode[aria-pressed="true"],
@@ -233,7 +235,7 @@
     cursor: grab;
     user-select: none;
     padding: 4px 5px;
-    border-radius: 4px;
+    border-radius: var(--h3-radius);
     color: var(--h3-faint);
     line-height: 1;
 }
@@ -246,7 +248,7 @@
     background: transparent;
     border-color: transparent;
     color: var(--h3-muted);
-    font-size: 10px;
+    font-size: var(--h3-fs-sm);
     line-height: 1;
 }
 .h3e-root .h3e-fold:hover { color: var(--h3-text); background: var(--h3-accent-soft); border-color: transparent; }
@@ -259,19 +261,19 @@
 .h3e-ord {
     background: color-mix(in srgb, var(--h3-accent) 28%, var(--h3-sunken));
     color: var(--h3-text);
-    border-radius: 4px;
+    border-radius: var(--h3-radius);
     padding: 2px 8px;
-    font-size: 10px;
+    font-size: var(--h3-fs-sm);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
-.h3e-timing { font-size: 10px; color: var(--h3-muted); font-variant-numeric: tabular-nums; }
+.h3e-timing { font-size: var(--h3-fs-sm); color: var(--h3-muted); font-variant-numeric: tabular-nums; }
 /* `lock` and `⏵` are buttons now, not badges -- both were states you could
  * previously only reach by editing JSON or by counting shots yourself into two
  * integer boxes at the bottom of RUN. They stay quiet until they are on. */
 .h3e-root .h3e-lock,
 .h3e-root .h3e-only {
-    font-size: 10px;
+    font-size: var(--h3-fs-sm);
     padding: 1px 6px;
     color: var(--h3-faint);
     background: transparent;
@@ -296,7 +298,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: var(--h3-fs-sm);
     color: var(--h3-faint);
 }
 
@@ -369,11 +371,11 @@
 .h3e-json-wrap > summary {
     cursor: pointer;
     color: var(--h3-muted);
-    font-size: 10px;
+    font-size: var(--h3-fs-sm);
     letter-spacing: .08em;
     text-transform: uppercase;
     padding: 3px 2px;
-    border-radius: 4px;
+    border-radius: var(--h3-radius);
 }
 .h3e-adv > summary:hover,
 .h3e-json-wrap > summary:hover { color: var(--h3-text); background: var(--h3-accent-soft); }
@@ -402,7 +404,7 @@
     align-items: baseline;
     gap: var(--h3-gap-sm);
     padding: 2px;
-    border-radius: 4px;
+    border-radius: var(--h3-radius);
     list-style: none;              /* the default triangle sits badly on a row */
     min-width: 0;
 }
@@ -410,7 +412,7 @@
 .h3e-run > summary::before {
     content: "▸";
     color: var(--h3-faint);
-    font-size: 9px;
+    font-size: var(--h3-fs-xs);
     transition: transform .12s ease;
 }
 .h3e-run[open] > summary::before { transform: rotate(90deg); }
@@ -521,7 +523,7 @@
 /* Per-hop schedule chips. */
 .h3e-chips { display: flex; flex-wrap: wrap; gap: 3px; grid-column: 1 / -1; padding: 2px 0 0 26px; }
 .h3e-chip {
-    font-size: 9px;
+    font-size: var(--h3-fs-xs);
     line-height: 1;
     padding: 3px 6px;
     border-radius: 999px;
@@ -538,7 +540,7 @@
     color: var(--h3-text);
     border-color: color-mix(in srgb, var(--h3-accent) 55%, transparent);
 }
-.h3e-chips-label { font-size: 9px; color: var(--h3-faint); align-self: center; margin-right: 2px; letter-spacing: .06em; }
+.h3e-chips-label { font-size: var(--h3-fs-xs); color: var(--h3-faint); align-self: center; margin-right: 2px; letter-spacing: .06em; }
 
 .h3e-subject {
     display: flex;
@@ -554,9 +556,9 @@
     background: transparent;
     border: 1px solid var(--h3-accent);
     color: var(--h3-accent);
-    border-radius: 4px;
+    border-radius: var(--h3-radius);
     padding: 2px 8px;
-    font-size: 10px;
+    font-size: var(--h3-fs-sm);
     white-space: nowrap;
 }
 
@@ -565,7 +567,7 @@
     min-height: 120px;
     background: var(--h3-sunken);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 10px;
+    font-size: var(--h3-fs-sm);
     margin-top: 4px;
 }
 
@@ -606,7 +608,7 @@
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
     color: var(--h3-faint);
-    font-size: 12px;
+    font-size: var(--h3-fs-lg);
     letter-spacing: .02em;
     user-select: none;
     text-align: center;
@@ -622,10 +624,10 @@
 }
 .h3rc-seam-tag {
     position: absolute; bottom: 6px;
-    font-size: 9px; letter-spacing: .08em; text-transform: uppercase;
+    font-size: var(--h3-fs-xs); letter-spacing: .08em; text-transform: uppercase;
     color: var(--h3-text);
     background: color-mix(in srgb, #000 55%, transparent);
-    padding: 2px 6px; border-radius: 3px;
+    padding: 2px 6px; border-radius: var(--h3-radius-sm);
     display: none;
 }
 .h3rc-seam-tag.h3rc-tag-a { left: 6px; }
@@ -652,7 +654,7 @@
     background: var(--h3-panel);
     border-top: 1px solid var(--h3-border-soft);
 }
-.h3rc-line { display: flex; align-items: center; gap: var(--h3-gap-sm); font-size: 11px; min-width: 0; }
+.h3rc-line { display: flex; align-items: center; gap: var(--h3-gap-sm); font-size: var(--h3-fs); min-width: 0; }
 .h3rc-status-label { color: var(--h3-muted); flex: 0 0 auto; }
 .h3rc-status-value {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -662,11 +664,11 @@
 }
 .h3rc-meta {
     display: flex; flex-wrap: wrap; gap: 4px 10px;
-    font-size: 10px; color: var(--h3-muted);
+    font-size: var(--h3-fs-sm); color: var(--h3-muted);
     font-variant-numeric: tabular-nums;
 }
 .h3rc-meta b { font-weight: 600; color: var(--h3-text); }
-.h3rc-mech { padding: 1px 6px; border-radius: 999px; font-size: 9px; letter-spacing: .04em; }
+.h3rc-mech { padding: 1px 6px; border-radius: 999px; font-size: var(--h3-fs-xs); letter-spacing: .04em; }
 .h3rc-mech-motion_context { background: color-mix(in srgb, var(--h3-ok) 26%, transparent); color: var(--h3-text); }
 .h3rc-mech-addguide_pixels { background: color-mix(in srgb, var(--h3-warn) 30%, transparent); color: var(--h3-text); }
 
@@ -845,7 +847,7 @@
     background: var(--h3-sunken);
     color: var(--h3-text);
     border: 1px solid var(--h3-border-soft);
-    border-radius: 3px;
+    border-radius: var(--h3-radius-sm);
     padding: 1px 4px;
     font: inherit;
 }
@@ -867,7 +869,7 @@
     position: relative;
     height: 34px;
     border: 1px solid var(--h3-line);
-    border-radius: var(--h3-radius-sm, 3px);
+    border-radius: var(--h3-radius-sm);
     background: var(--h3-panel);
     overflow: hidden;
     cursor: crosshair;
@@ -957,6 +959,8 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
     border-radius: var(--h3-radius-sm);
     overflow: hidden;
 }
+
+
 .h3e-root .h3e-tab {
     /* Equal quarters regardless of label length, so the strip does not reflow
      * when a badge appears or its count gains a digit. `min-width: 0` lets a
@@ -1402,13 +1406,13 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
  * 54px film row and left most of the pane empty. */
 .h3e-tl { --h3-tl-fs: 11px; }
 .h3e-tl-status, .h3e-tl-dim { font-size: var(--h3-tl-fs); }
-.h3e-tl-label { flex-basis: 52px; width: 52px; font-size: 10px; }
-.h3e-tl-tick { font-size: 10px; }
-.h3e-tl-no { font-size: 13px; }
-.h3e-root .h3e-tl-mini { font-size: 10px; line-height: 16px; padding: 0 5px; }
+.h3e-tl-label { flex-basis: 52px; width: 52px; font-size: var(--h3-fs-sm); }
+.h3e-tl-tick { font-size: var(--h3-fs-sm); }
+.h3e-tl-no { font-size: var(--h3-fs); }
+.h3e-root .h3e-tl-mini { font-size: var(--h3-fs-sm); line-height: 16px; padding: 0 5px; }
 .h3e-tl-meta, .h3e-tl-cap, .h3e-tl-seam { font-size: var(--h3-tl-fs); }
 .h3e-tl-peek {
-    font-size: 12px; line-height: 1.3; white-space: normal;
+    font-size: var(--h3-fs-lg); line-height: 1.3; white-space: normal;
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
 }
 .h3e-tl-next { font-size: var(--h3-tl-fs); line-height: 24px; }

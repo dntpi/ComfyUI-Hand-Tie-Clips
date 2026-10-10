@@ -304,8 +304,12 @@ export function createPlanEditor(node, { onChange }) {
     const scoreInner = el("div", "h3e-score-inner");
     score.appendChild(scoreInner);
     const forecast = el("div", "h3e-forecast");
+    /* D4: the batch bar. Below the forecast line and above the strip, because
+     * it acts on what the strip selected and the forecast line is read-only. */
+    const batch = el("div", "h3e-batch");
     root.appendChild(score);
     root.appendChild(forecast);
+    root.appendChild(batch);
     root.appendChild(strip);
     root.appendChild(detail);
     // The old stacked list stays in the DOM but is not drawn in Shots mode --
@@ -388,6 +392,52 @@ export function createPlanEditor(node, { onChange }) {
     function clampSelection() {
         if (!shots.length) { setSelected(0); return; }
         if (selected() >= shots.length) setSelected(shots.length - 1);
+    }
+
+    /* -- D4: the selection RANGE, and applying to it ------------------------- */
+    //
+    // A selection is (anchor, focus). Plain click sets both; shift-click moves
+    // only the focus; a drag on the score strip or a poster moves it live. One
+    // pair covers all three, and it is why "apply to these five shots" is the
+    // same operation as "apply to this one".
+    //
+    // Stored in node.properties like the selection itself: view state, never
+    // written to shot_plan, never read by run().
+    const RANGE_PROP = "h3_film_range";
+    function range() {
+        const r = node.properties?.[RANGE_PROP];
+        const a = parseInt(r?.anchor, 10);
+        const f = parseInt(r?.focus, 10);
+        if (!Number.isFinite(a) || !Number.isFinite(f)) return null;
+        return { anchor: a, focus: f };
+    }
+    function setRange(anchor, focus) {
+        node.properties ??= {};
+        if (anchor == null) { node.properties[RANGE_PROP] = null; return; }
+        node.properties[RANGE_PROP] = { anchor, focus: focus ?? anchor };
+    }
+    /** The absolute index span, inclusive, or null when nothing is ranged. */
+    function span() {
+        const r = range();
+        if (!r) return null;
+        const lo = Math.max(0, Math.min(r.anchor, r.focus));
+        const hi = Math.min(shots.length - 1, Math.max(r.anchor, r.focus));
+        if (hi < lo) return null;
+        return { lo, hi };
+    }
+    function inSpan(i) {
+        const s = span();
+        return !!s && i >= s.lo && i <= s.hi;
+    }
+    /** Select one shot, clearing the range -- what a plain click means. */
+    function selectOnly(i) {
+        setSelected(i);
+        setRange(null, null);
+    }
+    /** Extend the existing selection to `i` -- shift-click. */
+    function extendTo(i) {
+        setRange(range()?.anchor ?? selected(), i);
+        setSelected(i);
     }
 
     /* Collapsed cards persist in node.properties so the state survives both a
@@ -928,6 +978,148 @@ export function createPlanEditor(node, { onChange }) {
         return card;
     }
 
+    /* -- D4: the batch bar ------------------------------------------------------ */
+
+    /* One write per apply.
+     *
+     * The tempting implementation loops the shots calling commit() per shot,
+     * and that is wrong twice over: it fires the widget callback N times, so
+     * the node re-renders N times and the score strip's forecast recomputes N
+     * times; and it writes shot_plan N times, so the widget's history has N
+     * undo steps for one action the user thinks of as one. So every operation
+     * here mutates `shots` in place, writes once, and renders once.
+     */
+    const APPLY_AXES = [
+      { key: "framing", label: "framing", kind: "vocab", axis: "framing" },
+      { key: "camera", label: "camera", kind: "vocab", axis: "camera" },
+      { key: "pace", label: "pace", kind: "vocab", axis: "pace" },
+      { key: "tail", label: "tail", kind: "vocab", axis: "tail" },
+      { key: "duration", label: "duration", kind: "durations" },
+    ];
+
+    function applyToSpan(fn, { label } = {}) {
+        const s = span() || { lo: selected(), hi: selected() };
+        if (!shots[s.lo]) return 0;
+        for (let i = s.lo; i <= s.hi; i++) fn(shots[i], i);
+        setRange(null, null);
+        commit();
+        return s.hi - s.lo + 1;
+    }
+
+    function renderBatch() {
+        batch.textContent = "";
+        const s = span();
+        const n = s ? s.hi - s.lo + 1 : 1;
+        // Nothing selected beyond one shot: the bar is noise. It appears when
+        // it has something to say, which is the A5 lesson applied to itself.
+        if (n < 2) { batch.style.display = "none"; return; }
+        batch.style.display = "";
+        batch.appendChild(el("span", "h3e-batch-n",
+            `shots ${s.lo + 1}–${s.hi + 1}`));
+
+        for (const ax of APPLY_AXES) {
+            const opts = ax.kind === "vocab"
+                ? Object.keys(V?.vocab?.[ax.axis] || {})
+                : Object.keys(V?.durations || {});
+            if (!opts.length) continue;
+            const lab = el("label", "h3e-batch-ax");
+            lab.appendChild(el("span", "h3e-batch-lab", ax.label));
+            const sel = select(opts, "", (v) => {
+                applyToSpan((shot) => {
+                    if (ax.kind === "vocab") {
+                        shot.directives = shot.directives || {};
+                        shot.directives[ax.key] = v;
+                    } else {
+                        shot.duration = v;
+                    }
+                }, { label: ax.key });
+            }, "h3e-input h3e-batch-sel");
+            lab.appendChild(sel);
+            batch.appendChild(lab);
+        }
+
+        // Batch solo / lock / unlock. Each is ONE action on N shots, and solo
+        // goes through setRenderRange so the range widgets and every card
+        // marker agree with it -- there is one rule for "which shots render",
+        // and it is not re-implemented here.
+        batch.appendChild(el("span", "h3e-spacer"));
+        batch.appendChild(button("solo range", "Render only these shots", () => {
+            setRenderRange(s.lo + 1, s.hi + 1);
+            commit();
+        }));
+        batch.appendChild(button("lock range", "Lock every shot in the selection",
+            () => { applyToSpan((shot) => { shot.locked = true; }, { label: "lock" }); }));
+        batch.appendChild(button("unlock range", "Unlock every shot in the selection",
+            () => { applyToSpan((shot) => { shot.locked = false; }, { label: "unlock" }); }));
+        batch.appendChild(button("from here to end",
+            "Select every shot from the first selected to the last",
+            () => {
+                setRange(s.lo, shots.length - 1);
+                renderCards();
+            }));
+        batch.appendChild(button("clear", "Drop the selection", () => {
+            setRange(null, null);
+            renderCards();
+        }));
+    }
+
+    /* -- D4: keys ----------------------------------------------------------- */
+
+    /* Live only when the focus is NOT a text field, for the reason A4's `r`
+     * gives: a keystroke that lands in a textarea is text, not a command, and
+     * swallowing the character makes a shortcut feel broken rather than
+     * absent. `,` `.` and `a` are all characters a user might be typing, so
+     * this check is the whole feature.
+     */
+    function typingInField(t) {
+        const tag = t?.tagName || "";
+        return tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable === true;
+    }
+
+    function onPanelKey(e) {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const t = e.target;
+        // Ctrl+G is the one binding that must work WHILE typing a beat number
+        // elsewhere -- it is a jump, not a text edit -- but it still must not
+        // fire when the caret is inside this panel's own text, or typing "g"
+        // into a beat would teleport the selection. So: only the modifier
+        // binding bypasses the check, and only when the target is not ours.
+        const typing = typingInField(t);
+        const key = e.key;
+        const ctrlG = (e.ctrlKey || e.metaKey) && (key === "g" || key === "G");
+        if (typing && !ctrlG) return;
+
+        const step = (d) => {
+            if (!shots.length) return;
+            setSelected(Math.max(0, Math.min(shots.length - 1, selected() + d)));
+            renderCards();
+        };
+
+        if (key === "[" || key === ",") { e.preventDefault(); step(-1); return; }
+        if (key === "]" || key === ".") { e.preventDefault(); step(1); return; }
+        if ((key === "a" || key === "A") && !ctrlG) {
+            e.preventDefault();
+            appendShot();
+            setSelected(shots.length - 1);
+            renderCards();
+            return;
+        }
+        if (ctrlG) {
+            e.preventDefault();
+            // Ctrl+G with nothing typed opens a prompt; the brief wants a jump
+            // to a shot NUMBER, and a prompt() is the only way to get one
+            // without stealing the beat textarea. Cancelled is not an error.
+            let raw = null;
+            try { raw = window.prompt("Go to shot number"); } catch (_) { raw = null; }
+            if (raw == null) return;
+            const n = parseInt(String(raw).trim(), 10);
+            if (!Number.isFinite(n) || n < 1 || n > shots.length) return;
+            setSelected(n - 1);
+            renderCards();
+            scrollStripTo(n - 1);
+        }
+    }
+
     /* -- D3: the score strip, and the NEXT QUEUE line -------------------------- */
 
     const SCORE_H = 44;
@@ -1035,17 +1227,38 @@ export function createPlanEditor(node, { onChange }) {
             scoreInner.appendChild(col);
         });
 
-        // Click to select, drag to scroll. The strip is the filmstrip's
-        // scrollbar, so a click that lands between columns must still scroll
-        // rather than doing nothing.
-        score.addEventListener("click", (e) => {
+        // Click to select, drag to select a range and to scroll. The strip is the
+        // filmstrip's scrollbar, so the same gesture has to do both: press picks
+        // the anchor, drag extends to whatever column it is over, and releasing
+        // on the strip's own edge scrubs rather than selecting.
+        let dragging = null;
+        score.addEventListener("pointerdown", (e) => {
             const idx = columnAt(geo, e.clientX ?? 0, 0);
-            if (idx >= 0) {
-                setSelected(idx);
-                renderCards();
-                scrollStripTo(idx, geo);
-            }
+            dragging = idx < 0 ? null : idx;
+            if (dragging == null) return;
+            score.setPointerCapture?.(e.pointerId);
+            if (e.shiftKey) extendTo(dragging); else selectOnly(dragging);
+            renderCards();
+            // The strip is the filmstrip's scrollbar, so selecting here brings
+            // that poster into view. After renderCards, because the geometry
+            // belongs to the freshly drawn strip.
+            scrollStripTo(selected());
         });
+        score.addEventListener("pointermove", (e) => {
+            if (dragging == null) return;
+            const idx = columnAt(geo, e.clientX ?? 0, 0);
+            if (idx < 0 || idx === selected()) return;
+            setRange(dragging, idx);
+            setSelected(idx);
+            renderCards();
+        });
+        const endDrag = (e) => {
+            if (dragging == null) return;
+            try { score.releasePointerCapture?.(e.pointerId); } catch (_) { /* not captured */ }
+            dragging = null;
+        };
+        score.addEventListener("pointerup", endDrag);
+        score.addEventListener("pointercancel", endDrag);
         renderForecast(geo);
     }
 
@@ -1228,9 +1441,11 @@ export function createPlanEditor(node, { onChange }) {
 
         // The whole poster selects. The click target is the card, not the
         // buttons above, so a shot with a long beat is still one click away.
+        // Shift EXTENDS the selection, which is what makes "these five" a
+        // thing you can act on without dragging a marquee.
         card.addEventListener("click", (e) => {
             if (e.target !== card && e.target.closest?.(".h3e-mini")) return;
-            setSelected(index);
+            if (e.shiftKey) extendTo(index); else selectOnly(index);
             renderCards();
         });
         card.title = `Shot ${shotNo}` + (shot.beat ? ` — ${String(shot.beat).slice(0, 120)}` : "");
@@ -1340,6 +1555,7 @@ export function createPlanEditor(node, { onChange }) {
         // D2: the strip and the one card under it, rather than every card.
         renderStrip();
         renderScore();
+        renderBatch();
         renderDetail();
 
         const t = timing();
@@ -1365,5 +1581,6 @@ export function createPlanEditor(node, { onChange }) {
 return { root, render: renderCards, reload, mode, timing,
                shots: () => shots, renderRange, toggleSolo, toggleLock,
                appendShot, removeShot, cardFor, setHopKeySource, setForecastSources,
-               selected, setSelected, zoom, setZoom, renderScore };
+               selected, setSelected, selectOnly, extendTo, span, range,
+               zoom, setZoom, renderScore, onPanelKey };
 }

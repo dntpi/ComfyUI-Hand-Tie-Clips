@@ -459,5 +459,95 @@ console.log("\nmount: D3 score strip");
      fcLine.classList.contains("h3e-forecast-live"));
 }
 
+/* -- D4: ranges, the batch bar, and keys --------------------------------- */
+
+console.log("\nmount: D4 ranges and keys");
+
+{
+  const node = mountFresh({ plan: planJSON(6) });
+  const root = node.domWidgets[0];
+  // `_h3Editor` is the node-level facade (refresh, rail, editor, tabs); the
+  // PLAN editor is one level down. Reaching for `_h3Editor.span` gives
+  // undefined, which is how the first version of this block died silently
+  // partway through with only two assertions printed.
+  const ed = node._h3Editor.editor;
+  ck("the plan editor is reachable for assertions", !!ed && typeof ed.span === "function");
+
+  const findAll = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+  const posters = () => findAll("h3e-poster")
+    .filter((p) => !p.classList.contains("h3e-poster-add"));
+
+  ck("the batch bar exists", findAll("h3e-batch").length === 1);
+  ck("with one shot selected the batch bar is hidden",
+     findAll("h3e-batch")[0].style.display === "none",
+     `display "${findAll("h3e-batch")[0].style.display}"`);
+
+  // Shift-click extends the selection. Stub clicks carry no shiftKey by default,
+  // so it is passed explicitly -- which is also how a real shift-click arrives.
+  const ps = posters();
+  if (ps.length >= 3) {
+    ps[2].fire("click", { shiftKey: true });
+  }
+
+  ck("shift-click selects a range of 3", ed.span() != null, "no range after shift-click");
+  ck("the batch bar appears for a range",
+     findAll("h3e-batch")[0].style.display !== "none",
+     `display "${findAll("h3e-batch")[0].style.display}"`);
+  ck("the batch bar states the range",
+     findAll("h3e-batch-n").some((e) => /shots 1.3/.test(e.textContent || "")),
+     // The separator is an EN DASH. Matching /shots 1-3/ passes on nothing,
+     // and the failure message is what told me -- worth reading the detail
+     // column before rewriting the assertion a third time.
+     findAll("h3e-batch-n").map((e) => e.textContent).join("|") || "(no label)");
+
+  // A plain click clears it.
+  posters()[0].fire("click", {});
+  ck("a plain click clears the range", ed.span() == null,
+     `span ${JSON.stringify(ed.span())}`);
+  ck("and the batch bar hides again",
+     findAll("h3e-batch")[0].style.display === "none");
+
+  // Keys: [ and ] step the selection.
+  ed.setSelected(0);
+  const fireKey = (k, extra = {}) => {
+    const listeners = root._listeners.get("keydown") || [];
+    const ev = { type: "keydown", key: k, target: root,
+                 preventDefault() {}, stopPropagation() {},
+                 ctrlKey: false, metaKey: false, altKey: false, ...extra };
+    listeners.forEach((fn) => fn(ev));
+  };
+  ed.setSelected(2);
+  fireKey("]");
+  ck("] steps the selection forward", ed.selected() === 3, `at ${ed.selected()}`);
+  fireKey("[");
+  ck("[ steps it back", ed.selected() === 2, `at ${ed.selected()}`);
+  // And it clamps rather than running off either end.
+  fireKey("["); fireKey("["); fireKey("["); fireKey("[");
+  ck("stepping past the start clamps at shot 1", ed.selected() === 0, `at ${ed.selected()}`);
+
+  // Keys must NOT fire while typing. That is the whole feature for `,` `.` `a`.
+  const area = findAll("h3e-beat")[0];
+  ck("a beat textarea exists to type into", !!area);
+  if (area) {
+    const before = ed.selected();
+    const listeners = root._listeners.get("keydown") || [];
+    const ev = { type: "keydown", key: "]", target: area,
+                 preventDefault() {}, stopPropagation() {},
+                 ctrlKey: false, metaKey: false, altKey: false };
+    listeners.forEach((fn) => fn(ev));
+    ck("] does nothing while the caret is in a textarea",
+       ed.selected() === before, `moved to ${ed.selected()}`);
+  }
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

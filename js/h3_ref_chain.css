@@ -211,6 +211,37 @@
 }
 .h3e-empty-cta { display: block; margin: 8px auto 0; }
 
+/* -- D4: the batch bar ----------------------------------------------------- */
+
+/* Appears only for a range of two or more. Same rule as A5's collapsed groups:
+ * a control that has nothing to act on is noise, and the bar is a row of five
+ * dropdowns that are all no-ops until there is a selection. */
+.h3e-batch {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    flex-wrap: wrap;
+    padding: 4px 0 6px;
+    border-bottom: 1px solid var(--h3-line);
+    margin-bottom: var(--h3-gap-sm);
+}
+
+.h3e-batch-n {
+    font-size: var(--h3-fs-sm);
+    font-weight: var(--h3-weight-label);
+    color: var(--h3-accent);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.h3e-batch-ax { display: flex; align-items: center; gap: 3px; }
+.h3e-batch-lab {
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    text-transform: lowercase;
+}
+.h3e-batch-sel { max-width: 110px; }
+
 /* -- D3: the score strip --------------------------------------------------- */
 
 /* The strip does NOT scroll: it is the fixed-width overview of every hop, and

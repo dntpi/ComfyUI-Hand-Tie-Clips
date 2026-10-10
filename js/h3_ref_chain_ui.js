@@ -479,7 +479,14 @@ node._h3PaintPin = paintPin;
     // textarea is text, not a command, and swallowing the letter is the kind
     // of thing that makes a shortcut feel broken rather than absent.
     root.addEventListener("keydown", (e) => {
-        if (e.key !== "r" && e.key !== "R") return;
+        if (e.key !== "r" && e.key !== "R") {
+            // D4's bindings ([ ] , . a Ctrl+G) are the plan editor's, and they
+            // are handed the same event rather than getting a second listener:
+            // two keydowns on one root means a rule that applies in one tab and
+            // not the other, decided by which listener ran first.
+            editor.onPanelKey(e);
+            return;
+        }
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         const t = e.target;
         const tag = t?.tagName || "";

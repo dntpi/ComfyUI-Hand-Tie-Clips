@@ -194,7 +194,11 @@ ck("both documents define the same blocks", set(_a) == set(_b),
 # A comparison that quietly stops finding things passes just as loudly as one
 # that finds everything and matches. Pin the count.
 _rules = [k for k in _a if k.startswith("rule ")]
-ck("all 13 numbered rules were found", len(_rules) == 13,
+# 14 as of rule 14, the light and air vocabulary. Bump this in the SAME commit
+# that adds a rule: the count is here so that a rule which fails to match the
+# block pattern is loud rather than silently absent, and it can only do that if
+# it is kept honest.
+ck("all 14 numbered rules were found", len(_rules) == 14,
    "found %d: %s" % (len(_rules),
                      sorted(int(r.split()[1]) for r in _rules)))
 for _key in sorted(set(_a) & set(_b)):
@@ -230,6 +234,50 @@ ck("the 8 s band is 35-60 words, 1-2 lines",
 ck("labels are whitespace-normalised for the JS lookup",
    all("  " not in k and k == k.strip() for k in _bt),
    repr([k for k in _bt if "  " in k or k != k.strip()]))
+
+# ---------------------------------------------------- the light and air tables
+# Rule 14's two tables are the one vocabulary that is NOT an axis, so nothing
+# else parses them and a row that stops matching would be dropped in silence.
+# The pack's four phrasing rules are the test, and they are load-bearing: cfg
+# 1.0 with no negative branch means anything named is additive, so a negated
+# row ("no hard shadow") puts `hard shadow` in front of the encoder.
+_doc = io.open(os.path.join(PACK, "prompt_pack", "SYSTEM_PROMPT.md"),
+               encoding="utf-8").read()
+# Scoped to rule 14's OWN two tables. A loose match also catches the directive
+# value table above it (`join` | `continuous`, `match_cut`...) and the hop
+# length table, and those rows are lists rather than sentences -- which is what
+# the first version of this check reported.
+_r14 = _doc[_doc.index("14. **Name the light and the air"):]
+_r14 = _r14[:_r14.index("\n## ")] if "\n## " in _r14 else _r14
+# The rows are indented four spaces -- they sit inside the numbered rule, like
+# every other continuation line in this document -- so the leading space is
+# part of the pattern, not incidental.
+_rows = re.findall(r"^\s*\|\s*`([a-z_]+)`\s*\|\s*(.+?)\s*\|\s*$", _r14, re.M)
+ck("rule 14 has a table of light and air options", len(_rows) >= 15,
+   "%d rows" % len(_rows))
+_mine = [s for _k, s in _rows if s.strip()]
+ck("every option is a full sentence, not a name",
+   all(s.strip().endswith(".") for s in _mine),
+   repr([s for s in _mine if not s.strip().endswith(".")][:3]))
+# Affirmative only. "no hard shadow" is the exact failure mode the pack was
+# built on: with no negative branch the words after `no` reach the encoder.
+_neg = [s for s in _mine
+        if re.search(r"\b(no|not|never|without|avoid|lacks?|isn't|aren't)\b",
+                     s, re.I)]
+ck("no option names a negative", not _neg, repr(_neg[:2]))
+# No pronouns: plural "they" has been observed rendering two people from one
+# reference.
+_pron = [s for s in _mine if re.search(r"\b(they|them|their|he|she|his|her)\b",
+                                       s, re.I)]
+ck("no option names a person or a pronoun", not _pron, repr(_pron[:2]))
+# One sentence per entry: these concatenate into a beat with a word budget.
+_long = [s for s in _mine if s.count(".") > 1]
+ck("every option is one sentence", not _long, repr(_long[:2]))
+# The shortest beat band is 30 words, so a table row that cannot fit in the
+# eight words the rule budgets would push the beat out of band.
+_long_words = [s for s in _mine if len(s.split()) > 22]
+ck("no option is long enough to break the beat budget", not _long_words,
+   repr([s[:40] for s in _long_words[:2]]))
 # The prompt table carries bands for the lengths it documents (5-15 s). The
 # node's duration combo offers more than that, and a card at a length with no
 # row is supposed to fall back to a bare count -- that is a supported state,

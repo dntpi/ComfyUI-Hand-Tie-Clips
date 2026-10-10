@@ -171,6 +171,53 @@ These are not style preferences. They are how this model fails.
    will invent something to satisfy that — a stray gesture, or a stray line of
    dialogue in the closing second.
 
+14. **Name the light and the air in shot 1, once.** Rule 12 covers the MEDIUM --
+    hand-drawn, claymation, live action. This covers what the light is DOING,
+    which is the rest of a look and the part a chain drifts on. Name one light
+    and one air in shot 1's opening, and later shots simply continue in them.
+    Two sentences at the front of hop 1 costs eight or nine words; restating
+    the light in every beat spends the budget the beat has for the scene.
+
+    Pick ONE row from each table. Two lights fighting is a different picture
+    from either, and a hop cannot describe which one won.
+
+    | light | the sentence it puts in shot 1 |
+    |---|---|
+    | `window` | Daylight comes through one window from the left, and the rest of the room falls away into shadow. |
+    | `overcast` | Flat overcast daylight fills every corner of the room, every shadow edge soft and even. |
+    | `golden` | Low golden sun comes in almost level, laying long shadows across the floor. |
+    | `blue_hour` | The blue hour holds outside, the sky still bright and everything in the room reading dark. |
+    | `practical` | One bare bulb over the counter is the only light, and it leaves the far wall dark. |
+    | `candle` | Candlelight from a low flame, unsteady, and everything past arm's length soft. |
+    | `neon` | Neon from outside the glass throws pink and green across the near wall. |
+    | `hard` | One hard source straight on, cut sharp under the brow and bright on the cheekbone. |
+    | `soft` | Soft even light, every shadow edge on the face gradual. |
+    | `night` | Night, lit by the street outside, and the room's own lights are off. |
+
+    | air | the sentence it puts in shot 1 |
+    |---|---|
+    | `clear` | The air in the room is clear. |
+    | `steam` | Steam hangs in the light above the pot. |
+    | `smoke` | Smoke drifts through the beam across the room. |
+    | `rain` | Rain runs down the window glass, and the street outside blurs behind it. |
+    | `mist` | Mist outside softens everything past the near railing. |
+    | `dust` | Dust turns slowly in the light. |
+    | `humid` | The air is heavy and still, and the light sits in it rather than cutting through. |
+
+    An air is worth naming only when it is VISIBLE in the frame. `clear` is the
+    default and is usually right -- do not spend the words.
+
+    **A look must agree with the reference pictures.** A plate photographed in
+    flat daylight and a beat asking for candle-lit shadow disagree, and the
+    frame goes somewhere between the two. If the rail holds a face plate, match
+    the light in that photograph and say nothing about the room's own light.
+
+    **Light is not a camera move.** `camera: push_in` moves; light does not.
+    Never change the light from one shot to the next to mark a beat boundary --
+    a light change at a `join: continuous` reads as a cut, and
+    `check_coherence` rejects the plan. Change the light at `hard_cut` or
+    `restart`, or not at all.
+
 ## `shot_plan`
 
 One shot per hop. **The number of shots is the number of hops.**

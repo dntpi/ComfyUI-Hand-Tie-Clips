@@ -471,6 +471,14 @@ ck("without hop lengths nothing after the line is stamped (the old call)",
 ck("a line that ends the beat has nothing to stamp after it",
    HT.time_lines([{"beat": "@mina waves. (S1) says, <d>[English] Bye.</d>"}], hop_frames=[192])[0]["beat"]
    .count("At ") == 2)
+_eat = HT.line_lints([{"beat": "@mina holds the skewer up. (S1) says, <d>[English] Here goes.</d> "
+                                 "She takes a big bite."}], [192])
+ck("a line and a bite in one hop is linted (00153, 00154, 00160: the line over the eating)",
+   len(_eat) == 1 and "bite" in _eat[0], _eat)
+ck("eating without a line, or a line that only TALKS about food, is not",
+   HT.line_lints([{"beat": "@mina takes a big bite and chews with her lips closed. Crunching."}], [192]) == []
+   and HT.line_lints([{"beat": "@mina grins. (S1) says, <d>[English] I could eat ten of these.</d> "
+                               "She laughs."}], [192]) == [])
 ck("run() re-renders a hand-tie hop that cuts, once, on a seed clear of every other",
    "_hcuts = _ht.previs_cuts(imgs)" in src and "shot_seed + _ht.PREVIS_RETRY_STRIDE" in src
    and "len(_c2) < len(_hcuts)" in src)

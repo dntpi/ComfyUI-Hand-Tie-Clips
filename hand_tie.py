@@ -529,11 +529,30 @@ def time_lines(shots, start_s=LINE_START_S, hop_frames=None, fps=FPS):
     return out
 
 
+# A mouth that eats cannot say a line. The previs squeezes a beat into ~3 s, so it
+# reaches the bite early, and the hop follows its picture: the line then plays over
+# the eating (chain_00153, 00160) or through the chewing (00154) -- three films of
+# six, the same beat each time. Every other dialogue hop passed.
+_MOUTH = re.compile(r"\b(eat|eats|eating|bite|bites|biting|chew|chews|chewing|sip|sips|sipping|"
+                    r"drink|drinks|drinking|swallow|swallows|swallowing|lick|licks|licking|"
+                    r"taste|tastes|tasting)\b", re.I)
+
+
 def line_lints(shots, hop_frames, fps=FPS):
-    """Warnings for a hop whose lines will not fit between its windows."""
+    """Warnings for a hop whose lines will not fit between its windows, or that
+    asks one mouth to speak and to eat."""
     warn = []
     for k, sh in enumerate(shots or []):
-        words = sum(len(_TAG.sub("", m).split()) for m in _D.findall(str((sh or {}).get("beat") or "")))
+        beat = str((sh or {}).get("beat") or "")
+        if _D.search(beat):
+            m = _MOUTH.search(_D.sub(" ", beat))
+            if m:
+                warn.append("hand-tie: shot %d speaks a line and %s in the same hop. The "
+                            "picture reaches the %s early and the line plays over it. Give "
+                            "the %s its own hop (closed lips, its sound named), and say the "
+                            "line in the hop before." % (k + 1, m.group(0).lower(),
+                                                         m.group(0).lower(), m.group(0).lower()))
+        words = sum(len(_TAG.sub("", m).split()) for m in _D.findall(beat))
         room = line_budget(hop_frames[k], fps)
         if words > room:
             warn.append("hand-tie: shot %d speaks %d words; about %d fit between its windows "

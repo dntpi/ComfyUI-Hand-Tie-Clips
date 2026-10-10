@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import {
-    createTabs, el, isolateEvents, installHeightGuard, setWidgetVisibility,
+    button, createTabs, el, isolateEvents, installHeightGuard, setWidgetVisibility,
     widgetByName,
 } from "./editor/widget_utils.js";
 import { createPlanEditor } from "./editor/plan_editor.js";

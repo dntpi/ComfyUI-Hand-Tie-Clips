@@ -636,6 +636,25 @@ def register():
                 {"ok": False, "error": "no model is selected -- open Settings "
                                        "in the panel and pick one."})
 
+        # A render on the card and a 27B on the card do not fit. ComfyUI keeps
+        # its models resident after a queue finishes, so "is something
+        # rendering" is the wrong question -- the right one is whether the
+        # writer is running at all, and if it is, whether the card is free
+        # enough to start it. Measured: nInfer asks for an 11 GB runtime
+        # reservation and fails to start with ~6.5 GB free, which is what
+        # ComfyUI's own idle models leave behind.
+        #
+        # So: ask the writer's own eviction first, and only then complain. The
+        # note comes back to the panel, which says it rather than letting a
+        # cryptic server error arrive thirty seconds later.
+        if _llm.shares_this_gpu(conn["server_url"]):
+            try:
+                _note = _llm.free_for_render()
+            except Exception:
+                _note = ""
+            if _note and "could not be stopped" in _note:
+                return web.json_response({"ok": False, "error": _note})
+
         pinned = _pinned_refs(body.get("refs"), _refs.MAX_REF_IMAGES)
         # A filled rail is the scene. The folder listing is only the fallback
         # for a brief-only write with empty boxes -- that listing is what made

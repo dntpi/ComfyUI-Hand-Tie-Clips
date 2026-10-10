@@ -739,6 +739,115 @@ def _cut_off(usage, reasoned, max_tokens):
             f"model's context length in {active_label()}.")
 
 
+async def complete_stream(base_url, model, messages, *, schema=None,
+                          temperature=0.35, max_tokens=MAX_TOKENS,
+                          timeout=GEN_TIMEOUT, on_delta=None):
+    """One chat completion, delivered as it arrives.
+
+    `on_delta(text)` is called with each new piece of the reply, in order. The
+    final string is still returned, so this is a drop-in for `complete` -- a
+    caller that ignores the callback gets exactly what it got before.
+
+    Why it exists: a 27B on a 32 GB card answers in 30 s or more, and a panel
+    that shows nothing until the end reads as a hang rather than as work. It
+    also makes a bad prompt visible early -- a model that starts writing a
+    thinking preamble has already told you it is going to waste the turn.
+
+    Falls back to the non-streaming path when the server will not stream (an
+    older build answers the same request and simply returns one chunk), and
+    when `on_delta` is None. `complete` stays the plain one on purpose: the
+    repair loop reads whole replies and has no use for partial text.
+    """
+    if on_delta is None:
+        return await complete(base_url, model, messages, schema=schema,
+                              temperature=temperature, max_tokens=max_tokens,
+                              timeout=timeout)
+    import aiohttp
+    import json as _json
+
+    base = normalise_base(base_url)
+    if not base:
+        raise LLMError("no server URL is set -- open Settings in the panel")
+    if not model:
+        raise LLMError("no model is selected -- open Settings in the panel")
+    url = base + "/v1/chat/completions"
+
+    async with aiohttp.ClientSession() as session:
+        body = _chat_body(model, messages, schema=schema,
+                          temperature=temperature, max_tokens=max_tokens)
+        body = dict(body, stream=True)
+        try:
+            async with session.post(
+                    url, json=body,
+                    timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                if resp.status >= 400:
+                    text = await resp.text()
+                    raise LLMError(_clean_http(resp.status, text))
+                if "text/event-stream" not in (
+                        resp.headers.get("Content-Type") or ""):
+                    # The server ignored `stream` and answered in one piece.
+                    data = _json.loads(await resp.text())
+                    got = _content(data, max_tokens=max_tokens)
+                    on_delta(got)
+                    return got
+                out = []
+                # aiohttp's response content yields ARBITRARY chunks, not
+                # lines. Treating each chunk as a whole SSE event is the
+                # obvious thing to write and it is wrong: a server may split
+                # anywhere, including inside the `data:` prefix or the middle
+                # of the JSON, and a chunk that does not start with `data:` is
+                # then silently dropped. A real reply arrives short by whatever
+                # was lost, which reads as a truncated plan rather than as a
+                # parser bug. Buffer to a newline and parse whole events.
+                buf = b""
+                async for raw in resp.content:
+                    buf += raw
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        line = line.decode("utf-8", "replace").strip()
+                        if not line or not line.startswith("data:"):
+                            continue    # a comment, a blank line, a field name
+                        payload = line[5:].strip()
+                        if payload == "[DONE]":
+                            buf = b""
+                            break
+                        if not payload:
+                            continue
+                        try:
+                            obj = _json.loads(payload)
+                        except Exception:
+                            continue
+                        for choice in (obj.get("choices") or []):
+                            piece = ((choice.get("delta") or {}).get("content")
+                                     or (choice.get("message") or {}).get("content"))
+                            if piece:
+                                out.append(piece)
+                                on_delta(piece)
+                    else:
+                        continue
+                    break
+                # A last event with no trailing newline is still an event.
+                tail = buf.decode("utf-8", "replace").strip()
+                if tail.startswith("data:"):
+                    payload = tail[5:].strip()
+                    if payload and payload != "[DONE]":
+                        try:
+                            for choice in (_json.loads(payload).get("choices") or []):
+                                piece = ((choice.get("delta") or {}).get("content")
+                                         or (choice.get("message") or {}).get("content"))
+                                if piece:
+                                    out.append(piece)
+                                    on_delta(piece)
+                        except Exception:
+                            pass
+                text = "".join(out).strip()
+                if not text:
+                    raise LLMError("the reply streamed nothing")
+                return text
+        except aiohttp.ClientError as exc:
+            raise LLMError(_clean(exc, url)) from exc
+
+
 async def complete(base_url, model, messages, *, schema=None,
                    temperature=0.35, max_tokens=MAX_TOKENS, timeout=GEN_TIMEOUT):
     """One chat completion. Returns the reply text.

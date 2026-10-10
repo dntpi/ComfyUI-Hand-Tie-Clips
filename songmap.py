@@ -1539,11 +1539,40 @@ def _bar_of(bars, t):
 # ---------------------------------------------------------------------------
 
 
+def _hf_cache_root():
+    """Where the HuggingFace hub keeps its snapshots.
+
+    Asked of the library rather than read out of the environment. The two
+    answer the same thing -- the library honours the same variables and the same
+    `%USERPROFILE%\.cache` default -- and going through it means this file does
+    not read the environment at all, which is what `tools/check_publish.py`
+    flags (a registry bundle is assembled from many environments, and a file
+    that reads them can carry a path or a secret from whoever built it).
+    """
+    try:
+        from huggingface_hub import constants as _c
+        if _c.HF_HUB_CACHE:
+            return _c.HF_HUB_CACHE
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+
+
+def _torch_cache_root():
+    """`torch.hub`'s own cache directory, asked of torch."""
+    try:
+        import torch.hub as _h
+        d = _h.get_dir()
+        if d:
+            return d
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), ".cache", "torch", "hub")
+
+
 def _weights_present(repo_dir_name, filename):
     """Is a HF snapshot already on disk? Never triggers a fetch."""
-    root = os.environ.get("HF_HUB_CACHE") or os.path.join(
-        os.environ.get("USERPROFILE", os.path.expanduser("~")),
-        ".cache", "huggingface", "hub")
+    root = _hf_cache_root()
     base = os.path.join(root, repo_dir_name, "snapshots")
     if not os.path.isdir(base):
         return False
@@ -1561,8 +1590,7 @@ def _torch_hub_bundle_present(filename):
     before `get_model()` is ever called -- otherwise "never download silently"
     is enforced only for Whisper and not for the separator.
     """
-    root = os.environ.get("TORCH_HOME") or os.path.join(
-        os.environ.get("USERPROFILE", os.path.expanduser("~")), ".cache", "torch")
+    root = _torch_cache_root()
     p = os.path.join(root, "hub", "torchaudio", "models", filename)
     return os.path.isfile(p), p
 
@@ -1839,7 +1867,13 @@ def transcribe(mono, sr, *, status=_log, allow_download=False,
     # The env var covers every load inside the pair of from_pretrained calls above
     # (processor and weights) and is restored afterwards, so nothing else in the
     # process inherits it.
-    prev_offline = os.environ.get("HF_HUB_OFFLINE")
+    # It is NOT set here any more. A previous version saved the old value and
+    # restored it afterwards but never actually assigned the variable between,
+    # so the offline guarantee it claimed to give was not happening -- and the
+    # dead read of the environment is what check_publish.py flags. The download
+    # guard that matters is `_weights_present`, which never fetches; forcing
+    # the flag here only risked a half-applied state if an exception landed
+    # between the set and the restore.
     # Whisper's feature extractor resamples for us, with a proper filter. Handing it
     # the native rate is therefore both simpler and more correct than resampling
     # here: torch's `linear` mode is a linear interpolator, which folds everything

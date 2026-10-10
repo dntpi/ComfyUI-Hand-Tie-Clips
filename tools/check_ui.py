@@ -267,6 +267,25 @@ def main():
         ck("the height guard fits both ways and stops", got.returncode == 0,
            got.stderr[-300:])
 
+    # Every exported name that a file CALLS must be imported there. Phase A
+    # shipped h3_ref_chain_ui.js calling button() with no import: node --check
+    # cannot see an unbound name, and every other pin read other files, so the
+    # whole node failed to load and the user saw "ReferenceError: button is not
+    # defined" as their first contact with the new UI. Same Node requirement,
+    # same loud skip.
+    print("\njs imports")
+    if not node_exe:
+        print("  skip the import scan: Node is not on PATH "
+              "(tools/check_js_imports.mjs)")
+    else:
+        imp = subprocess.run(
+            [node_exe, os.path.join(HERE, "tools", "check_js_imports.mjs"), HERE],
+            capture_output=True, text=True, timeout=60)
+        for line in imp.stdout.splitlines():
+            print("  " + line.strip() if line.strip() else "")
+        ck("every exported name a file calls is imported there",
+           imp.returncode == 0, imp.stdout[-400:])
+
     print()
     if FAIL:
         print(f"UI CHECK: {len(FAIL)} FAILURE(S)")

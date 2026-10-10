@@ -1079,6 +1079,152 @@ def main():
        any("filled from the photo" in w for w in out["warnings"]),
        "; ".join(out["warnings"][-1:]))
 
+    # ------------------------------------------------- Phase B: the three stages
+    # The scripted fake is the ONLY proof the whole conversational path works
+    # without a GPU, a server and a person watching, so all three stages are
+    # driven here. The invariant worth the most attention is the edit's: every
+    # shot the user did not name has to come back byte-identical, and that is
+    # asserted on the JSON, not on the model's good behaviour.
+    print("\nplanner.write_propose / write_edit -- the conversation")
+
+    GOOD_PROPOSAL = {
+        "one_line": "a cook works one kitchen counter alone",
+        "look": "handheld, kitchen daylight, close on the hands",
+        "frames": "she fills the frame, chest up, at the counter",
+        "refs": [{"tag": "@cook", "read_as": "the person"}],
+        "shots": {"count": 6, "arithmetic": "2 sections x 3 hops of 8 s"},
+        "sections": [{"from": 1, "to": 3}, {"from": 4, "to": 6}],
+        "note": "six hops, two sections",
+    }
+
+    fn = scripted([json.dumps(GOOD_PROPOSAL)])
+    out = asyncio.run(PL.write_propose("a cook in a kitchen", complete_fn=fn))
+    ck("a proposal comes back ok", out["ok"] is True, "; ".join(out["errors"][:1]))
+    ck("with its one-line description",
+       out["proposal"]["one_line"].startswith("a cook works"))
+    ck("and its shot arithmetic, kept as prose",
+       "arithmetic" in json.dumps(out["proposal"]) and out["note"],
+       out["note"])
+    ck("one attempt was enough", out["attempts"] == 1, str(out["attempts"]))
+
+    # A proposal missing its look must come back once more, told what was
+    # missing. Not a repair LOOP: a proposal is prose, so there is nothing to
+    # converge on beyond the fields being present.
+    thin = dict(GOOD_PROPOSAL)
+    thin.pop("look")
+    fn = scripted([json.dumps(thin), json.dumps(GOOD_PROPOSAL)])
+    out = asyncio.run(PL.write_propose("a cook in a kitchen", complete_fn=fn))
+    ck("a proposal missing its look is asked for again", out["ok"] is True,
+       "; ".join(out["errors"][:1]))
+    ck("and the second answer is the one kept", out["attempts"] == 2,
+       str(out["attempts"]))
+    ck("proposal_errors names what was missing",
+       any("look" in e for e in PL.proposal_errors(thin)),
+       str(PL.proposal_errors(thin)))
+    ck("a complete proposal has no complaints",
+       PL.proposal_errors(GOOD_PROPOSAL) == [], str(PL.proposal_errors(GOOD_PROPOSAL)))
+
+    # --- edit: the byte-identity invariant.
+    base = json.loads(json.dumps(GOOD_SHOTS))
+    cur = json.dumps(base, indent=2)
+    refs = json.dumps(GOOD_REFS)
+    want_changed = "s2"
+    # The new beat must cite a tag the register declares, or validate() rejects
+    # it -- which is the point of running the spliced result through validate.
+    new_beat = "@cook_face opens the oven and slides the tray in. The low hum of the refrigerator."
+    fn = scripted([json.dumps({
+        "edits": [{"shot_id": want_changed, "beat": new_beat}],
+        "note": "hop 2 now opens the oven"})])
+    out = asyncio.run(PL.write_edit("hop 2: she opens the oven",
+                                    cur, refs, complete_fn=fn, hops=3,
+                                    files=FILES, duration="8 s"))
+    ck("an edit comes back ok", out["ok"] is True, "; ".join(str(e)[:60] for e in out["errors"][:2]))
+    after = json.loads(out["shot_plan"])
+    ck("it is one shot longer", len(after) == len(base), "%d vs %d" % (len(after), len(base)))
+    ck("the named shot changed",
+       after[1]["beat"] != base[1]["beat"], repr(after[1]["beat"])[:60])
+    untouched = [i for i in range(len(base)) if i != 1]
+    ck("EVERY other shot is byte-identical, not merely similar",
+       all(json.dumps(after[i], sort_keys=True) == json.dumps(base[i], sort_keys=True)
+           for i in untouched),
+       str([i for i in untouched
+            if json.dumps(after[i], sort_keys=True) != json.dumps(base[i], sort_keys=True)]))
+    ck("the edit reports which shot it changed", out["changed"] == [want_changed],
+       str(out["changed"]))
+    ck("and carries a word diff for the card",
+       "oven" in out["diffs"][0]["diff"]["added"]
+       and "lifts" in out["diffs"][0]["diff"]["removed"],
+       json.dumps(out["diffs"][0]["diff"]))
+
+    # An edit naming a shot that does not exist is refused, not guessed at.
+    fn = scripted([json.dumps({"edits": [{"shot_id": "s99", "beat": "x"}]})] * 3)
+    out = asyncio.run(PL.write_edit("hop 99: something", cur, refs,
+                                    complete_fn=fn, hops=3, files=FILES, duration="8 s"))
+    ck("an edit naming an unknown shot fails rather than guessing",
+       out["ok"] is False, "ok was true")
+    ck("and says which shot it could not find",
+       any("s99" in e for e in out["errors"]), str(out["errors"][:1]))
+
+    # An "edit" that changes nothing is a failed edit, not a successful no-op:
+    # the user asked for a change and would get a card with an empty diff.
+    fn = scripted([json.dumps({"edits": [{"shot_id": "s2",
+                                         "beat": base[1]["beat"]}]})] * 3)
+    out = asyncio.run(PL.write_edit("hop 2: tighten it", cur, refs,
+                                    complete_fn=fn, hops=3, files=FILES, duration="8 s"))
+    ck("an edit that changes nothing is refused",
+       out["ok"] is False and "changed nothing" in str(out.get("error")),
+       str(out.get("error"))[:70])
+
+    ck("an edit with no plan is refused, not crashed",
+       (asyncio.run(PL.write_edit("hop 2: x", "", "", complete_fn=fn))["ok"]) is False)
+
+    # --- the thread.
+    print("\nplanner.build_thread -- what every stage resends")
+    T = [{"role": "user", "content": "make it a vlog"},
+         {"role": "assistant", "content": "here is the film"},
+         {"role": "system", "content": "not a role the chat API has"},
+         {"role": "user", "content": "   "},
+         {"role": "user"}]
+    m = PL.build_thread("SYS", T, proposal={"one_line": "p"},
+                        shot_text="[]", ref_text="{}", instruction="GO")
+    ck("the system prompt leads", m[0] == {"role": "system", "content": "SYS"})
+    ck("only user/assistant turns survive",
+       [x["role"] for x in m[1:3]] == ["user", "assistant"],
+       str([x["role"] for x in m[1:3]]))
+    ck("a role the chat API has not is dropped", len(m) >= 4)
+    ck("a blank turn is dropped", all(x["content"].strip() for x in m))
+    ck("an unknown role is dropped",
+       not any(x["content"] == "not a role the chat API has" for x in m))
+    ck("a turn with no content key is dropped",
+       not any("content" not in x for x in m))
+    joined = json.dumps(m)
+    ck("the accepted proposal is resent every turn", "accepted_proposal" in joined)
+    ck("the current plan is resent every turn", "current_shot_plan" in joined)
+    ck("the current register is resent every turn", "current_ref_plan" in joined)
+    ck("the instruction is LAST, so it is what is answered",
+       m[-1]["content"] == "GO", m[-1]["content"][:40])
+
+    # The bound is the point: an unbounded thread grows every saved workflow.
+    long_thread = [{"role": "user", "content": f"turn {i}"} for i in range(80)]
+    m = PL.build_thread("SYS", long_thread, instruction="GO")
+    ck("the thread is bounded", len(m) <= PL.THREAD_TURNS + 2,
+       "%d messages" % len(m))
+    ck("and it keeps the MOST RECENT turns, not the oldest",
+       "turn 79" in json.dumps(m) and "turn 0\"" not in json.dumps(m),
+       "kept the wrong end")
+
+    # write_plan with a thread still validates and repairs.
+    fn = scripted([fence(GOOD_SHOTS, GOOD_REFS)])
+    out = asyncio.run(PL.write_plan("a cook in a kitchen", 3, complete_fn=fn,
+                                    files=FILES, thread=T,
+                                    proposal={"one_line": "p"}))
+    ck("write_plan accepts a thread and an accepted proposal",
+       out["ok"] is True, "; ".join(out["errors"][:1]))
+    ck("and sends them to the model",
+       "accepted_proposal" in json.dumps(fn.seen[0]))
+    ck("the plan is unchanged by having a thread",
+       json.loads(out["shot_plan"]) == GOOD_SHOTS)
+
     # ------------------------------------------------------- the killswitch
     # Only the parts that need no server. `unload_all` short-circuits on a
     # non-local host BEFORE it opens a session, so this asserts the guard
@@ -1135,6 +1281,90 @@ def main():
     try:
         ck("an unconfigured writer is free, and instant",
            LM.free_for_render(settle_sleep=_slept.append) == "" and not _slept)
+
+        # --- two backends, each keeping its own address and model.
+        # The failure this guards is quiet and repeated: one flat pair means a
+        # switch carries the OTHER server's port and model, and the writer then
+        # answers "no server at http://127.0.0.1:1234" on a machine where 1234
+        # is fine and 8080 is what they meant. Bank it, switch, come back.
+        LM.save_conn({"backend": "lmstudio", "model": "qwen3-27b",
+                      "server_url": "http://127.0.0.1:1234"})
+        ck("lmstudio is the default backend",
+           LM.load_conn()["backend"] == "lmstudio", LM.load_conn()["backend"])
+        ck("its address survives a save/load round trip",
+           LM.load_conn()["server_url"] == "http://127.0.0.1:1234",
+           LM.load_conn()["server_url"])
+
+        LM.save_conn({"backend": "ninfer", "model": "qwen3-27b-awq",
+                      "server_url": "http://127.0.0.1:8080"})
+        got = LM.load_conn()
+        ck("switching to nInfer brings ITS address", got["backend"] == "ninfer",
+           got["backend"])
+        ck("and its own model, not a carried-over one",
+           got["model"] == "qwen3-27b-awq", got["model"])
+
+        LM.save_conn({"backend": "lmstudio"})
+        got = LM.load_conn()
+        ck("switching back restores lmstudio's address",
+           got["server_url"] == "http://127.0.0.1:1234", got["server_url"])
+        ck("and lmstudio's model",
+           got["model"] == "qwen3-27b", got["model"])
+
+        # A bare host the user typed is not overwritten by the backend's
+        # default: the machine property is the reason this lives in a file
+        # beside the node rather than on it.
+        LM.save_conn({"backend": "ninfer", "server_url": ""})
+        ck("an empty address does not erase a saved one",
+           LM.load_conn()["server_url"] == "http://127.0.0.1:8080",
+           LM.load_conn()["server_url"])
+        ck("a nInfer install gets :8080 by default",
+           LM.load_conn()["server_url"] == "http://127.0.0.1:8080")
+
+        ck("an unknown backend falls back instead of raising",
+           LM.backend_name("not-a-backend") == "lmstudio",
+           LM.backend_name("not-a-backend"))
+        ck("and the spec survives a nonsense name too",
+           LM.backend_spec("nonsense")["default_base"] == "http://127.0.0.1:1234")
+        ck("the model box is optional on LM Studio",
+           LM.backend_spec("lmstudio")["model_optional"] is True)
+        ck("and required on nInfer",
+           LM.backend_spec("ninfer")["model_optional"] is False)
+        # A model carried across backends is worse than none: it is a name the
+        # other server never heard of, and it reads as "the server is down".
+        LM.save_conn({"backend": "lmstudio", "server_url": "http://127.0.0.1:1234"})
+        # Without switching: an explicit empty model is a real instruction --
+        # "whatever is loaded" -- and every OTHER blank field is skipped. A
+        # settings panel that posted a blank model first would otherwise have
+        # no way to clear one.
+        LM.save_conn({"model": ""})
+        ck("clearing the model is allowed, unlike other blank fields",
+           LM.load_conn()["model"] == "", repr(LM.load_conn()["model"]))
+        LM.save_conn({"model": "qwen3-27b"})
+        # Back to nInfer, which was given qwen3-27b-awq two calls ago and must
+        # still hold it: clearing lmstudio's model is not an instruction about
+        # nInfer's.
+        LM.save_conn({"backend": "ninfer"})
+        ck("and nInfer still has the model it was given",
+           LM.load_conn()["model"] == "qwen3-27b-awq", LM.load_conn()["model"])
+        LM.save_conn({"backend": "lmstudio"})
+
+        # A file written before there were two backends: no `backend` key, one
+        # flat pair. It belongs to LM Studio, which is what it was written for,
+        # and dropping its address would strand the user on a default they never
+        # chose.
+        import json as _json
+        with open(_tmp, "w", encoding="utf-8") as fh:
+            _json.dump({"server_url": "http://127.0.0.1:4321",
+                        "model": "old-model"}, fh)
+        got = LM.load_conn()
+        ck("a pre-backend settings file keeps its address",
+           got["server_url"] == "http://127.0.0.1:4321", got["server_url"])
+        ck("and is read as lmstudio", got["backend"] == "lmstudio", got["backend"])
+
+        # Back to something the rest of this block expects.
+        LM.save_conn({"backend": "lmstudio", "model": "some-model",
+                      "server_url": "http://192.0.2.1:1234",
+                      "unload_on_run": True})
 
         # Configured, but pointed at TEST-NET-1. `shares_this_gpu` must refuse
         # it before any eviction, and nothing may sleep: waiting for a driver on

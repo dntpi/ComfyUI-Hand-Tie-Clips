@@ -35,6 +35,77 @@ TAG = "HandTieClips"
 
 DEFAULT_BASE = "http://127.0.0.1:1234"
 
+# The writers this pack will talk to. Both speak plain OpenAI
+# /v1/chat/completions, so there is ONE request path and this is a naming
+# question, not a protocol question -- which is why it is a list of two and not
+# a plugin.
+#
+# `default_base` is only used the FIRST time a backend is selected, or when its
+# saved address is missing. An address the user typed is never overwritten by a
+# default: the machine property is the whole point of putting this in
+# htc_llm.json rather than on the node.
+BACKENDS = {
+    # LM Studio: the default, because it is what this pack shipped against and
+    # every existing htc_llm.json holds one of these addresses.
+    "lmstudio": {
+        "label": "LM Studio",
+        "default_base": "http://127.0.0.1:1234",
+        # LM Studio loads a model by GUI action, so "whatever is loaded" is a
+        # real state and the model box can be left empty.
+        "model_optional": True,
+        # Its native unload verb. Used only as a fallback; the OpenAI route
+        # below is what the other backends answer.
+        "unload": "lmstudio",
+    },
+    # nInfer: a standalone server binary the user runs, not a library we can
+    # install. OpenAI-compatible on :8080 by default.
+    #
+    # `exe` is deliberately NOT in this file's settings. Starting and stopping
+    # the writer is the render node's job (free_for_render), and doing it by
+    # path means a settings round-trip can no longer launch a process -- which
+    # is how a settings panel gets a remote-code-execution flag from a registry.
+    # If you want the writer started and stopped for you, put that in the
+    # render path deliberately, not here.
+    "ninfer": {
+        "label": "nInfer",
+        "default_base": "http://127.0.0.1:8080",
+        "model_optional": False,
+        "unload": "openai",
+    },
+}
+DEFAULT_BACKEND = "lmstudio"
+
+
+def backend_spec(name=None):
+    """The spec for a backend, falling back to the default for anything odd.
+
+    A hand-edited or future htc_llm.json naming a backend this build has
+    never heard of must not raise here: `load_conn()` runs on the settings
+    read, and a bad name would take the whole panel down rather than fall back
+    to the server that is actually working.
+    """
+    n = str(name or DEFAULT_BACKEND).strip().lower()
+    return BACKENDS.get(n) or BACKENDS[DEFAULT_BACKEND]
+
+
+def backend_name(name=None):
+    n = str(name or "").strip().lower()
+    return n if n in BACKENDS else DEFAULT_BACKEND
+
+
+def active_label():
+    """The active backend's display name, for messages that tell the user what
+    to go and fix.
+
+    Every "is LM Studio's server started?" in this file was true when there was
+    only one backend and would be a lie the moment there are two -- and a
+    message naming the wrong program sends the user to the wrong settings
+    window. The label is read from the module global rather than passed in,
+    because these are raised from six unrelated call sites and threading a
+    parameter through all of them to spell one word is not worth it.
+    """
+    return backend_spec(CONN.get("backend"))["label"]
+
 # A 27B writing a six-hop plan is not fast, and the repair loop may spend three
 # of these. PromptMasterLD arrived at 600 for the same reason.
 GEN_TIMEOUT = 600
@@ -64,8 +135,16 @@ MAX_TOKENS = 12288
 CONN_FILE = "htc_llm.json"
 
 CONN = {
+    "backend": "lmstudio",
+    # Address and model are PER BACKEND. One shared pair is what makes a
+    # second server a nuisance rather than a choice: you switch to nInfer, and
+    # either it inherits ":1234" and answers nothing, or you retype the address
+    # and then have to retype it again coming back. The active backend's pair is
+    # mirrored into `server_url`/`model` so everything downstream -- and every
+    # existing saved htc_llm.json -- keeps reading the two keys it always read.
     "server_url": DEFAULT_BASE,
     "model": "",
+    "servers": {},
     "temperature": 0.35,
     # Warm between plans; evicted when a render is queued.
     #
@@ -101,18 +180,51 @@ def load_conn():
     the defaults are a working LM Studio install."""
     import os
     path = _conn_path()
-    if not os.path.isfile(path):
-        return dict(CONN)
-    try:
-        with open(path, encoding="utf-8") as fh:
-            saved = json.load(fh)
+    saved = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                saved = json.load(fh)
+        except Exception as exc:
+            print(f"[{TAG}] {CONN_FILE} unreadable, using defaults: {exc}",
+                  flush=True)
+            saved = {}
+    if isinstance(saved, dict):
         for k in _CONN_KEYS:
             if k in saved:
                 CONN[k] = saved[k]
-    except Exception as exc:
-        print(f"[{TAG}] {CONN_FILE} unreadable, using defaults: {exc}",
-              flush=True)
-    CONN["server_url"] = normalise_base(CONN.get("server_url")) or DEFAULT_BASE
+        # A file with no `backend` key is a legacy file, and it means the
+        # DEFAULT -- not "whatever this session last had selected". Leaving the
+        # module global in place here made a settings file written before
+        # there were backends quietly adopt whatever backend was in memory, so
+        # the same file pointed at two different servers depending on what
+        # happened earlier in the process. The file is the source of truth for
+        # what is saved; a key it does not have is a default, not an absence.
+        if "backend" not in saved:
+            CONN["backend"] = DEFAULT_BACKEND
+            CONN["servers"] = {} if not isinstance(saved.get("servers"), dict) \
+                else saved.get("servers")
+    # A file written before there was more than one backend has no `backend`
+    # key and one flat pair. That pair belongs to LM Studio, which is what it
+    # was written for -- so seed the per-backend table from it rather than
+    # dropping the user's address on the floor.
+    servers = CONN.get("servers")
+    if not isinstance(servers, dict):
+        servers = {}
+    name = backend_name(CONN.get("backend"))
+    if name not in servers and CONN.get("server_url"):
+        servers[name] = {"server_url": CONN["server_url"],
+                         "model": CONN.get("model") or ""}
+    CONN["servers"] = servers
+    CONN["backend"] = name
+    spec = backend_spec(name)
+    pair = servers.get(name) or {}
+    url = normalise_base(pair.get("server_url")) or spec["default_base"]
+    CONN["server_url"] = url
+    # A model carried over from the other backend is worse than none: it is a
+    # name that server has never heard of, and the failure reads as "the server
+    # is down" rather than "that model is not loaded here".
+    CONN["model"] = str(pair.get("model") or "").strip()
     return dict(CONN)
 
 
@@ -124,13 +236,27 @@ def save_conn(patch):
     write an empty model over a working one, and the next generate fails with
     "no model is selected" on a box the user never touched.
     """
+    # The outgoing pair, captured BEFORE any key below runs. `_CONN_KEYS` is in
+    # declaration order and `backend` comes first, so banking inside that branch
+    # stored the pre-patch URL and then the flat keys moved on without
+    # re-banking -- which is how the first backend lost its address on the way
+    # to the second and switching back found nothing.
+    prev_name = backend_name(CONN.get("backend"))
+    prev_url = normalise_base(CONN.get("server_url"))
+    prev_model = str(CONN.get("model") or "").strip()
+    servers = CONN.get("servers") if isinstance(CONN.get("servers"), dict) else {}
+
     for k in _CONN_KEYS:
         if k not in patch:
             continue
         v = patch[k]
-        if isinstance(v, str) and not v.strip():
+        if isinstance(v, str) and not v.strip() and k not in ("model",):
             continue
-        if k == "server_url":
+        if k == "backend":
+            v = backend_name(v)
+        elif k == "servers":
+            v = v if isinstance(v, dict) else CONN["servers"]
+        elif k == "server_url":
             v = normalise_base(v)
             if not v:
                 continue
@@ -149,7 +275,42 @@ def save_conn(patch):
             except (TypeError, ValueError):
                 continue
         CONN[k] = v
+
+    # A switch that carries NO address or model of its own must land on the pair
+    # already banked for the backend being switched TO -- otherwise "ninfer"
+    # arrives with lmstudio's :1234, and the writer then reports no server at
+    # the one address that was working all along. Keys typed in the same call
+    # win, which is what setting a new backend up means.
+    name = backend_name(CONN.get("backend"))
+    spec = backend_spec(name)
+    switched = "backend" in patch and name != prev_name
+    if switched:
+        servers[prev_name] = {"server_url": prev_url, "model": prev_model}
+    if switched and not normalise_base(patch.get("server_url")) \
+            and not str(patch.get("model") or "").strip():
+        banked = servers.get(name) or {}
+        CONN["server_url"] = (normalise_base(banked.get("server_url"))
+                              or spec["default_base"])
+        CONN["model"] = str(banked.get("model") or "").strip()
+
+    # Mirror the active backend's pair onto the flat keys, and remember it under
+    # its own name, so each backend keeps its own address and model.
+    url = normalise_base(CONN.get("server_url")) or spec["default_base"]
+    model = str(CONN.get("model") or "").strip()
+    servers[name] = {"server_url": url, "model": model}
+    CONN["servers"] = servers
+    CONN["backend"] = name
+    CONN["server_url"] = url
+    CONN["model"] = model
+
     out = dict(CONN)
+    # The panel needs to draw the right editor: the model box is optional on
+    # LM Studio and required on nInfer, and a UI that cannot be told that shows
+    # a red field on a backend where empty is the normal state.
+    out["backend_label"] = spec["label"]
+    out["model_optional"] = bool(spec["model_optional"])
+    out["backends"] = [{"id": k, "label": v["label"]}
+                       for k, v in BACKENDS.items()]
     # Whether it reached disk is the caller's business. A read-only or
     # root-owned custom_nodes -- a system-wide ComfyUI, any container image --
     # used to fail here, print to a console nobody was reading, and answer the
@@ -207,7 +368,7 @@ async def _post(session, url, body, timeout):
                 # picked, saved, and still not be in memory when it is called.
                 if "unloaded" in text.lower() or "not loaded" in text.lower():
                     raise LLMError(
-                        "that model is not loaded. Load it in LM Studio "
+                        f"that model is not loaded. Load it in {active_label()} "
                         "(or turn on Just-In-Time model loading in the "
                         "Developer tab), then try again.")
                 # Otherwise the body is where servers explain a rejected
@@ -225,7 +386,7 @@ async def _post(session, url, body, timeout):
         raise
     except aiohttp.ClientConnectorError as exc:
         raise LLMError(
-            f"no server at {url.rsplit('/v1', 1)[0]} -- is LM Studio's server "
+            f"no server at {url.rsplit('/v1', 1)[0]} -- is {active_label()}'s server "
             f"started? (Developer tab -> Start Server)") from exc
     except Exception as exc:  # timeout, DNS, reset connection
         raise LLMError(f"request failed: {exc}") from exc
@@ -378,7 +539,7 @@ def _cut_off(usage, reasoned, max_tokens):
     used = int(usage.get("completion_tokens") or 0)
     prompt = int(usage.get("prompt_tokens") or 0)
     tail = (f" -- {reasoned} of them went to the model's own reasoning, which "
-            f"must be turned off in LM Studio" if reasoned else "")
+            f"must be turned off in {active_label()}" if reasoned else "")
 
     if max_tokens and used >= int(max_tokens) * 0.95:
         return (f"the reply hit the {int(max_tokens)}-token ceiling this pack "
@@ -390,12 +551,12 @@ def _cut_off(usage, reasoned, max_tokens):
         return (f"the reply was cut off after {used} token(s){tail}. The "
                 f"prompt alone used {prompt}, so the model's context is full "
                 f"and there is no room left to answer in. Raise the context "
-                f"length in LM Studio to at least {want} -- repair turns grow "
+                f"length in {active_label()} to at least {want} -- repair turns grow "
                 f"the conversation, so the first attempt fitting is not "
                 f"enough.")
 
     return (f"the reply was cut off after {used} token(s){tail}. Raise the "
-            f"model's context length in LM Studio.")
+            f"model's context length in {active_label()}.")
 
 
 async def complete(base_url, model, messages, *, schema=None,
@@ -614,7 +775,7 @@ async def unload(base_url, model):
         print(f"[{TAG}] unload failed: {exc}", flush=True)
         return False
 
-    print(f"[{TAG}] no unload endpoint answered -- free the VRAM in LM Studio "
+    print(f"[{TAG}] no unload endpoint answered -- free the VRAM in {active_label()} "
           f"if the render runs short", flush=True)
     return False
 
@@ -678,7 +839,7 @@ async def unload_all(base_url, fallback_model=""):
         return len(done), f"stopped after {len(done)}: {exc}"
 
     if not done:
-        return 0, ("no unload endpoint answered -- free the VRAM in LM Studio "
+        return 0, (f"no unload endpoint answered -- free the VRAM in {active_label()} "
                    "directly")
     note = ", ".join(done)
     if guessing:

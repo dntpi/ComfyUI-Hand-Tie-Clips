@@ -1323,9 +1323,33 @@ position: relative;
     gap: var(--h3-gap-sm);
     min-width: 0;
 }
-/* The picker keeps its own size; everything else shares what is left. */
-.h3e-media-body > .h3e-pick { flex: 0 1 auto; min-width: 220px; }
-.h3e-media-body > .h3e-trimrow { flex: 1 1 260px; min-width: 0; }
+/* The picker keeps its own size; the scrubber takes the rest of the line. */
+.h3e-media-body > .h3e-pick { flex: 0 1 auto; min-width: 200px; }
+
+/* D1g: the trim window is now a CHILD of the slot's body, on the same line as
+ * the file it trims. It needs the room -- a waveform is unreadable at 100px --
+ * so it flexes and the filename yields first. `min-width: 0` on the row is what
+ * lets it shrink at all inside a flex parent.
+ *
+ * `flex-basis: 320px` is the width at which the grips are still grabbable; below
+ * that the two out-grips collide and the window becomes unusable, which is worse
+ * than a narrow one. */
+.h3e-media-body > .h3e-trimrow {
+    flex: 1 1 320px;
+    min-width: 160px;
+    align-items: center;
+}
+
+/* The description and the size are SENTENCES and a dropdown -- they need the
+ * full line each, and trying to put three fields on one 1200px row is what
+ * started this. So they wrap to their own line under the scrubber rather than
+ * competing with it.
+ *
+ * A class rather than `:has()`: the selector is fine in any browser from 2023
+ * on, but this panel also runs in ComfyUI's Vue Nodes frontend and there is no
+ * reason to depend on it for a layout hint when the builder already knows which
+ * row it is making. */
+.h3e-media-body > .h3e-trimrow.h3e-trimrow-wide { flex-basis: 100%; }
 /* One line, always. These are grid siblings that flow from the top of their
  * cell, so a label that wraps to two lines pushes ITS drop zone down and only
  * its own -- the row stops lining up, which is how `master audio (lip-sync
@@ -1375,7 +1399,7 @@ color: var(--h3-muted);
  * pen or touch drag scrolls the panel instead of moving the grip, and
  * setPointerCapture never sees the move.
  */
-.h3e-trimwrap { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+.h3e-trimwrap { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; min-width: 0; flex: 1 1 auto; }
 .h3e-trim {
     position: relative;
     height: 34px;
@@ -1423,7 +1447,21 @@ color: var(--h3-muted);
     pointer-events: none;
 }
 .h3e-trim-media { width: 100%; height: 26px; }
-.h3e-trim-media[src=""] { display: none; }
+    .h3e-trim-media[src=""] { display: none; }
+    /* D1g: the NATIVE transport is the ugliest thing on the tab -- a full-width
+     * grey bar with a play triangle, a 0:00/0:06 clock, a volume speaker and a
+     * kebab menu, in the browser's own colours, under our own waveform. It also
+     * duplicates what the trim bar already does: the waveform is scrubbable by
+     * dragging, and the readout underneath says the same numbers.
+     *
+     * So it is hidden and kept as the element that DECODES the file: the
+     * waveform needs loadedmetadata for its duration, and a hidden element is
+     * the cheapest way to get it. `display: none` does not stop an <audio> from
+     * loading its metadata; it only stops it being seen.
+     *
+     * Hover-to-play is on the thumbnail instead, which is where you expect it. */
+    .h3e-trim-media { display: none; }
+    .h3e-trim { height: 28px; }
 /* D1f: capped on BOTH axes. `height: auto; max-height: 110px` alone left the
      * width free, so a video element took the full 1200px of the row and stood
      * 110px tall -- a wide letterboxed band with a scrub bar under it, which is

@@ -40,6 +40,7 @@ def read(p):
 py = read("h3_ref_chain.py")
 js_ui = read("js/h3_ref_chain_ui.js")
 js_tl = read("js/editor/timeline.js")
+js_media = read("js/editor/media_strip.js")
 js_model = read("js/editor/timeline_model.js")
 
 print("\npayload field")
@@ -139,6 +140,25 @@ ck("the MEDIA label is not nowrap+ellipsis",
 ck("the RUN dial grid tracks fit the longest label (control_after_generate)",
    re.search(r"\.h3e-grid\s*\{[^}]*minmax\(1[3-9]\dpx", css),
    "104px wrapped CONTROL AFTER GENERATE onto two lines and pushed its field down")
+
+print("\nD1g: a scrubber lives in its own slot's row")
+# The trim window, the description and the size were appended to a single
+# `.h3e-trims` tray UNDER the whole grid, so a VOICE 3 scrubber sat below MASTER
+# AUDIO and had to label itself "VOICE 3" -- detached from the file it trims.
+# These are structural, so they are pinned structurally.
+ck("there is no tray container for trim rows any more",
+   "h3e-trims" not in js_media,
+   "a scrubber must live inside the slot it belongs to")
+ck("the media strip appends its trim rows to the slot body",
+   len(re.findall(r"body\.appendChild\(row\)", js_media)) >= 1
+   and "trims.appendChild(row)" not in js_media,
+   "rows in a shared tray are detached from their slot")
+ck("the trim row is a flex child of the body, not a stacked block",
+   re.search(r"\.h3e-media-body\s*>[^{]*\.h3e-trimrow\s*\{[^}]*flex:", css),
+   "otherwise the scrubber stacks under the filename instead of beside it")
+ck("the native media transport is hidden (it duplicated our waveform)",
+   re.search(r"\.h3e-trim-media\s*\{[^}]*display:\s*none", css),
+   "the browser's own play/clock/volume bar is the ugliest thing on the tab")
 
 print()
 if FAIL:

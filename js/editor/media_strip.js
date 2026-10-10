@@ -135,8 +135,14 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
     const grid = el("div", "h3e-media-grid");
     root.appendChild(grid);
 
-    const trims = el("div", "h3e-trims");
-    root.appendChild(trims);
+    /* D1g: there is NO tray at the bottom any more.
+     *
+     * The trim window, the description and the size went into one container
+     * under the whole grid, which meant a VOICE 3 scrubber sat below MASTER
+     * AUDIO, labelled "VOICE 3" because it had to name itself -- detached from
+     * the file it scrubs, and repeating a label the fold head already shows.
+     * They now live inside their own slot's body, where the label beside them
+     * already says what they are. */
 
     const pickers = [];
     const bars = [];
@@ -296,8 +302,10 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
         // media cell: a waveform squeezed to a thumbnail's width is a smear,
         // and the whole point is to see where the transients are.
         if (ws && (we || tspec.fixed)) {
+            // NOT wide: this is the scrubber, and it shares the line with the
+            // file it trims. Only the description and the size take a whole
+            // line of their own.
             const row = el("div", "h3e-trimrow");
-            row.appendChild(el("span", "h3e-media-label", label));
             const bar = createTrimBar({
                 kind,
                 name: () => String(w.value || ""),
@@ -316,7 +324,7 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
                 span: tspec.fixed && chainSeconds ? chainSeconds : undefined,
             });
             row.appendChild(bar.root);
-            trims.appendChild(row);
+            body.appendChild(row);
             bars.push(bar);
             // The bar hides its own root when no file is set; the row's label
             // is outside that root, so without this an empty slot still prints
@@ -333,7 +341,7 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
         // about a reference that is not there is noise.
         const wd = descName && widgetByName(node, descName);
         if (wd) {
-            const row = el("div", "h3e-trimrow");
+            const row = el("div", "h3e-trimrow h3e-trimrow-wide");
             row.appendChild(el("span", "h3e-media-label", "describe it"));
             const input = el("input", "h3e-media-desc");
             input.type = "text";
@@ -347,7 +355,7 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
             // clicking elsewhere on the canvas would never have fired `change`.
             input.addEventListener("input", () => commit(node, wd, input.value));
             row.appendChild(input);
-            trims.appendChild(row);
+            body.appendChild(row);
             const syncDesc = () => {
                 row.style.display = String(w.value || "") ? "" : "none";
                 if (document.activeElement !== input) {
@@ -369,7 +377,7 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
         // module down and drops the node back to raw widgets.
         const wsize = sizeName && widgetByName(node, sizeName);
         if (wsize) {
-            const row = el("div", "h3e-trimrow");
+            const row = el("div", "h3e-trimrow h3e-trimrow-wide");
             row.appendChild(el("span", "h3e-media-label", "video input size"));
             const sel = el("select", "h3e-media-size");
             sel.title = "How large to decode the clip. MAX is the size core "
@@ -387,7 +395,7 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
             sel.value = String(wsize.value ?? "");
             sel.addEventListener("change", () => commit(node, wsize, sel.value));
             row.appendChild(sel);
-            trims.appendChild(row);
+            body.appendChild(row);
             const syncSize = () => {
                 row.style.display = String(w.value || "") ? "" : "none";
                 if (document.activeElement !== sel) {

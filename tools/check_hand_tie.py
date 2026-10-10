@@ -49,10 +49,22 @@ OVERLAP_FRAMES = ast.literal_eval(src[src.index("OVERLAP_FRAMES = {") + len("OVE
 
 print("geometry (the lab's numbers)")
 lay = HT.layout([192] * 4)
-# One window per hop: the closing window is gone (chain_00150: every take cut to
-# reach it), so the last hop is tied at its start only.
-ck("4 x 8 s: one window per hop, 0/68/136/204", lay["windows"] == [0, 68, 136, 204], lay["windows"])
-ck("4 x 8 s: a 226-frame previs (9.4 s)", lay["previs"] == 226, lay["previs"])
+# One window per hop, plus a closing window for the last hop when it fits
+# (chain_00155/00156: the start-only last hop snapped at f22 on every take).
+ck("4 x 8 s: one window per hop and a closing one, 0/68/136/204/272",
+   lay["windows"] == [0, 68, 136, 204, 272] and lay["closing"], lay["windows"])
+ck("4 x 8 s: a 294-frame previs (12.25 s)", lay["previs"] == 294, lay["previs"])
+_l5, _l6 = HT.layout([192] * 5), HT.layout([192] * 6)
+ck("5 x 8 s still close (362 = PREVIS_MAX); a full 6 x 8 s section's last hop is start-only",
+   _l5["closing"] and _l5["previs"] == 362 and not _l6["closing"] and len(_l6["windows"]) == 6,
+   (_l5, _l6))
+ck("the closing window never splits a section: 6 x 8 s is still one",
+   HT.sections([{"beat": "x"}] * 6, [192] * 6) == [[0, 1, 2, 3, 4, 5]]
+   and HT.sections([{"beat": "x"}] * 7, [192] * 7) == [[0, 1, 2, 3, 4, 5], [6]])
+ck("the closing window has no moment: the previs text keeps one stamp per hop",
+   HT.compile_previs([{"beat": "@a walks."}, {"beat": "@a sits."}], [192, 192])[0].count("At ") == 2)
+ck("run() ties a hop's end wherever a next window exists (the closing one included)",
+   "[(-_ht.WINDOW, _k + 1)] if _k + 1 < len(_wp)" in src)
 ck("4 x 8 s: a 702-frame film", HT.film_frames([192] * 4) == 702, HT.film_frames([192] * 4))
 ck("the 22-frame window is the node's 0.9 s overlap", OVERLAP_FRAMES["0.9 s"] == HT.WINDOW)
 ck("6 x 8 s fill the budget exactly", HT.layout([192] * 6)["previs"] == HT.PREVIS_MAX == 362)
@@ -110,7 +122,7 @@ ck("plain moments sit on their window: 00:00.000, 00:05.667, 00:08.500",
                            "At 00:08.500 <Subject 1> lifts")))
 ck("a speaking moment is led in so the window lands mid-line (window B 2.833 -> 1.833)",
    "At 00:01.833 <Subject 1> turns to the window" in text, text)
-ck("there is no closing moment: moment_end does not reach the previs",
+ck("there is no closing MOMENT (00150 cut to reach one): moment_end does not reach the previs",
    "chops again" not in text, text[-160:])
 no_moment = HT.compile_previs([{"beat": "First thing. Second thing."}, {"beat": "Third. Fourth."}], [192, 192])[0]
 plain = HT.compile_previs([

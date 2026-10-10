@@ -110,6 +110,8 @@ def sections(shots, hop_frames=None):
     out, frames = [], []
     for i, sh in enumerate(shots or []):
         f = int(hop_frames[i]) if hop_frames is not None else None
+        # layout() only adds a closing window that fits, so this is the
+        # one-window-per-hop length: the closing window never splits a section.
         full = (f is not None and out
                 and layout(frames + [f])["previs"] > PREVIS_MAX)
         if i == 0 or _anchor(sh) in ("restart", "extend") or full:
@@ -136,17 +138,30 @@ def spacing(hop_frames):
 def layout(hop_frames):
     """Window starts and previs length for one section's hops.
 
-    -> {"windows": [w0, ..., w(n-1)], "spacings": [...], "previs": frames}
+    -> {"windows": [w0, ..., w(n-1)(, wn)], "spacings": [...], "previs": frames,
+        "closing": bool}
     One window per hop: hop k is tied to window k at its start and to window k+1
-    at its end; the section's last hop is tied at its start only.
+    at its end. The section's last hop gets a CLOSING window when the previs has
+    room for one (sections of up to 5 hops of 8 s); in a full section it is tied
+    at its start only. Unguided past its head window, chain_00155 and 00156's last
+    hop snapped at f22 on all three takes (a cut to another shopfront, then the
+    skewer jumping to her mouth), where nine tail-guided hops ran smoothly through
+    the same frame. The closing window has no moment of its own: the previs plays
+    the last moment on into it, so there is no new text to cut to (the closing
+    MOMENT is what chain_00150's previs cut to reach, on every take).
     """
     if not hop_frames:
         raise ValueError("hand-tie: a section needs at least one hop")
-    sp = [spacing(int(f)) for f in hop_frames[:-1]]
+    sp = [spacing(int(f)) for f in hop_frames]
     w = [0]
-    for s in sp:
+    for s in sp[:-1]:
         w.append(w[-1] + s)
-    return {"windows": w, "spacings": sp, "previs": w[-1] + WINDOW}
+    closing = w[-1] + sp[-1] + WINDOW <= PREVIS_MAX
+    if closing:
+        w.append(w[-1] + sp[-1])
+    else:
+        sp = sp[:-1]
+    return {"windows": w, "spacings": sp, "previs": w[-1] + WINDOW, "closing": closing}
 
 
 def max_hops(hop_frames=REF_HOP):
@@ -643,7 +658,9 @@ def deflicker(master, frames=DEFLICKER, still=SEAM_STILL):
 
 
 CUT_JUMP = 1.4           # a cut's one-frame change beats CUT_SPAN frames of motion either side
-CUT_FLOOR = 20.0 / 255   # ... and is at least this big: a jump in a still shot is no cut
+CUT_FLOOR = 15.0 / 255   # ... and is at least this big: a jump in a still shot is no cut.
+                         # 15, not 20: chain_00156's snap at f22 moved 18/255 at 3.5x
+                         # its neighbours; clean frames over CUT_JUMP move 14 at most
 CUT_SPAN = 3             # the motion yardstick: frames either side
 CUT_CELL = 32            # px per coarse cell: layout, not texture
 PREVIS_TRIES = 3         # previs renders before the least-cut one is used anyway
@@ -694,9 +711,9 @@ def previs_cuts(frames):
     neighbours') read a handheld walk's every frame as a big change and missed
     chain_00154's previs cut at f66, road to shopfronts, at 3.6x against its 6x;
     hop 1 copied it into the film. Calibrated on 23 clips: cuts 1.81-5.22 at
-    29-45/255 (00146 f314, 00154 previs f66 / f192, its hop 1 f123); clean films
-    (00141-00153: walking, rain, dancing, 12 native hops) at most 1.64, and every
-    clean frame over 1.0 moves 14/255 or less.
+    29-45/255 (00146 f314, 00154 previs f66 / f192, its hop 1 f123), and 00156's
+    snap 3.5x at 18/255; clean films (00141-00153: walking, rain, dancing, 12
+    native hops) at most 1.64, and every clean frame over 1.0 moves 14/255 or less.
     """
     import torch  # noqa: PLC0415
     import torch.nn.functional as F  # noqa: PLC0415

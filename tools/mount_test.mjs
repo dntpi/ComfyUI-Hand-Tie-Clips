@@ -600,5 +600,70 @@ console.log("\nmount: D1b the RUN frame");
      !runBtns[0].classList.contains("h3e-on"));
 }
 
+/* -- D5: the Simple-mode block view, and Templates that stay put ------------ */
+
+console.log("\nmount: D5 simple mode");
+
+{
+  // Two blocks separated by --- , with a word count that is inside A7's band.
+  const prose = "the figure crosses the room and stops at the window, "
+    + "still lit from one side only\n\n---\n\n"
+    + "they turn away from it and the light goes with them";
+  const node = mountFresh({ plan: "", refPlan: REF_PLAN });
+  const root = node.domWidgets[0];
+  const ed = node._h3Editor.editor;
+
+  const find = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+
+  // Switch to Simple the way a user does.
+  const simpleBtn = find("h3e-mode").find((b) => /simple/i.test(b.textContent || ""));
+  ck("a Simple button exists", !!simpleBtn);
+  if (simpleBtn) {
+    simpleBtn.click();
+    const area = find("h3e-simple-prompt")[0];
+    ck("the Simple prompt textarea exists", !!area);
+    if (area) {
+      area.value = prose;
+      area.fire("input", {});
+      // The blocks view is drawn from the textarea on input.
+      const rows = find("h3e-block-row");
+      ck("two --- blocks produce two rows", rows.length === 2, `got ${rows.length}`);
+      const nums = find("h3e-block-no").map((e) => e.textContent);
+      ck("the rows are labelled block 1 / block 2",
+         nums.join("|") === "block 1|block 2", nums.join("|"));
+      const words = find("h3e-block-w").map((e) => e.textContent);
+      ck("each row carries a word count", words.length === 2 && words.every((w) => /^\d+$/.test(w)),
+         words.join("|"));
+      const total = find("h3e-block-total")[0];
+      // Read the CHILD: a parent's textContent does not aggregate in the DOM,
+      // and I got that wrong once already in the D4 batch-bar check.
+      const totalText = find("h3e-block-total")[0]
+        ? find("h3e-block-total")[0].children.map((c) => c.textContent).join(" ") : "";
+      ck("there is a total", /words total/.test(totalText), totalText || "(none)");
+
+      // Templates must be REACHABLE in Simple now.
+      const tpl = find("h3e-btn").find((b) => /templates/i.test(b.textContent || ""));
+      ck("Templates is visible in Simple", !!tpl && tpl.style.display !== "none",
+         tpl ? `display "${tpl.style.display}"` : "(no button)");
+
+      // And the shot-plan surfaces must be gone, not stale.
+      ck("the score strip is hidden in Simple",
+         find("h3e-score")[0].style.display === "none",
+         `display "${find("h3e-score")[0].style.display}"`);
+      ck("the filmstrip is hidden in Simple",
+         find("h3e-filmstrip")[0].style.display === "none");
+    }
+  }
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

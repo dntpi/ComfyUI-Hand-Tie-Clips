@@ -186,16 +186,51 @@ export function createPlanEditor(node, { onChange }) {
     /* Templates append patterns rather than replacing the script. Replacing
      * would be the one destructive button on the node, and appending is what
      * you actually want -- a chain is built by stacking these. */
-    const templates = createTemplatePanel({
+    /* D5: Templates land in the mode you are already in, and STAY there.
+         *
+         * This used to force `setMode("shots")` from a button that was HIDDEN in
+         * Simple -- an unreachable branch, a mode change nobody asked for, and
+         * `prompt` silently overwritten by a shot plan. So: in Simple the pick
+         * appends `---` separated prose to the prompt widget (the only store in
+         * that mode) and does not touch the mode; in Shots it appends shots, as
+         * before. Both paths append rather than replace -- a chain is built by
+         * stacking these.
+         *
+         * A template's `beat` is the prose for a block, so the two paths read
+         * the same field and nothing has to be authored twice. */
+      const templates = createTemplatePanel({
         onPick: (picked) => {
-            if (mode() !== "shots") setMode("shots");
-            for (const sh of picked) shots.push({ ...sh, id: freeId() });
+            if (mode() === "shots") {
+                for (const sh of picked) shots.push({ ...sh, id: freeId() });
+                commit();
+            } else {
+                // Simple: `---` blocks, appended to whatever is already there.
+                const blocks = picked
+                    .map((sh) => String(sh.beat || sh.prose || "").trim())
+                    .filter(Boolean);
+                if (blocks.length) {
+                    const existing = String(simpleArea.value || "").trim();
+                    const joined = (existing ? [existing] : []).concat(blocks)
+                        .join("\n\n---\n\n");
+                    if (document.activeElement === simpleArea) {
+                        // The caret is in the box we are about to rewrite, so
+                        // the selection would jump to the end mid-append.
+                        simpleArea.value = joined;
+                        simpleArea.setSelectionRange?.(joined.length, joined.length);
+                    } else {
+                        simpleArea.value = joined;
+                    }
+                    writePrompt();
+                    renderBlocks();
+                    onChange?.();
+                }
+            }
             templates.hide();
             tplBtn.classList.remove("h3e-on");
-            commit();
         },
     });
-    const tplBtn = button("Templates", "Insert a ready-made shot pattern", () => {
+    const tplBtn = button("Templates", "Insert a ready-made pattern. Appends, "
+        + "and stays in the mode you are in.", () => {
         tplBtn.classList.toggle("h3e-on", templates.toggle());
     });
     head.appendChild(tplBtn);
@@ -236,41 +271,94 @@ export function createPlanEditor(node, { onChange }) {
     }
     // Every keystroke, not "change": a textarea only fires "change" on blur,
     // and saving with the caret still in the box would drop the last edit.
-    simpleArea.addEventListener("input", () => { writePrompt(); updateRepeatHint(); });
-    simpleArea.addEventListener("change", () => { writePrompt(); onChange?.(); });
-    simpleNote.appendChild(simpleArea);
+simpleArea.addEventListener("input", () => { writePrompt(); renderBlocks(); });
+      simpleArea.addEventListener("change", () => { writePrompt(); onChange?.(); });
+      simpleNote.appendChild(simpleArea);
 
-    /* One block with chains > 1 repeats the whole prompt as a continuation on
-     * every later hop -- a full H3 prompt then renders its scene twice. Easy
-     * to hit when `chains` was left over from an earlier chain (2026-10-01),
-     * so say it where the prompt is written. Same split as run()'s
-     * _parse_shots: a line holding only ---. */
-    const repeatHint = el("div", "h3e-note");
-    simpleNote.appendChild(repeatHint);
-    function updateRepeatHint() {
-        const text = simpleArea.value.trim();
-        const blocks = text
-            ? text.split(/^---\s*$/m).filter((b) => b.trim()).length || 1
-            : 0;
-        const n = Math.max(1, parseInt(chainsWidget?.value, 10) || 1);
-        if (blocks === 1 && n > 1) {
-            repeatHint.textContent =
-                `One block, chains = ${n}: this prompt runs as hop 1 and is then repeated `
-                + `as a continuation for ${n - 1} more hop(s). For a single clip, set `
-                + "chains to 1 under RUN.";
-            repeatHint.style.display = "";
-        } else {
-            repeatHint.style.display = "none";
-        }
-    }
-    simpleNote.appendChild(el("div", "h3e-simple-help",
-        "Simple mode: this prompt drives the whole run. One block is repeated across "
-        + "`chains` hops (set under RUN); separate blocks with a line of --- to give "
-        + "hops their own text. `hop_script` decides what hop 2+ receives: verbatim "
-        + "sends each block exactly as written, next wraps it as a continuation. "
-        + "@tags from REFS resolve here too. For one beat per hop with camera and "
-        + "join directives, switch to Shots."));
-    root.appendChild(simpleNote);
+      /* One block with chains > 1 repeats the whole prompt as a continuation on
+       * every later hop -- a full H3 prompt then renders its scene twice. Easy
+       * to hit when `chains` was left over from an earlier chain (2026-10-01).
+       *
+       * D5: that warning used to be a sentence that appeared and disappeared.
+       * It is now part of the block view below the help, where the repeat is
+       * stated as a fact beside the block it applies to ("· repeated across N
+       * hops") rather than as a paragraph about a condition. Same split as
+       * run()'s _parse_shots: a line holding only ---. */
+  /* D5: the block view. One row per `---` block, each with its own word count
+         * against the band, and a total.
+         *
+         * The old hint answered one question -- "will one block be repeated?" --
+         * and answered it with a sentence. What an author actually needs here
+         * is the A7 word count applied to Simple mode: which block is too long,
+         * and by how much. A6 established the band from the writer's own table
+         * (`V.beat_table`), and it is per-LABEL, so each block gets the band for
+         * the duration that block will run at.
+         *
+         * The prompt widget is still the only store. This reads it and never
+         * writes it; the bands are a read-out, not a second copy of the text. */
+      const blocksWrap = el("div", "h3e-blocks");
+      function wordBandFor(label) {
+          const band = (V?.beat_table || {})[label];
+          return band || null;
+      }
+      function renderBlocks() {
+          blocksWrap.textContent = "";
+          const text = String(simpleArea.value || "");
+          const raw = text.trim()
+              ? text.split(/^\s*---\s*$/m).map((b) => b.trim()).filter(Boolean)
+              : [];
+          const n = Math.max(1, parseInt(chainsWidget?.value, 10) || 1);
+          if (!raw.length) { blocksWrap.style.display = "none"; return; }
+          blocksWrap.style.display = "";
+
+          let total = 0;
+          raw.forEach((b, i) => {
+              const words = b.split(/\s+/).filter(Boolean).length;
+              total += words;
+              // Every block runs at the widget duration unless the shot plan
+              // says otherwise, and in Simple there is no shot plan -- so the
+              // band's label is the duration widget, and a plan with several
+              // blocks of differing length is measured against one band. That
+              // is the honest answer for this mode.
+              const band = wordBandFor(durationWidget?.value);
+              const row = el("div", "h3e-block-row");
+              row.appendChild(el("span", "h3e-block-no",
+                  raw.length === 1 ? "1 block" : `block ${i + 1}`));
+              row.appendChild(el("span", "h3e-block-w", String(words)));
+              if (band) {
+                  const [w0, w1] = band;
+                  const over = words > w1;
+                  const under = words > 0 && words < w0;
+                  row.classList.add(over || under ? "h3e-block-warn" : "h3e-block-ok");
+                  row.appendChild(el("span", "h3e-block-band",
+                      over ? `over ${w1}` : under ? `under ${w0}` : `${w0}-${w1} words`));
+              }
+              row.title = b.replace(/\s+/g, " ").slice(0, 160);
+              blocksWrap.appendChild(row);
+          });
+
+          const foot = el("div", "h3e-block-total");
+          foot.appendChild(el("span", null, `${total} words total`));
+          if (raw.length === 1 && n > 1) {
+              foot.appendChild(el("span", "h3e-block-repeat",
+                  `· repeated across ${n} hops`));
+          }
+          blocksWrap.appendChild(foot);
+      }
+simpleNote.appendChild(el("div", "h3e-simple-help",
+          "Simple mode: this prompt drives the whole run. One block is repeated across "
+          + "`chains` hops (set under RUN); separate blocks with a line of --- to give "
+          + "hops their own text. `hop_script` decides what hop 2+ receives: verbatim "
+          + "sends each block exactly as written, next wraps it as a continuation. "
+          + "@tags from REFS resolve here too. For one beat per hop with camera and "
+          + "join directives, switch to Shots."));
+      // The block view sits directly under the help, above the textarea: it
+      // measures what you are about to type, so it reads as a ruler rather than
+      // as a report on something past.
+      simpleNote.appendChild(blocksWrap);
+      simpleNote.appendChild(el("div", "h3e-simple-help h3e-simple-help-dim",
+          "Templates insert --- separated prose here and leave you in Simple."));
+      root.appendChild(simpleNote);
 
     const list = el("div", "h3e-shots");
     root.appendChild(list);
@@ -1516,9 +1604,23 @@ export function createPlanEditor(node, { onChange }) {
         shotsBtn.classList.toggle("h3e-on", m === "shots");
         simpleNote.style.display = m === "simple" ? "" : "none";
         list.style.display = m === "simple" ? "none" : "";
+        // D3/D4 surfaces describe a SHOT PLAN, so in Simple they have nothing
+        // true to say. renderScore/renderBatch already return early on an empty
+        // plan -- but leaving a stale score strip drawn above a prompt box
+        // would show the last shot plan's shape while the user edits prose that
+        // is about to replace it. So they are hidden, not merely blank.
+        for (const s of [score, forecast, batch, strip, detail]) {
+            s.style.display = m === "simple" ? "none" : "";
+        }
+        if (m === "simple") { detailKey = null; }
         jsonWrap.style.display = m === "simple" ? "none" : "";
         addBtn.style.display = m === "simple" ? "none" : "";
-        tplBtn.style.display = m === "simple" ? "none" : "";
+        // D5: Templates is NOT hidden in Simple any more. It used to be, and
+        // the button's handler could only ever run from Shots -- so the Simple
+        // path was dead code, and the natural user action ("I want a template,
+        // I'm in Simple") had no way to express itself. Now it inserts prose and
+        // stays put.
+        tplBtn.style.display = "";
         if (m === "simple") {
             templates.hide();
             tplBtn.classList.remove("h3e-on");
@@ -1530,7 +1632,7 @@ export function createPlanEditor(node, { onChange }) {
             if (document.activeElement !== simpleArea) {
                 simpleArea.value = String(promptWidget?.value ?? "");
             }
-            updateRepeatHint();
+            renderBlocks();
             summary.textContent = `${chainsWidget?.value || 1} hop(s)`;
             return;
         }

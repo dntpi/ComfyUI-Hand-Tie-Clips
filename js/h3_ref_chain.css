@@ -242,6 +242,49 @@
 }
 .h3e-batch-sel { max-width: 110px; }
 
+/* -- D5: the Simple-mode block view --------------------------------------- */
+
+/* One row per `---` block. A ruler, not a report: it sits above the textarea
+ * so the word count is next to the thing being counted. */
+.h3e-blocks {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 6px 0;
+}
+
+.h3e-block-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--h3-gap-sm);
+    font-size: var(--h3-fs-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--h3-faint);
+    padding: 2px 6px;
+    border-left: 2px solid var(--h3-border-soft);
+    min-width: 0;
+}
+
+.h3e-block-row.h3e-block-ok { border-left-color: color-mix(in srgb, var(--h3-ok) 55%, transparent); }
+.h3e-block-row.h3e-block-warn { border-left-color: var(--h3-warn); color: var(--h3-warn); }
+
+.h3e-block-no { color: var(--h3-muted); min-width: 62px; }
+.h3e-block-w { color: var(--h3-text); font-weight: var(--h3-weight-label); min-width: 34px; text-align: right; }
+.h3e-block-band { color: inherit; opacity: 0.85; }
+
+.h3e-block-total {
+    display: flex;
+    gap: 6px;
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    padding: 2px 6px;
+    border-top: 1px solid var(--h3-line);
+    margin-top: 2px;
+}
+.h3e-block-repeat { color: var(--h3-warn); }
+
+.h3e-simple-help-dim { opacity: 0.62; margin-top: 6px; }
+
 /* -- D3: the score strip --------------------------------------------------- */
 
 /* The strip does NOT scroll: it is the fixed-width overview of every hop, and

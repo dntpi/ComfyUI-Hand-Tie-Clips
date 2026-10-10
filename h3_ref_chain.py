@@ -4306,6 +4306,15 @@ class HandTieClips:
                     _best = (_p_imgs, _p_wav, _p_sr, _cuts, _p_seed, _rank)
                 if not _cuts:
                     break
+                _free = [c for c in _cuts if c not in _ht.moment_cuts(_cuts, _lay["windows"])]
+                if not _free:
+                    # Every cut is on a moment boundary: the text's, which a new
+                    # seed only moves a few frames. The hops check themselves.
+                    print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts at "
+                          + ", ".join(f"f{c}" for c in _cuts) + ", each on a moment "
+                          "boundary (the text's); keeping it, each hop checks its own cut",
+                          flush=True)
+                    break
                 _again = _ht.same_cut(_last_cuts, _cuts)
                 _last_cuts = _cuts
                 print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts at "
@@ -4318,7 +4327,7 @@ class HandTieClips:
                     break
             del _pc, _pl
             _p_imgs, _p_wav, _p_sr, _cuts, _p_seed = _best[:5]
-            if _cuts:
+            if [c for c in _cuts if c not in _ht.moment_cuts(_cuts, _lay["windows"])]:
                 # A cut that survives every take is usually the text's: a beat that
                 # moves to a new place. The hop there may carry it as a camera move
                 # (00150's hop 5) or copy it (00154's hop 1).

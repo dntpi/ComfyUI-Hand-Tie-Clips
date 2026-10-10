@@ -384,6 +384,15 @@ _wcut[30:] = torch.stack([torch.roll(scene_b, shifts=6 * t, dims=1) for t in ran
 ck("a fast walk is not a cut", HT.previs_cuts(_walk) == [], HT.previs_cuts(_walk))
 ck("a cut inside a fast walk is found (00154 f66: 3.6x under the old median test)",
    HT.previs_cuts(_wcut) == [30], HT.previs_cuts(_wcut))
+_w5 = HT.layout([192] * 5)["windows"]
+ck("every previs cut seen so far sits on a moment boundary (7 takes, 00159-00162)",
+   all(HT.moment_cuts(t, _w5) == t for t in ([66, 196], [66, 130, 194], [66, 131, 198], [67, 135, 200],
+                                             [69, 134, 201], [68, 136, 200], [65, 130, 194, 263])))
+ck("a cut mid-moment is not the text's, and earns a new take",
+   HT.moment_cuts([100, 30], _w5) == [] and HT.moment_cuts([100, 70], _w5) == [70])
+ck("run() keeps a previs whose cuts are all on moment boundaries; only a mid-moment cut re-rolls",
+   "_free = [c for c in _cuts if c not in _ht.moment_cuts(_cuts, _lay[\"windows\"])]" in src
+   and "each on a moment" in src)
 ck("a cut that moved, or a new one, is not the same cut",
    not HT.same_cut([321], [261, 327]) and not HT.same_cut([100], [200]) and not HT.same_cut([], [321]))
 

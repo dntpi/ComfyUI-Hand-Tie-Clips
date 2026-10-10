@@ -740,6 +740,22 @@ def same_cut(before, now, near=CUT_SAME_FRAMES):
         any(abs(int(c) - int(b)) <= near for b in before) for c in now)
 
 
+MOMENT_CUT_FRAMES = 12   # a cut this close to a later window's start is the text's
+
+
+def moment_cuts(cuts, windows, near=MOMENT_CUT_FRAMES):
+    """The cuts that sit on a moment boundary: the text asks for them.
+
+    Each moment opens with `At MM:SS` on its window, and the previs cuts there:
+    every one of 7 takes across chain_00159, 00160 and the 10-hop run cut within
+    10 frames of a window start (66/130/194, 68/136/200, ...), and a new seed only
+    moved them a few frames. Re-rolling for those cost ~5 min a take at native for
+    nothing. A hop that copies one is caught by its own check and retaken alone.
+    """
+    starts = [int(w) for w in windows[1:]]
+    return [c for c in cuts if any(abs(int(c) - w) <= near for w in starts)]
+
+
 def window_cuts(cuts, windows):
     """The cuts that land INSIDE a window: the worse kind, used to rank takes.
 

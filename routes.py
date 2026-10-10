@@ -509,6 +509,17 @@ def register():
                 "keep_warm": conn["keep_warm"],
                 "unload_on_run": conn["unload_on_run"],
                 "vram_settle_s": conn["vram_settle_s"],
+                # Which server this is, what to call it in a message, and
+                # whether an empty model is legal here. The panel draws the
+                # backend picker from `backends` and spells errors with
+                # `backend_label`, so adding a backend is a change in llm.py
+                # alone rather than an edit in three places.
+                "backend": conn.get("backend") or "lmstudio",
+                "backend_label": _llm.backend_spec(conn.get("backend"))["label"],
+                "model_optional": bool(_llm.backend_spec(
+                    conn.get("backend"))["model_optional"]),
+                "backends": [{"id": k, "label": v["label"]}
+                             for k, v in _llm.BACKENDS.items()],
                 # [{id, loaded}] -- `loaded` is None on servers with no
                 # native state route. The panel marks the difference, because
                 # picking an unloaded model is picking a 400.
@@ -576,6 +587,35 @@ def register():
             hops = max(1, min(24, int(body.get("hops") or 3)))
         except (TypeError, ValueError):
             hops = 3
+        # Phase B: which of the three stages this is. One route, three jobs,
+        # because they share the connection, the stills and the rail -- and a
+        # second route is a second place for the "no model selected" answer and
+        # the unload policy to drift apart.
+        stage = str(body.get("stage") or "develop").strip().lower()
+        if stage not in ("propose", "develop", "edit"):
+            return web.json_response(
+                {"ok": False,
+                 "error": f"unknown stage {stage!r}: propose, develop, edit"},
+                status=400)
+        # The conversation. Bounded server-side as well as in the panel: a
+        # hand-rolled client that posts a thousand turns gets the last twelve,
+        # not a request nobody can answer.
+        thread = [m for m in (body.get("thread") or [])
+                  if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+        proposal = body.get("proposal") or None
+        if proposal is not None and not isinstance(proposal, (dict, str)):
+            proposal = None
+        pin_mech = str(body.get("pin_mech") or "").strip()
+        # Stage 3 edits what is already on the node. It reads shot_plan /
+        # ref_plan straight off the request rather than the rail alone, so an
+        # edit never depends on the panel having re-sent a register the user
+        # has since hand-edited.
+        cur_shots = str(body.get("shot_plan") or "").strip()
+        cur_refs = str(body.get("ref_plan") or "").strip()
+        if stage == "edit" and not cur_shots:
+            return web.json_response(
+                {"ok": False, "error": "there is no plan on the node to edit"},
+                status=400)
         # The node's `duration` widget. The prompt's length table has a row per
         # hop length and the model was never told which row it was writing to
         # -- the prompt says to ASK, which a button cannot answer. Unknown or
@@ -653,13 +693,25 @@ def register():
                 raise
 
         try:
-            out = await _planner.write_plan(
-                brief, hops, complete_fn=complete_fn, files=files,
-                pinned=pinned, images=images, duration=duration)
+            if stage == "propose":
+                out = await _planner.write_propose(
+                    brief, complete_fn=complete_fn, hops=hops, files=files,
+                    pinned=pinned, images=images, duration=duration,
+                    thread=thread, pin_mech=pin_mech)
+            elif stage == "edit":
+                out = await _planner.write_edit(
+                    brief, cur_shots, cur_refs, complete_fn=complete_fn,
+                    hops=hops, files=files, pinned=pinned, duration=duration,
+                    thread=thread)
+            else:
+                out = await _planner.write_plan(
+                    brief, hops, complete_fn=complete_fn, files=files,
+                    pinned=pinned, images=images, duration=duration,
+                    thread=thread, proposal=proposal)
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:
-            print(f"[{TAG}] plan route failed: {exc!r}", flush=True)
+            print(f"[{TAG}] plan route ({stage}) failed: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)})
         if vision_notes:
             out["warnings"] = list(out.get("warnings") or []) + vision_notes
@@ -678,8 +730,8 @@ def register():
                 pass
 
         if out["ok"]:
-            print(f"[{TAG}] wrote a {hops}-hop plan in {out['attempts']} "
-                  f"attempt(s)", flush=True)
+            print(f"[{TAG}] wrote a {stage} ({hops}-hop) in "
+                  f"{out.get('attempts', 1)} attempt(s)", flush=True)
         return web.json_response(out)
 
     def _swap_conn():

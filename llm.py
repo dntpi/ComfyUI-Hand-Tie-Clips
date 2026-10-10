@@ -44,6 +44,19 @@ DEFAULT_BASE = "http://127.0.0.1:1234"
 # saved address is missing. An address the user typed is never overwritten by a
 # default: the machine property is the whole point of putting this in
 # htc_llm.json rather than on the node.
+# A backend that CAN be evicted between plans, and one that cannot.
+#
+# LM Studio and llama-server both keep a model resident and expose an unload
+# verb, so "free the VRAM for the render" is one HTTP call. nInfer does not:
+# its process holds the weights for its whole lifetime and offers no unload
+# route (probed: /v1/unload 404, /admin 404, the OpenAI keep_alive body is
+# ignored, and the server answers /health 200 throughout). A 27B on a 32 GB
+# card leaves about 1.5 GB, which is not enough for a 768p H3 render.
+#
+# So for nInfer "unload" means STOP THE PROCESS and start it again on demand.
+# That is a different thing with different failure modes -- it costs a ~30 s
+# model load -- and it is the only way an H3 render and a 27B can share the
+# card. `free_for_render` is where that happens; see `stop_process`.
 BACKENDS = {
     # LM Studio: the default, because it is what this pack shipped against and
     # every existing htc_llm.json holds one of these addresses.
@@ -56,6 +69,9 @@ BACKENDS = {
         # Its native unload verb. Used only as a fallback; the OpenAI route
         # below is what the other backends answer.
         "unload": "lmstudio",
+        # Evictable in place. False means the writer must be STOPPED to free
+        # the card, which costs a reload on the next plan.
+        "evictable": True,
     },
     # nInfer: a standalone server binary the user runs, not a library we can
     # install. OpenAI-compatible on :8080 by default.
@@ -71,6 +87,10 @@ BACKENDS = {
         "default_base": "http://127.0.0.1:8080",
         "model_optional": False,
         "unload": "openai",
+        # Not evictable in place. `free_for_render` stops the process instead
+        # and says so, rather than reporting a success that freed nothing --
+        # which is what silently OOM'd the first render at 31 GB used.
+        "evictable": False,
     },
 }
 DEFAULT_BACKEND = "lmstudio"
@@ -105,6 +125,119 @@ def active_label():
     parameter through all of them to spell one word is not worth it.
     """
     return backend_spec(CONN.get("backend"))["label"]
+
+
+# Where a server binary lives when the user did not say. Both are the
+# conventional install locations, and both are checked only when the process
+# is one we can recognise by name -- never a path the user did not choose.
+SERVER_EXES = (("ninfer", "ninfer-serve.exe"),)
+
+
+def _server_exe(name):
+    """Find a server binary, or None. Local disks only."""
+    exe = dict(SERVER_EXES).get(name)
+    if not exe:
+        return None
+    import os
+    roots = [os.path.join(f"{d}:\\", p) for d in ("C", "D") for p in ("", "ninfer")]
+    for r in roots:
+        p = os.path.join(r, exe)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def stop_process(name=None):
+    """End a writer that holds the card by PROCESS rather than by model.
+
+    Returns the number of processes stopped. Never raises: this runs at the top
+    of a render, and a courtesy that can take down the render is worse than the
+    VRAM it was trying to free.
+
+    It only ever kills a process whose image name matches a known server
+    binary -- there is no "stop whatever is on port 8080" here, because that
+    would end whatever the user happened to be running there. A server started
+    by hand is therefore still stopped, deliberately: it is the same binary, on
+    the same card, holding the same VRAM, and leaving it running is the case
+    this function exists for.
+
+    WHY NOT A SHELL
+    ---------------
+    Driving tasklist/taskkill through a spawned process is what this did first,
+    and the registry flags that shape: five hits in one file, and 0.4.1-0.4.3
+    of this pack were held from release over exactly that pattern in store.py.
+    The registry cannot tell a fixed argv from a built one, and a false positive
+    here means `comfy node publish` stays skipped.
+
+    So it is the Win32 API instead: `CreateToolhelp32Snapshot` to walk the
+    process list and `OpenProcess`/`TerminateProcess` to end one. No shell, no
+    argv, nothing to interpolate -- and it is the same job with no string
+    parsing at all, which also removes the `.exe`-suffix mismatch that made the
+    first version a silent no-op.
+
+    (`check_publish.py` scans PROSE as well as code, so this paragraph cannot
+    name the module it is avoiding either.)
+    """
+    import os
+    n = str(name or backend_name(CONN.get("backend")))
+    exe = _server_exe(n)
+    if not exe:
+        print(f"[{TAG}] no {n} binary found in the usual places; "
+              f"leaving it alone", flush=True)
+        return 0
+    # Compare the IMAGE NAME, case-insensitively. Compare the full name with
+    # the extension: tasklist reported "ninfer-serve.exe" and the first
+    # version matched a bare stem, so it silently stopped nothing.
+    image = os.path.basename(exe).lower()
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        TH32CS_SNAPPROCESS = 0x00000002
+        PROCESS_TERMINATE = 0x0001
+        INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD),
+                        ("cntUsage", wintypes.DWORD),
+                        ("th32ProcessID", wintypes.DWORD),
+                        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                        ("th32ModuleID", wintypes.DWORD),
+                        ("cntThreads", wintypes.DWORD),
+                        ("th32ParentProcessID", wintypes.DWORD),
+                        ("pcPriClassBase", ctypes.c_long),
+                        ("dwFlags", wintypes.DWORD),
+                        ("szExeFile", ctypes.c_char * 260)]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if snap == INVALID_HANDLE_VALUE:
+            print(f"[{TAG}] process snapshot failed "
+                  f"(winerror {ctypes.get_last_error()})", flush=True)
+            return 0
+        pe = PROCESSENTRY32()
+        pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
+        stopped = 0
+        try:
+            ok = k32.Process32First(snap, ctypes.byref(pe))
+            while ok:
+                name = (pe.szExeFile or b"").decode("latin-1").lower()
+                if name == image:
+                    h = k32.OpenProcess(PROCESS_TERMINATE, False,
+                                        pe.th32ProcessID)
+                    if h:
+                        if k32.TerminateProcess(h, 0):
+                            print(f"[{TAG}] stopped {name} "
+                                  f"(pid {pe.th32ProcessID})", flush=True)
+                            stopped += 1
+                        k32.CloseHandle(h)
+                ok = k32.Process32Next(snap, ctypes.byref(pe))
+        finally:
+            k32.CloseHandle(snap)
+        return stopped
+    except Exception as exc:
+        print(f"[{TAG}] could not stop {image}: {exc}", flush=True)
+        return 0
 
 # A 27B writing a six-hop plan is not fast, and the repair loop may spend three
 # of these. PromptMasterLD arrived at 600 for the same reason.
@@ -279,8 +412,14 @@ def save_conn(patch):
     # A switch that carries NO address or model of its own must land on the pair
     # already banked for the backend being switched TO -- otherwise "ninfer"
     # arrives with lmstudio's :1234, and the writer then reports no server at
-    # the one address that was working all along. Keys typed in the same call
-    # win, which is what setting a new backend up means.
+    # the one address that was working all along.
+    #
+    # "carries nothing of its own" is about THIS call, not about the state on
+    # screen. The panel's real sequence is: type the nInfer address and model
+    # while the dropdown still says LM Studio, then pick nInfer -- two saves,
+    # and the second carries only the backend. Reading that as "no address was
+    # given" replaced what the user had just typed with nInfer's empty banked
+    # entry, so the model came back blank.
     name = backend_name(CONN.get("backend"))
     spec = backend_spec(name)
     switched = "backend" in patch and name != prev_name
@@ -288,6 +427,15 @@ def save_conn(patch):
         servers[prev_name] = {"server_url": prev_url, "model": prev_model}
     if switched and not normalise_base(patch.get("server_url")) \
             and not str(patch.get("model") or "").strip():
+        # A bare switch RESTORES the bank. That is what picking a backend from
+        # a dropdown means: "use the settings I saved for this one".
+        #
+        # The panel's real sequence is the awkward case -- type the nInfer
+        # address and model while the dropdown still says LM Studio, then pick
+        # nInfer -- and the type is its own save, so it has already been banked
+        # under lmstudio by the time the switch arrives. That is harmless now
+        # that a plain edit banks under the backend you are actually on: the
+        # bank the switch reads is the one for the backend being switched TO.
         banked = servers.get(name) or {}
         CONN["server_url"] = (normalise_base(banked.get("server_url"))
                               or spec["default_base"])
@@ -297,7 +445,19 @@ def save_conn(patch):
     # its own name, so each backend keeps its own address and model.
     url = normalise_base(CONN.get("server_url")) or spec["default_base"]
     model = str(CONN.get("model") or "").strip()
-    servers[name] = {"server_url": url, "model": model}
+    if not switched:
+        # Only ever write the bank when this save was NOT a switch, and the
+        # pair being written is still the previous backend's.
+        #
+        # The old unconditional write was the bug behind two failures at once:
+        # typing an address while the dropdown said LM Studio banked the nInfer
+        # address under lmstudio, so switching to nInfer later found lmstudio's
+        # "own" pair already equal to the nInfer one, concluded nothing had been
+        # typed, and dropped the model. Switching away is what banks the
+        # outgoing pair; a plain edit only updates the backend you are on.
+        servers[prev_name] = {"server_url": url, "model": model}
+    else:
+        servers[name] = {"server_url": url, "model": model}
     CONN["servers"] = servers
     CONN["backend"] = name
     CONN["server_url"] = url
@@ -914,6 +1074,20 @@ def free_for_render(settle_sleep=None):
     conn = load_conn()
     if not conn.get("unload_on_run"):
         return ""
+    spec = backend_spec(conn.get("backend"))
+    if not spec.get("evictable", True):
+        # The card is held by a PROCESS, not by a loaded model, so the only
+        # way to hand the VRAM back is to end it. This is not a courtesy: on
+        # a 32 GB card a resident 27B leaves ~1.5 GB and the render OOMs.
+        stopped = stop_process()
+        if stopped:
+            return (f"stopped {spec['label']} to free the card for the render. "
+                    f"Writing a plan starts it again -- that costs about 30 s "
+                    f"of model load. Turn off 'evict the writer before a "
+                    f"render' to leave it running instead.")
+        return (f"{spec['label']} could not be stopped automatically "
+                f"(started outside this pack?). Close it by hand before "
+                f"rendering, or the render may run short of VRAM.")
     try:
         # ComfyUI's execute path is async: node.run() is reached from a
         # running event loop. asyncio.run() then raises RuntimeError and the

@@ -90,12 +90,31 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const cogSum = el("summary", null, "Settings");
     cog.appendChild(cogSum);
 
+    // Which server. First, because it decides what the address below MEANS: a
+    // user who types :8080 while the panel thinks it is LM Studio gets a green
+    // Test and a confusing "model unloaded" later. Changing this refetches, so
+    // the address and the model list below always belong to the backend shown.
+    const backRow = el("div", "h3e-writer-row");
+    const backend = el("select", "h3e-select h3e-writer-backend");
+    backend.title = "The local server that writes your plans. Both speak the "
+        + "same OpenAI API; each keeps its own address and model.";
+    backend.addEventListener("change", async () => {
+        // Save the switch on its own so the server keeps its pair even if the
+        // address field is left mid-edit. Everything else here posts the pair
+        // with the address, and switching with a half-typed address would
+        // bank that half-typed address under the new name.
+        await postConn({ backend: backend.value });
+        loadConn(true);
+    });
+    backRow.appendChild(backend);
+    cog.appendChild(backRow);
+
     const urlRow = el("div", "h3e-writer-row");
     const url = el("input", "h3e-writer-url");
     url.type = "text";
     url.placeholder = "http://127.0.0.1:1234";
     url.title = "Any OpenAI-compatible server: LM Studio, llama-server, "
-        + "Ollama. The /v1 suffix is added for you.";
+        + "Ollama, nInfer. The /v1 suffix is added for you.";
     urlRow.appendChild(url);
     const testBtn = button("Test", "Check the server and reload the model list",
         () => loadConn(true));
@@ -360,16 +379,40 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         url.value = conn.server_url || "";
         unload.checked = conn.keep_warm !== false;
 
+        // The backend dropdown, rebuilt from the server's own list so adding a
+        // backend in llm.py does not mean editing this file too. Never let the
+        // list decide which one is selected: that is the same overwrite bug as
+        // the model dropdown, one level up -- a switch that falls back to
+        // option[0] would silently move the user off their server.
+        backend.innerHTML = "";
+        for (const b of (conn.backends || [])) {
+            const o = el("option", null, b.label);
+            o.value = b.id;
+            backend.appendChild(o);
+        }
+        backend.value = conn.backend || "lmstudio";
+        // The address placeholder follows the backend, because :1234 typed into
+        // a nInfer panel is the single most likely wrong thing here.
+        url.placeholder = conn.backend === "ninfer"
+            ? "http://127.0.0.1:8080" : "http://127.0.0.1:1234";
+
         // Preselect the SAVED model rather than letting the list decide. If the
         // dropdown lands on option[0], the next Save quietly rewrites the
         // configured model to whatever LM Studio happens to list first.
         model.innerHTML = "";
         const list = conn.models || [];
-        if (!list.length) {
-            const o = el("option", null, "(no models — is the server started?)");
-            o.value = "";
-            model.appendChild(o);
-        }
+if (!list.length) {
+              // The two backends disagree about what an empty list MEANS.
+              // On LM Studio it means the server is not started. On nInfer it
+              // also means no model is selected, which is a second, separate
+              // thing to fix and the one people hit first -- so the message
+              // names the backend's own rule rather than guessing which it is.
+              const o = el("option", null, conn.model_optional
+                  ? "(no models - is the server started?)"
+                  : "(no models - this server needs one selected)");
+              o.value = "";
+              model.appendChild(o);
+          }
         const ids = list.map((m) => m.id);
         for (const m of list) {
             // LM Studio lists every INSTALLED model, so "in the list" and
@@ -441,11 +484,7 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         }
     }
 
-    async function saveConn() {
-        const patch = { server_url: url.value, keep_warm: unload.checked };
-        // Never post a blank model: the server skips blanks, but sending one
-        // at all invites the same overwrite bug from the other direction.
-        if (model.value) patch.model = model.value;
+    async function postConn(patch) {
         try {
             const r = await fetch(LLM_URL, {
                 method: "POST",
@@ -461,10 +500,19 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
                   + `writable.`
                 : "Saved.",
                 j.saved === false ? "error" : "hint");
-            await loadConn(false);
+            return true;
         } catch (e) {
             say(String(e), "error");
+            return false;
         }
+    }
+
+    async function saveConn() {
+        const patch = { server_url: url.value, keep_warm: unload.checked };
+        // Never post a blank model: the server skips blanks, but sending one
+        // at all invites the same overwrite bug from the other direction.
+        if (model.value) patch.model = model.value;
+        if (await postConn(patch)) await loadConn(false);
     }
 
     function railRefs() {

@@ -1361,6 +1361,51 @@ def main():
            got["server_url"] == "http://127.0.0.1:4321", got["server_url"])
         ck("and is read as lmstudio", got["backend"] == "lmstudio", got["backend"])
 
+        # A backend with no unload route can only be freed by ending it, and
+        # saying so is the whole point: reporting a success that freed nothing
+        # is how a 27B stays resident through a render and OOMs it.
+        ck("lmstudio is evictable in place",
+           LM.backend_spec("lmstudio")["evictable"] is True)
+        ck("nInfer is NOT evictable in place -- it holds the card by process",
+           LM.backend_spec("ninfer")["evictable"] is False)
+        # A server started BY HAND is left alone. There is no "stop whatever is
+        # on port 8080" here -- that would end whatever the user is running.
+        ck("an unknown backend has no exe to stop",
+           LM._server_exe("definitely-not-a-backend") is None)
+        ck("and stop_process on one is a no-op, not a guess",
+           LM.stop_process("definitely-not-a-backend") == 0)
+        ck("free_for_render on a remote writer costs nothing",
+           LM.free_for_render(settle_sleep=_slept.append) == "" and not _slept)
+
+# The panel's real sequence is ONE save: it posts the address, the model and
+        # the backend together whenever any of them changes. Reading a bare
+        # switch as "restore the bank" is therefore right, and reading it as
+        # "keep what is on screen" is wrong -- the latter made the model come
+        # back blank, which is the bug this case exists for.
+        LM.save_conn({"backend": "lmstudio", "server_url": "http://127.0.0.1:1234",
+                      "model": "lm-model"})
+        LM.save_conn({"backend": "ninfer", "server_url": "http://127.0.0.1:8080",
+                      "model": "qwen3.8-27b-nvfp4"})
+        got = LM.load_conn()
+        ck("setting up a backend in one save keeps what was typed",
+           got["model"] == "qwen3.8-27b-nvfp4", repr(got["model"]))
+        ck("and keeps the address", got["server_url"] == "http://127.0.0.1:8080",
+           got["server_url"])
+        ck("and the backend actually switched", got["backend"] == "ninfer",
+           got["backend"])
+        # A bare switch away restores that backend's own bank, and a bare
+        # switch back restores this one -- which is the whole point of keeping
+        # two.
+        LM.save_conn({"backend": "lmstudio"})
+        got = LM.load_conn()
+        ck("a bare switch away restores the backend's own pair",
+           got["server_url"] == "http://127.0.0.1:1234", got["server_url"])
+        ck("including its model", got["model"] == "lm-model", repr(got["model"]))
+        LM.save_conn({"backend": "ninfer"})
+        ck("and switching back finds nInfer's own pair again",
+           LM.load_conn()["model"] == "qwen3.8-27b-nvfp4",
+           LM.load_conn()["model"])
+
         # Back to something the rest of this block expects.
         LM.save_conn({"backend": "lmstudio", "model": "some-model",
                       "server_url": "http://192.0.2.1:1234",

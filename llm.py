@@ -127,9 +127,29 @@ def active_label():
     return backend_spec(CONN.get("backend"))["label"]
 
 
-# Where a server binary lives when the user did not say. Both are the
-# conventional install locations, and both are checked only when the process
-# is one we can recognise by name -- never a path the user did not choose.
+# WHY NOTHING HERE STARTS THE SERVER
+# ---------------------------------
+# It is tempting to have the pack launch ninfer-serve.exe when a plan is
+# asked for, so the "start it again" step is one less thing to remember. Two
+# reasons not to, and both are about the card rather than about taste.
+#
+# A 27B on a 32 GB card pins about 31.9 GB of 32.6 while it is resident. A
+# server this pack started and then left running -- because the plan finished,
+# or a queue was cancelled, or the tab was closed -- takes the card away from
+# ComfyUI with no visible owner and no obvious way back. That is a worse state
+# than the extra click, so the rule here is the opposite one: do not start it
+# silently, and do not leave it resident. `free_for_render` stops it before a
+# render for the same reason.
+#
+# And a launch is a process spawn keyed off a settings file that lives in the
+# pack folder. The registry scanner reads that as command execution, and it
+# already holds this pack out of `comfy node publish` over a smaller instance
+# of the same shape in store.py. Starting a server is the user's call, made
+# deliberately, from a console they can see.
+
+# Where a server binary lives when the user did not say. Only ever used to
+# STOP one -- there is no start path, by the note above. Both are the
+# conventional install locations.
 SERVER_EXES = (("ninfer", "ninfer-serve.exe"),)
 
 
@@ -1082,9 +1102,10 @@ def free_for_render(settle_sleep=None):
         stopped = stop_process()
         if stopped:
             return (f"stopped {spec['label']} to free the card for the render. "
-                    f"Writing a plan starts it again -- that costs about 30 s "
-                    f"of model load. Turn off 'evict the writer before a "
-                    f"render' to leave it running instead.")
+                    f"Start it again before writing -- that costs about 30 s "
+                    f"of model load, and this pack will not start it for you: "
+                    f"launching a server from a settings save is how a "
+                    f"workflow file becomes a way to run something.")
         return (f"{spec['label']} could not be stopped automatically "
                 f"(started outside this pack?). Close it by hand before "
                 f"rendering, or the render may run short of VRAM.")

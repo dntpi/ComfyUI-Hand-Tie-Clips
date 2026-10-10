@@ -719,7 +719,9 @@ CUT_FLOOR = 15.0 / 255   # ... and is at least this big: a jump in a still shot 
                          # 15, not 20: chain_00156's snap at f22 moved 18/255 at 3.5x
                          # its neighbours; clean frames over CUT_JUMP move 14 at most
 CUT_SPAN = 3             # the motion yardstick: frames either side
-CUT_CELL = 32            # px per coarse cell: layout, not texture
+CUT_CELLS = 12           # coarse cells across the frame's short side: layout, not texture.
+                         # A count, not a pixel size: 32 px cells caught 00156's snap at
+                         # 512p and missed 00164's hop-7 cut at native (1.34x; 1.49x here)
 PREVIS_TRIES = 3         # previs renders before the least-cut one is used anyway
 PREVIS_RETRY_STRIDE = 104729   # seed step between tries: clear of every hop's own seed
 
@@ -794,7 +796,8 @@ def previs_cuts(frames):
     if n < 2 * CUT_SPAN + 2:
         return []
     h, w = int(frames.shape[1]), int(frames.shape[2])
-    grid = (max(1, h // CUT_CELL), max(1, w // CUT_CELL))
+    cell = max(1, min(h, w) // CUT_CELLS)
+    grid = (max(1, h // cell), max(1, w // cell))
     luma = torch.cat([F.adaptive_avg_pool2d(frames[i:i + 32].float().mean(-1)[:, None], grid)[:, 0]
                       for i in range(0, n, 32)])           # chunked: a native previs is 4 GB
     d = lambda a, b: float((luma[a] - luma[b]).abs().mean())  # noqa: E731

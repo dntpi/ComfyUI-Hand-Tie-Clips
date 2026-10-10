@@ -415,6 +415,70 @@ def crossing_lints(shots):
     return warn
 
 
+# --- where a hop's own line sits ----------------------------------------------
+#
+# A hand-tie hop opens on its head window (the previs's sound, 0.92 s) and the
+# film drops its last WINDOW frames (the next hop's head replaces them). Its own
+# line has the middle only: on chain_00153 (12 x 8 s, native 9:16) every line was
+# spoken whole by its hop, and every error sat at a join -- endings in the dropped
+# tail ("good vibes" -> "goodbye", "the train" -> "the cactus"), openings under the
+# window's sound. Measured rate: 14-17 words in 7.0-7.8 s, about 2.1 a second.
+
+LINE_START_S = 1.0          # the head window is 0.917 s; the line starts after it
+LINE_WPS = 2.1              # chain_00153: H3's speaking rate in a hop
+_TIMED = re.compile(r"\bAt \d\d:\d\d(?:\.\d+)?\b")
+
+
+def line_budget(hop_frames, fps=FPS):
+    """Spoken words that fit between a hop's head window and its dropped tail."""
+    usable = int(hop_frames) / float(fps) - LINE_START_S - WINDOW / float(fps)
+    return max(0, int(usable * LINE_WPS))
+
+
+def time_lines(shots, start_s=LINE_START_S):
+    """Shots whose first spoken line is placed after the head window.
+
+    Official H3 syntax, `At MM:SS.mmm` inside the description: the sentence that
+    carries the beat's first `<d>` gets `At 00:01.000`, and the beat's opening
+    gets `At 00:00.000` so the stamps read in order. A beat that already writes
+    its own times, a full H3 block, or a beat with no line is left as it is.
+    Returns copies.
+    """
+    out = []
+    for sh in shots or []:
+        s = dict(sh or {})
+        beat = str(s.get("beat") or "")
+        at = beat.find("<d>")
+        if at < 0 or _TIMED.search(beat) or "detailed_description:" in beat \
+                or "subject_definitions:" in beat:
+            out.append(s)
+            continue
+        head = beat[:at]
+        cut = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+        stamp = "At %s " % _stamp(start_s)
+        if cut < 0:
+            s["beat"] = stamp + beat.lstrip()
+        else:
+            s["beat"] = ("At %s %s %s%s" % (_stamp(0.0), beat[:cut + 1].strip(), stamp,
+                                            beat[cut + 2:].lstrip()))
+        out.append(s)
+    return out
+
+
+def line_lints(shots, hop_frames, fps=FPS):
+    """Warnings for a hop whose lines will not fit between its windows."""
+    warn = []
+    for k, sh in enumerate(shots or []):
+        words = sum(len(_TAG.sub("", m).split()) for m in _D.findall(str((sh or {}).get("beat") or "")))
+        room = line_budget(hop_frames[k], fps)
+        if words > room:
+            warn.append("hand-tie: shot %d speaks %d words; about %d fit between its windows "
+                        "(%.1f s at %.1f words a second). The rest runs into the join, where "
+                        "the film drops it. Cut the line or give the shot a longer duration."
+                        % (k + 1, words, room, room / LINE_WPS, LINE_WPS))
+    return warn
+
+
 # --- tone --------------------------------------------------------------------
 
 def tone_offsets(n, head_off, tail_off, frames=WINDOW):

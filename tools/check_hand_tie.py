@@ -397,6 +397,30 @@ for _k in range(4):
 ck("4 x 8 s: cuts at 170/340/510, the film still 702 frames",
    _cuts == [170, 340, 510] and _pos == HT.film_frames([192] * 4), (_cuts, _pos))
 
+print("\na hop's line sits between its windows (chain_00153: every dialogue error was at a join)")
+ck("8 s: 12 words fit between the head window and the dropped tail (6.08 s at 2.1/s)",
+   HT.line_budget(192) == 12, HT.line_budget(192))
+ck("10 s leaves more room, 5 s less", HT.line_budget(243) > HT.line_budget(192) > HT.line_budget(124))
+_b = ("@mina walks down the street, holding her phone out. (S1) says, <d>[English] What's up, "
+      "everybody.</d> She grins. Traffic hum, footsteps.")
+_t = HT.time_lines([{"beat": _b}])[0]["beat"]
+ck("the line's sentence is stamped At 00:01.000, the opening At 00:00.000",
+   _t.startswith("At 00:00.000 @mina walks down the street, holding her phone out. At 00:01.000 (S1) says,"), _t)
+_one = HT.time_lines([{"beat": "@cook looks out and (S1) says, <d>[English] Snow.</d> The hum."}])[0]["beat"]
+ck("a line in the first sentence stamps the beat's start at 00:01.000",
+   _one.startswith("At 00:01.000 @cook looks out"), _one)
+for label, beat in (("no line", "@mina walks. Traffic hum."),
+                    ("already timed", "At 00:02.000 (S1) says, <d>[English] Hi.</d>"),
+                    ("a full H3 block", "subject_definitions: x detailed_description: (S1) says, <d>[English] Hi.</d>")):
+    ck("left alone: " + label, HT.time_lines([{"beat": beat}])[0]["beat"] == beat)
+_vlog = {"beat": "@mina waits at a crosswalk. (S1) says, <d>[English] Quick question for you guys, what "
+                 "should I eat next? Drop it in the comments, I'm serious.</d> Beeping."}
+ck("the vlog's 16-word line is linted at 8 s, a 9-word one is not",
+   len(HT.line_lints([_vlog], [192])) == 1
+   and HT.line_lints([{"beat": "(S1) says, <d>[English] One two three four five six seven eight nine.</d>"}], [192]) == [])
+ck("run() stamps lines before splitting crossing lines, and lints after the sections are laid out",
+   "_ht.split_crossing(_ht.time_lines(shots))" in src and "_ht.line_lints(shots, lengths)" in src)
+
 print("\nrefusals")
 ck("overlap 22 + last_frame_guide off is fine", HT.settings_errors(22, "off") == [])
 ck("overlap 5 is refused", len(HT.settings_errors(5)) == 1)

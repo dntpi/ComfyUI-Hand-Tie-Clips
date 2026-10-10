@@ -3193,8 +3193,10 @@ class HandTieClips:
                 # Every hop is tied to the previs, not to the hop before it, so
                 # every hop is a start: its own refs, its own subject prose, no
                 # continuation airlock and no `join` sentence.
+                # Each hop's own line is placed after its head window (time_lines),
+                # before a crossing line is split across the join (split_crossing).
                 blocks = [_d.compile_shot(s, 0, establish)
-                          for s in _ht.split_crossing(shots)]
+                          for s in _ht.split_crossing(_ht.time_lines(shots))]
                 for _w in _ht.crossing_lints(shots):
                     print(f"[{TAG}] note: {_w}", flush=True)
             unique = len(shots)
@@ -4125,6 +4127,8 @@ class HandTieClips:
         ht_previs_media = []
         ht_previs_warn = []     # (section, seed, cuts) of a previs that cut on every try
         if ht:
+            for _w in _ht.line_lints(shots, lengths):
+                print(f"[{TAG}] note: {_w}", flush=True)
             ht_chained = []      # section -> continues the hop before it
             for _si, _sec in enumerate(_ht.sections(shots, lengths)):
                 ht_chained.append(_ht.chained(shots, _sec))

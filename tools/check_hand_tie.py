@@ -195,6 +195,14 @@ ck("a window's sound is the PREVIOUS beat's closing sound (00154: chewing at the
             "@mina holds the skewer up. A sizzling grill, the vendor calling out orders."], _eat)
 _carry = HT.moments([{"beat": "@cook chops. The low hum of the refrigerator."}, {"beat": "@cook turns. She sips."},
                      {"beat": "@cook sits. She reads."}])
+_ws = HT.window_speaks(plan, 5)
+ck("only a window with a planned line pins the previs's sound (00159: 'Right,' from an invented one)",
+   _ws == [False, True, False, False, False], _ws)
+ck("a plain beats-only plan pins no sound at all; the closing window never does",
+   HT.window_speaks([{"beat": "@a walks. (S1) says, <d>[English] Hi there.</d> Hum."}] * 3, 4)
+   == [False] * 4)
+ck("run() pins sound only where window_speaks says, picture everywhere",
+   "if not ht_speaks[_si][_wk]:" in src and "snds.append(None)" in src)
 ck("a beat that names no sound passes the last named one on (a soundless window invents a voice)",
    all(m.endswith("The low hum of the refrigerator.") for m in _carry), _carry)
 ck("PREVIS_SOUND is on by default, so a plain plan needs no extra input",

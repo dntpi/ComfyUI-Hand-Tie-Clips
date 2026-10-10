@@ -311,6 +311,21 @@ def moments(shots, sound=PREVIS_SOUND):
     return out
 
 
+def window_speaks(shots, n_windows):
+    """[bool] per window: does the plan put a spoken line there?
+
+    Only those windows pin the previs's SOUND as well as its picture. Everywhere
+    else the previs has no line to say, renders a person anyway, and invents
+    speech: every take of chain_00159's previs talked ("I'm going to go to the
+    rescue team..."), and the 0.9 s window inside it opened hop 2 on "Right,".
+    00153's "Tenya" came the same way. A window with a planned line is a crossing
+    line (a `moment` with `<d>`): there the previs speaks the plan's own words. The
+    closing window never has a moment, so it never carries sound.
+    """
+    ms = moments(shots, sound=False)
+    return [k < len(ms) and _spoken_s(ms[k]) > 0 for k in range(int(n_windows))]
+
+
 def _stamp(seconds):
     s = max(0.0, seconds)
     return "%02d:%06.3f" % (int(s // 60), s - 60 * int(s // 60))

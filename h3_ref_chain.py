@@ -4132,6 +4132,7 @@ class HandTieClips:
             for _w in _ht.line_lints(shots, lengths):
                 print(f"[{TAG}] note: {_w}", flush=True)
             ht_chained = []      # section -> continues the hop before it
+            ht_speaks = []       # section -> [window carries a planned line]
             for _si, _sec in enumerate(_ht.sections(shots, lengths)):
                 ht_chained.append(_ht.chained(shots, _sec))
                 _frames = [lengths[j] for j in _sec]
@@ -4145,6 +4146,7 @@ class HandTieClips:
                 ht_previs_raw.append(_d.compile_shot({"beat": _text, "directives": _dirs},
                                                      0, establish))
                 ht_layouts.append(_lay)
+                ht_speaks.append(_ht.window_speaks([shots[j] for j in _sec], len(_lay["windows"])))
                 for _k, _j in enumerate(_sec):
                     ht_pos[_j] = (_si, _k)
                 print(f"[{TAG}] hand-tie section {_si + 1}: hops {_sec[0] + 1}-{_sec[-1] + 1}, "
@@ -4332,8 +4334,12 @@ class HandTieClips:
                     f"{TAG}: hand-tie previs {_si + 1} decoded {int(_p_imgs.shape[0])} "
                     f"frames, {_p_len} planned.")
             pics, snds = [], []
-            for w in _lay["windows"]:
+            for _wk, w in enumerate(_lay["windows"]):
                 pics.append(_p_imgs[w:w + _ht.WINDOW].clone())
+                if not ht_speaks[_si][_wk]:
+                    # Picture only: the previs's sound here is a line nobody wrote.
+                    snds.append(None)
+                    continue
                 _a0, _ad = _ht.window_audio(w)
                 _s0 = int(round(_a0 * _p_sr))
                 _s1 = _s0 + int(round(_ad * _p_sr))
@@ -5124,10 +5130,13 @@ class HandTieClips:
                             image=_wp[_w], audio=_ws[_w],
                         ))[0]
                     pin_mech_used = "hand_tie"
+                    _heard = [str(_w + 1) for _fi, _w in _ties if _ws[_w] is not None]
                     print(f"[{TAG}] hop {i + 1}: hand-tie, "
                           + (f"windows {_k + 1} and {_k + 2}" if len(_ties) == 2
                              else f"window {_k + 1} (its start; the section's last hop)")
-                          + f" of section {_si + 1} (picture + sound)", flush=True)
+                          + f" of section {_si + 1} (picture"
+                          + (f"; sound at window {', '.join(_heard)}" if _heard else " only")
+                          + ")", flush=True)
                 elif (i == 0 or hop_restart) and start_image is not None:
                     # A restart hop is a chain start. It gets the photograph as
                     # its frame-0 anchor exactly as hop 1 does, and NOTHING from

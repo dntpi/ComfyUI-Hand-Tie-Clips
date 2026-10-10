@@ -17,9 +17,6 @@ import {
       el, button, select, vocab, widgetByName, refreshVocab, onVocabRefresh,
       } from "./widget_utils.js";
 import { createTemplatePanel } from "./templates.js";
-import {
-      stripGeometry, scrollToColumn, columnAt, framingTone,
-} from "./strip_geometry.js";
 import { framesOf } from "./timeline_model.js";
 
 const MODE_PROP = "h3_editor_mode";        // "simple" | "shots"
@@ -388,14 +385,10 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
     // That is not a gimmick to save 20px of chrome, it is the only view where
     // all N hops are visible at once at a 19-hop plan, which is exactly the
     // case where the filmstrip has scrolled and you have lost the shape.
-    const score = el("div", "h3e-score");
-    const scoreInner = el("div", "h3e-score-inner");
-    score.appendChild(scoreInner);
     const forecast = el("div", "h3e-forecast");
     /* D4: the batch bar. Below the forecast line and above the strip, because
      * it acts on what the strip selected and the forecast line is read-only. */
     const batch = el("div", "h3e-batch");
-    root.appendChild(score);
     root.appendChild(forecast);
     root.appendChild(batch);
     root.appendChild(strip);
@@ -1151,6 +1144,73 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
         }));
     }
 
+    /* -- D1e: what the score strip used to do, done on the posters ---------- */
+
+    /** Bring poster `i` into the filmstrip's view.
+     *
+     * This replaces scrollToColumn over the score strip's geometry. The strip is
+     * gone and the posters are a scrolling row of FIXED-WIDTH cells (CSS owns
+     * that width), so the scroll target is derived from the poster itself rather
+     * than from a shared geometry -- which is the right dependency direction now
+     * that there is nothing to stay aligned with. */
+    function posterIntoView(i) {
+        const cell = posterNodes?.[i];
+        if (!cell || typeof strip.scrollLeft !== "number") return;
+        const w = cell.offsetWidth || 116;
+        const left = cell.offsetLeft || 0;
+        const view = strip.clientWidth || 0;
+        if (!view) return;
+        // Just enough to bring it in, never centred: with 19 posters and a
+        // viewport of four, centring throws away the neighbours, and the
+        // neighbours are the context for why you navigated.
+        if (left < strip.scrollLeft) strip.scrollLeft = left;
+        else if (left + w > strip.scrollLeft + view) {
+            strip.scrollLeft = left + w - view;
+        }
+    }
+
+    /** The drawn poster elements, index-aligned with `shots`. */
+    let posterNodes = [];
+
+    /* Drag to range.
+     *
+     * The score strip was the drag surface and it went with it. Shift-click
+     * already ranged, which covers "these five shots"; drag covers the case where
+     * you want to sweep without knowing where the end is, and it is the gesture
+     * people already expect from a filmstrip.
+     *
+     * Same rule as the hop bar: the first poster FLIPS (a click must toggle) and
+     * the rest of the drag only ADDS. Otherwise dragging back over a poster you
+     * already had selected turns it off, which is the opposite of the gesture. */
+    function bindPosterRange(card, index) {
+        let dragging = null;
+        card.addEventListener("pointerdown", (e) => {
+            // The mini buttons own their own clicks.
+            if (e.target?.closest?.(".h3e-mini")) return;
+            dragging = index;
+            if (e.shiftKey) {
+                extendTo(index);
+            } else {
+                const already = inSpan(index) && span()?.lo === span()?.hi;
+                if (already) { selectOnly(index); renderCards(); return; }
+                setRange(index, index);
+                setSelected(index);
+            }
+            renderCards();
+            posterIntoView(index);
+        });
+        card.addEventListener("pointerenter", (e) => {
+            if (dragging == null) return;
+            if (inSpan(index)) return;
+            setRange(dragging, index);
+            setSelected(index);
+            renderCards();
+        });
+        const end = () => { dragging = null; };
+        card.addEventListener("pointerup", end);
+        card.addEventListener("pointercancel", end);
+    }
+
     /* -- D4: keys ----------------------------------------------------------- */
 
     /* Live only when the focus is NOT a text field, for the reason A4's `r`
@@ -1204,166 +1264,37 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
             if (!Number.isFinite(n) || n < 1 || n > shots.length) return;
             setSelected(n - 1);
             renderCards();
-            scrollStripTo(n - 1);
+            posterIntoView(n - 1);
         }
     }
 
-    /* -- D3: the score strip, and the NEXT QUEUE line -------------------------- */
+    /* -- D1e: the NEXT QUEUE line -------------------------------------------
+ *
+ * The 44px SCORE STRIP that sat above the filmstrip is gone, at the user's
+ * request ("if this isn't saveable we can just remove this bit of the UI...
+ * i'm not even sure what that is for in the first place"). Three reasons it
+ * was not earning the space, in order of weight:
+ *
+ * 1. It was broken and nobody noticed. `stripGeometry` returns colW and lefts
+ *    and renderScore applied NEITHER -- the inner track got a width and then
+ *    flex collapsed every column to the width of its 9px slate number, so the
+ *    whole strip rendered as a ~30px smudge at the left edge. Every check
+ *    passed, because the bug is that the numbers are computed and discarded.
+ * 2. It duplicated the filmstrip directly beneath it: slate number, duration
+ *    and framing all appear on every poster in plain text.
+ * 3. The one thing it was built for -- all N hops' shape at once -- is what
+ *    the Timeline tab already does, on a real time ruler with film cells and
+ *    join marks. This was a worse version of an existing tab.
+ *
+ * What SURVIVES is the forecast line below, which earns its place on its own:
+ * it is the only thing on the Script tab that says what a queue will COST you
+ * before you queue it, and it reuses timeline.forecastNow() rather than
+ * reimplementing the forecast.
+ *
+ * Selection lost its drag surface with the strip. Shift-click on a poster still
+ * ranges, and the batch bar and keys are untouched -- see renderPoster. */
 
-    const SCORE_H = 44;
-
-    /* Plate colours, by rail row. Spelled out so the stylesheet audit can see
-     * every name the JS actually sets -- see the note at the use site. */
-    const PLATE_CLASSES = [
-      "h3e-plate-0", "h3e-plate-1", "h3e-plate-2",
-      "h3e-plate-3", "h3e-plate-4", "h3e-plate-5",
-    ];
-
-    /* Zoom is view state: a re-render must not throw away the window the user
-     * panned to. Stored beside the selection, and only ever set by the zoom
-     * buttons or by autoZoomNarrow(). */
-    const ZOOM_PROP = "h3_score_zoom";
-    function zoom() {
-        const v = Number(node.properties?.[ZOOM_PROP]);
-        return Number.isFinite(v) && v >= 1 ? v : 1;
-    }
-    function setZoom(z) {
-        node.properties ??= {};
-        node.properties[ZOOM_PROP] = z;
-    }
-
-    /* The strip's own width, which is the NODE's width -- the strip is the
-     * viewport for the filmstrip, so it does not scroll with it. Read live
-     * because the user can resize the node; fall back to the design width. */
-    function stripWidth() {
-        const w = Number(node.size?.[0]) - 24;   // panel padding either side
-        return Number.isFinite(w) && w > 120 ? w : 536;
-    }
-
-    function renderScore() {
-        scoreInner.textContent = "";
-        forecast.textContent = "";
-        if (broken || !shots.length) return;
-
-        const geo = stripGeometry(shots.length, stripWidth(), zoom());
-        scoreInner.style.width = `${geo.width}px`;
-        if (geo.scroll > 0) strip.scrollLeft = Math.min(strip.scrollLeft || 0, geo.scroll);
-
-        const t = timing();
-        const frames = t.lengths;
-        const maxF = Math.max(1, ...frames);
-        // A9's section boundaries, MOVED here rather than recomputed: the same
-        // tieSections() the timeline and the A9 markers already use, so there
-        // is one answer to "where does this section end".
-        let ties = [];
-        try { ties = getTieSections?.(shots, frames) || []; } catch (_) { ties = []; }
-        const sectionStart = new Array(shots.length).fill(false);
-        ties.forEach((sec) => {
-            if (sec && sec.hops && sec.hops.length) sectionStart[sec.hops[0]] = true;
-        });
-
-        shots.forEach((s, i) => {
-            const shotNo = i + 1;
-            const col = el("div", "h3e-col"
-                + (i === selected() ? " h3e-col-on" : "")
-                + (s.locked ? " h3e-col-lock" : ""));
-
-            // Height IS the duration. Normalised against the longest shot in
-            // THIS plan, so a film of uniform 8s hops draws a flat strip and a
-            // film with one long take is visibly the odd one out.
-            const f = frames[i] || 0;
-            const frac = f ? Math.max(0.18, Math.min(1, f / maxF)) : 0.18;
-            const bar = el("div", "h3e-col-bar" + (framingTone(s) ? " " + framingTone(s) : ""));
-            bar.style.height = `${Math.round(frac * (SCORE_H - 10))}px`;
-            col.appendChild(bar);
-
-            // Restart: a full-height rule, because it is a boundary between
-            // takes rather than a transition inside one.
-            if (s.anchor === "restart") col.classList.add("h3e-col-restart");
-            if (sectionStart[i] && i > 0) col.classList.add("h3e-col-newprevis");
-
-            // The ref plate under the bar. One dot per plate that rides this
-            // hop, coloured by its rail index so a room is recognisable.
-            const plate = plateFor(shotNo);
-            const under = el("div", "h3e-col-under");
-            for (let k = 0; k < plate.count; k++) {
-                const d = el("span", "h3e-col-plate");
-                // The six colour class names are written out rather than
-                // templated from the index. A `h3e-plate-${i % 6}` is invisible
-                // to check_ui's "no stylesheet rule targets a class the JS
-                // never sets" audit, and that audit is the only thing standing
-                // between a renamed panel and six silently dead colour rules.
-                if (plate.index >= 0) d.classList.add(PLATE_CLASSES[plate.index % PLATE_CLASSES.length]);
-                d.title = `${plate.tag || "a reference"} rides hop ${shotNo}`;
-                under.appendChild(d);
-            }
-            col.appendChild(under);
-
-            col.appendChild(el("span", "h3e-col-no", String(shotNo)));
-
-            if (s.locked) {
-                const dot = el("span", "h3e-col-lockdot");
-                dot.title = "Locked: reuses its cached render";
-                col.appendChild(dot);
-            }
-
-            const bits = [];
-            if (f) bits.push(clock((i === 0 ? f : Math.max(0, f - t.ov)) / t.fps));
-            if (s.directives?.framing) bits.push(s.directives.framing);
-            if (plate.count) bits.push(plate.tag || `${plate.count} ref(s)`);
-            col.title = `Shot ${shotNo}` + (bits.length ? ` — ${bits.join(" · ")}` : "");
-            scoreInner.appendChild(col);
-        });
-
-        // Click to select, drag to select a range and to scroll. The strip is the
-        // filmstrip's scrollbar, so the same gesture has to do both: press picks
-        // the anchor, drag extends to whatever column it is over, and releasing
-        // on the strip's own edge scrubs rather than selecting.
-        let dragging = null;
-        score.addEventListener("pointerdown", (e) => {
-            const idx = columnAt(geo, e.clientX ?? 0, 0);
-            dragging = idx < 0 ? null : idx;
-            if (dragging == null) return;
-            score.setPointerCapture?.(e.pointerId);
-            if (e.shiftKey) extendTo(dragging); else selectOnly(dragging);
-            renderCards();
-            // The strip is the filmstrip's scrollbar, so selecting here brings
-            // that poster into view. After renderCards, because the geometry
-            // belongs to the freshly drawn strip.
-            scrollStripTo(selected());
-        });
-        score.addEventListener("pointermove", (e) => {
-            if (dragging == null) return;
-            const idx = columnAt(geo, e.clientX ?? 0, 0);
-            if (idx < 0 || idx === selected()) return;
-            setRange(dragging, idx);
-            setSelected(idx);
-            renderCards();
-        });
-        const endDrag = (e) => {
-            if (dragging == null) return;
-            try { score.releasePointerCapture?.(e.pointerId); } catch (_) { /* not captured */ }
-            dragging = null;
-        };
-        score.addEventListener("pointerup", endDrag);
-        score.addEventListener("pointercancel", endDrag);
-        renderForecast(geo);
-    }
-
-    /* Bring column `i` into the filmstrip's view, reusing the strip geometry
-     * rather than measuring a poster. */
-    function scrollStripTo(i, geo) {
-        if (!geo || !geo.colW) return;
-        strip.scrollLeft = scrollToColumn(geo, i, strip.scrollLeft || 0, stripWidth());
-    }
-
-    /* ONE line, permanent, saying what the next queue would do.
-     *
-     * The wording is deliberately the run's, not the editor's: "re-renders",
-     * "cached", "locked" are the same three words the preview event and the
-     * timeline use, because a user comparing this line against the console is
-     * comparing the same claim in two places. */
-    function renderForecast(geo) {
+    function renderForecast() {
         let fc = null;
         try { fc = getForecast?.() || null; } catch (_) { fc = null; }
         // Three states, and the difference matters: no SOURCE (never rendered,
@@ -1377,18 +1308,9 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
             forecast.classList.remove("h3e-forecast-live");
             return;
         }
-        const n = shots.length;
         const pad = (i) => String(i + 1).padStart(2, "0");
-
-        // Mark the strip first: which columns the forecast says will move.
-        const cols = scoreInner.children;
-        for (let i = 0; i < n && i < cols.length; i++) {
-            const st = fc.state[i];
-            const c = cols[i];
-            if (c) c.classList.toggle("h3e-col-render", st === "render" || st === "replay-miss");
-        }
-
-        const renders = fc.state.map((st, i) => (st === "render" ? i : null)).filter((i) => i !== null);
+        const renders = fc.state
+            .map((st, i) => (st === "render" ? i : null)).filter((i) => i !== null);
         const keeps = fc.state.filter((st) => st === "keep" || st === "keeps").length;
         const locked = fc.state.filter((st) => st === "locked").length;
         const bits = [
@@ -1403,7 +1325,7 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
         forecast.classList.toggle("h3e-forecast-live", renders.length > 0);
     }
 
-    /* Where the thumbnails come from. The route serves a sprite for a hop the
+/* Where the thumbnails come from. The route serves a sprite for a hop the
      * last run rendered; anything else draws the slate alone. Never
      * HopStore.get() -- that builds a ~3 GB float copy of a whole hop in
      * memory, which is what the timeline's frames() route exists to avoid.
@@ -1561,8 +1483,14 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
 
     function renderStrip() {
         strip.textContent = "";
+        posterNodes = [];
         if (broken || !shots.length) return;
-        shots.forEach((s, i) => strip.appendChild(renderPoster(s, i)));
+        shots.forEach((s, i) => {
+            const card = renderPoster(s, i);
+            posterNodes.push(card);
+            bindPosterRange(card, i);
+            strip.appendChild(card);
+        });
         strip.appendChild(renderAddCard());
     }
 
@@ -1609,7 +1537,7 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
         // plan -- but leaving a stale score strip drawn above a prompt box
         // would show the last shot plan's shape while the user edits prose that
         // is about to replace it. So they are hidden, not merely blank.
-        for (const s of [score, forecast, batch, strip, detail]) {
+        for (const s of [forecast, batch, strip, detail]) {
             s.style.display = m === "simple" ? "none" : "";
         }
         if (m === "simple") { detailKey = null; }
@@ -1656,7 +1584,7 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
         clampSelection();
         // D2: the strip and the one card under it, rather than every card.
         renderStrip();
-        renderScore();
+        renderForecast();
         renderBatch();
         renderDetail();
 
@@ -1684,5 +1612,5 @@ return { root, render: renderCards, reload, mode, timing,
                shots: () => shots, renderRange, toggleSolo, toggleLock,
                appendShot, removeShot, cardFor, setHopKeySource, setForecastSources,
                selected, setSelected, selectOnly, extendTo, span, range,
-               zoom, setZoom, renderScore, onPanelKey };
+               renderForecast, onPanelKey };
 }

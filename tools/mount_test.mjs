@@ -349,9 +349,9 @@ console.log("\nmount: D2 filmstrip");
   }
 }
 
-/* -- D3: the score strip, the forecast line, and the two aligned ---------- */
-
-console.log("\nmount: D3 score strip");
+/* -- D3/D1e: the forecast line, and no score strip ----------------------- */
+//
+console.log("\nmount: D3 forecast line");
 
 {
   const node = mountFresh({ plan: planJSON(6) });
@@ -368,95 +368,28 @@ console.log("\nmount: D3 score strip");
     return out;
   };
 
-  const score = find("h3e-score");
-  ck("the score strip exists", score.length === 1);
-  ck("the forecast line exists", find("h3e-forecast").length === 1);
-  // NOT querySelector -- the DOM stub does not implement it, and a test that
-  // quietly reads null is worse than no test.
-  const inner = find("h3e-score-inner");
-  ck("the score strip has its inner track", inner.length === 1);
-  // 44px lives in the STYLESHEET, not in JS, so this cannot assert it from the
-  // DOM. The JS half of the same claim -- one column per shot, on the shared
-  // geometry -- is asserted below, and check_ui's token audit covers the CSS.
+  // D1e: the 44px score strip is GONE, at the user's request. The forecast line
+  // is what survived it.
+  ck("the score strip is gone", find("h3e-score").length === 0,
+     `${find("h3e-score").length} strip(s) still drawn`);
+  ck("and so are its columns", find("h3e-col").length === 0);
+  ck("and its bars", find("h3e-col-bar").length === 0);
 
-  const cols = find("h3e-col");
-  ck(`6 shots draws 6 score columns, got ${cols.length}`, cols.length === 6);
-
-  // Every column carries the encodings D3 asks for.
-  ck("every column has a duration bar",
-     cols.length === 6 && cols.every((c) => c.children.some((x) => x.classList?.contains("h3e-col-bar"))));
-  ck("every column has its slate number",
-     cols.length === 6 && cols.every((c) => c.children.some((x) => x.classList?.contains("h3e-col-no"))));
-
-  // Duration is the HEIGHT, and it must actually differ when durations differ.
-  const mixed = JSON.parse(planJSON(3));
-  mixed[0].duration = "192";
-  mixed[1].duration = "96";
-  mixed[2].duration = "192";
-  const node2 = mountFresh({ plan: JSON.stringify(mixed) });
-  const cols2 = [];
-  const walk2 = (e) => {
-    if (!e) return;
-    if (e.classList?.contains("h3e-col")) cols2.push(e);
-    (e.children || []).forEach(walk2);
-  };
-  walk2(node2.domWidgets[0]);
-  const heights = cols2.map((c) => {
-    const bar = c.children.find((x) => x.classList?.contains("h3e-col-bar"));
-    return bar ? parseFloat(bar.style.height) || 0 : -1;
-  });
-  ck("a 96-frame shot draws a shorter bar than a 192-frame one",
-     heights.length === 3 && heights[1] < heights[0] && heights[1] < heights[2],
-     `heights ${JSON.stringify(heights)}`);
-  ck("bars are all non-zero", heights.every((h) => h > 0), JSON.stringify(heights));
-
-  // The two strips share one geometry, so they cannot drift: the score inner's
-  // width is count * colW and the filmstrip holds the same number of posters.
-  const track = find("h3e-score-inner")[0];
-  const posters = find("h3e-poster").filter((p) => !p.classList.contains("h3e-poster-add"));
-  const w = parseFloat(track?.style?.width) || 0;
-  ck("the score strip's width is set from the shared geometry", w > 0, `width ${w}`);
-  ck("score columns and posters agree in count",
-     cols.length === posters.length, `${cols.length} cols vs ${posters.length} posters`);
-
-  // Restart gets a boundary marker.
-  const withRestart = JSON.parse(planJSON(3));
-  withRestart[1].anchor = "restart";
-  const node3 = mountFresh({ plan: JSON.stringify(withRestart) });
-  const c3 = [];
-  const walk3 = (e) => {
-    if (!e) return;
-    if (e.classList?.contains("h3e-col")) c3.push(e);
-    (e.children || []).forEach(walk3);
-  };
-  walk3(node3.domWidgets[0]);
-  ck("a restart shot is marked as a boundary",
-     c3.length === 3 && c3[1].classList.contains("h3e-col-restart"));
-
-  // Locked gets a dot, not a colour change.
-  const lockedPlan = JSON.parse(planJSON(2));
-  lockedPlan[0].locked = true;
-  const node4 = mountFresh({ plan: JSON.stringify(lockedPlan) });
-  const c4 = [];
-  const walk4 = (e) => {
-    if (!e) return;
-    if (e.classList?.contains("h3e-col")) c4.push(e);
-    (e.children || []).forEach(walk4);
-  };
-  walk4(node4.domWidgets[0]);
-  ck("a locked shot carries a lock dot",
-     c4.length === 2 && c4[0].children.some((x) => x.classList?.contains("h3e-col-lockdot")));
-
-  // The forecast line. The entry wires a source, so the line IS populated --
-  // and every hop is "re-renders" because nothing has ever rendered, which is
-  // the correct answer for a plan that has never been queued.
   const fcLine = find("h3e-forecast")[0];
-  ck("the forecast line states what the next queue does",
+  ck("the forecast line survives", !!fcLine);
+  ck("it states what the next queue does",
      /NEXT QUEUE/.test(fcLine.textContent || ""), fcLine.textContent || "(empty)");
   ck("a plan that has never run forecasts as all-rendering",
      /re-renders\s+01/.test(fcLine.textContent || ""), fcLine.textContent || "(empty)");
-  ck("the forecast line is marked live when hops will move",
+  ck("and is marked live when hops will move",
      fcLine.classList.contains("h3e-forecast-live"));
+
+  // The filmstrip is still the primary surface, and it is what carries the
+  // per-shot information the strip duplicated.
+  const posters = find("h3e-poster")
+    .filter((p) => !p.classList.contains("h3e-poster-add"));
+  ck("the filmstrip still draws one poster per shot", posters.length === 6,
+     `got ${posters.length}`);
 }
 
 /* -- D4: ranges, the batch bar, and keys --------------------------------- */
@@ -669,12 +602,19 @@ console.log("\nmount: D5 simple mode");
       ck("Templates is visible in Simple", !!tpl && tpl.style.display !== "none",
          tpl ? `display "${tpl.style.display}"` : "(no button)");
 
-      // And the shot-plan surfaces must be gone, not stale.
-      ck("the score strip is hidden in Simple",
-         find("h3e-score")[0].style.display === "none",
-         `display "${find("h3e-score")[0].style.display}"`);
+      // And the shot-plan surfaces must be gone, not stale. D1e removed the
+      // score strip, so what is left to check is the filmstrip and the
+      // detail pane -- and the check reads `.style` on an optional, because a
+      // bare `[0].style` on a missing element throws and takes the whole run
+      // down silently: 84 assertions printed and exit 1.
+      const fc = find("h3e-forecast")[0];
+      ck("the forecast line is hidden in Simple",
+         !!fc && fc.style.display === "none",
+         fc ? `display "${fc.style.display}"` : "(no forecast line)");
+      const fil = find("h3e-filmstrip")[0];
       ck("the filmstrip is hidden in Simple",
-         find("h3e-filmstrip")[0].style.display === "none");
+         !!fil && fil.style.display === "none",
+         fil ? `display "${fil.style.display}"` : "(no filmstrip)");
     }
   }
 }
@@ -716,24 +656,20 @@ console.log("\nmount: D6 hop bar");
   ck("and they are the FIRST two, from ref_plan shots [1,2]",
      cells.indexOf(on[0]) === 0 && cells.indexOf(on[1]) === 1);
 
-  // D6's actual claim: same geometry as the score strip. Both are laid out from
-  // stripGeometry over the same width, so the cell WIDTHS must match the score
-  // columns exactly. If these ever differ, a click that looks like hop 3 selects
-  // hop 5 -- the failure mode worth catching here rather than in a browser.
-  const cols = find("h3e-col");
-  ck("there is a score strip to line up with", cols.length === 6, `got ${cols.length}`);
+  // D6's claim WAS "same geometry as the score strip", and the score strip is
+// gone as of D1e. What survives is the part that still matters: every cell in a
+// hop bar is the same width, and that width is the geometry's, not a leftover.
+  //
+  // The alignment check against the strip is GONE rather than rewritten, because
+  // there is nothing to align to. What it was protecting -- a cell whose width
+  // disagreed with its neighbour, so a click that looks like hop 3 selected hop
+  // 5 -- is still protected by the two checks below.
   const cellW = cells.map((c) => parseFloat(c.style.width) || 0);
   ck("every hop cell has a real width", cellW.every((w) => w > 0), JSON.stringify(cellW));
   ck("all hop cells are the same width", new Set(cellW).size === 1,
      JSON.stringify(cellW));
-  // The score strip's columns are drawn by the same geometry, and its inner
-  // width is count * colW -- so colW is recoverable and must equal the cells'.
-  const inner = find("h3e-score-inner")[0];
-  const innerW = parseFloat(inner?.style?.width) || 0;
-  const implied = innerW / (cols.length || 1);
-  ck("the hop cells are the width the score strip implies",
-     Math.abs(cellW[0] - implied) <= 1,
-     `cells ${cellW[0]} vs score ${implied.toFixed(1)}`);
+  ck("the cell width comes from the shared geometry, not a literal",
+     cellW[0] >= 34, `cell width ${cellW[0]} is under MIN_COL`);
 
   // Clicking a cell toggles that hop, and writes ref_plan -- not shot_plan.
   const planBefore = node.widgets.find((w) => w.name === "shot_plan").value;

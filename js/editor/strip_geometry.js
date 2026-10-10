@@ -91,33 +91,3 @@ export function columnAt(geo, x, scrollLeft = 0) {
   if (px < 0 || px >= geo.width) return -1;
   return Math.min(geo.count - 1, Math.floor(px / geo.colW));
 }
-
-/**
- * Fill tone for a column's `framing` directive.
- *
- * D3 encodes framing as the column's FILL, which has to read at 29px wide and
- * in both themes, so it is three steps of the existing accent rather than the
- * directive's own colour -- there is no per-directive colour in the pack, and
- * inventing one here would be a second vocabulary next to VOCAB.
- *
- * Ordered widest to tightest, because framing runs that way and the eye
- * expects the bigger frame to be the lighter block.
- */
-const FRAMING_TONE = {
-  extreme_wide: "h3e-tone-0",
-  wide: "h3e-tone-1",
-  medium: "h3e-tone-1",
-  medium_wide: "h3e-tone-1",
-  medium_close: "h3e-tone-2",
-  close: "h3e-tone-2",
-  extreme_close: "h3e-tone-3",
-  macro: "h3e-tone-3",
-};
-
-export function framingTone(shot) {
-  const f = String(shot?.directives?.framing || "").trim().toLowerCase();
-  return FRAMING_TONE[f] || "";
-}
-
-/** The three tones the scale above can produce, widest first. */
-export const FRAMING_TONES = ["h3e-tone-0", "h3e-tone-1", "h3e-tone-2", "h3e-tone-3"];

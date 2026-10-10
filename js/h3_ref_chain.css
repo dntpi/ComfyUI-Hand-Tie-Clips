@@ -799,13 +799,23 @@
     min-width: 0;
 }
 .h3e-run > summary::-webkit-details-marker { display: none; }
-.h3e-run > summary::before {
-    content: "▸";
+/* D1c: RUN is a PAGE. No triangle -- it is not a disclosure any more, and a
+     * triangle on something that cannot collapse is a control that does nothing.
+     * The summary is row 3 of the chrome: title, tally, and a way back. */
+.h3e-run > summary::before { content: none; }
+.h3e-run > summary { cursor: default; }
+
+.h3e-run-tally {
+    font-size: var(--h3-fs-sm);
     color: var(--h3-faint);
-    font-size: var(--h3-fs-xs);
-    transition: transform .12s ease;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
-.h3e-run[open] > summary::before { transform: rotate(90deg); }
+
+/* The way back. It sits at the RIGHT of row 3, opposite the title, because the
+ * eye enters a page at its left and exits at its right -- and because it is the
+ * only control on that row that is not a label. */
+.h3e-run-back { margin-left: auto; }
 .h3e-run > summary:hover { background: var(--h3-accent-soft); }
 .h3e-run > summary:hover .h3e-title { color: var(--h3-text); }
 
@@ -1663,7 +1673,15 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 .h3e-root > .h3e-run:not([hidden]) {
     max-height: none;
     flex: 1 1 auto;
-    border: 1px solid color-mix(in srgb, var(--h3-accent) 30%, var(--h3-border));
+    min-height: 0;
+    /* D1c: RUN is a PAGE. It fills the panel from its row-3 header down, and its
+     * body scrolls INSIDE -- so it never grows the node and it never opens from
+     * the bottom over the tabs. `overflow: hidden` on the container plus the
+     * scroll on the body is what keeps the two apart: before this the details
+     * element was in normal flow, so its full height added to the tab bodies
+     * still in the DOM and the node had to be dragged taller to see both. */
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--h3-accent) 26%, var(--h3-border));
     border-radius: var(--h3-radius);
     background:
         linear-gradient(180deg,
@@ -1671,21 +1689,33 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
             transparent 44px),
         var(--h3-panel);
     margin-top: var(--h3-gap);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--h3-accent) 12%, transparent);
 }
 
-/* The frame's own header band, so RUN has a title row the way each work tab
- * has a row-3 header. Without it the dials start immediately under the tab
- * strip and the surface has no name. */
+/* Row 3 of the RUN page. Fixed height, sticky, and NOT a summary triangle. */
 .h3e-root > .h3e-run:not([hidden]) > .h3e-run-sum {
     margin: 0;
-    padding: 5px var(--h3-gap);
+    padding: 0 var(--h3-gap);
+    height: var(--h3-head-h);
+    min-height: var(--h3-head-h);
+    align-items: center;
     border-bottom: 1px solid color-mix(in srgb, var(--h3-accent) 18%, var(--h3-border-soft));
     background: transparent;
 }
 
 .h3e-root > .h3e-run:not([hidden]) > .h3e-run-sum > .h3e-title {
     color: var(--h3-accent);
+}
+
+/* The body takes what is left and scrolls. `flex: 1 1 auto` with `min-height: 0`
+ * is the pair that makes it scroll instead of growing -- without the min-height
+ * a flex child refuses to shrink below its content and the panel grows instead,
+ * which is the exact bug this whole change exists to fix. */
+.h3e-root > .h3e-run:not([hidden]) > .h3e-run-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--h3-gap);
 }
 
 /* No `.h3e-runbtn` rule belongs in the strip any more: D1b moved the ⚙ into
@@ -1699,17 +1729,9 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
 }
 .h3e-root > .h3e-run > .h3e-run-sum::-webkit-details-marker { display: none; }
 .h3e-root > .h3e-run > .h3e-run-sum::marker { content: ""; }
-.h3e-root > .h3e-run > .h3e-run-body {
-    overflow-y: auto;
-    min-height: 0;
-}
-/* Pinned means it reads as chrome, not as another card in the stack. */
-.h3e-root > .h3e-run > .h3e-run-sum {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    background: var(--h3-bg);
-}
+/* D1c: the sticky header rule and its opaque background are GONE. RUN's body
+ * scrolls inside a fixed page, so the header does not travel, and an opaque
+ * background on it painted a second border band across the top of the frame. */
 
 /* -- template panel -------------------------------------------------------
  * Sits between the SCRIPT header and the card list, hidden until asked for.

@@ -219,6 +219,11 @@ function mountEditor(node) {
     });
 
     const runPanel = createRunPanel(node, {
+        // D1c: setSurface is a function declaration further down, so this is a
+        // hoisted reference and resolves at CALL time, not at construction --
+        // which is what we want, since the back button cannot be pressed before
+        // the panel is mounted.
+        onBack: () => setSurface("work"),
         onChange: () => {
             // render_from / render_through are drawn in RUN and also driven by
             // the ⏵ button on each shot card, so a change here has to re-mark
@@ -403,19 +408,25 @@ function mountEditor(node) {
     root.appendChild(tabs.bodies);
     root.appendChild(runPanel.root);
 
-    // D1b: the ⚙ lives in the STATUS BAR, not the tab strip.
-    //
-    // It used to sit at the end of the tab strip, which is the whole reason the
-    // surface read as a tab that popped a window: a control among peers looks
-    // like a peer. In the status bar it is chrome that opens a different panel,
-    // which is what it is, and it is reachable while RUN is up -- hiding the
-    // strip is only possible because the ⚙ was never inside it.
+    /* The ⚙ goes back in the TAB STRIP.
+     *
+     * It was moved out to the status bar in D1b and that was wrong twice over.
+     * The user never asked for it to move -- "i never asked to move the gear
+     * away" -- and the status bar is 26px tall, so a 14px glyph at its left end
+     * is close to invisible: they had to look for a minute to find it. A
+     * control you have to search for is a control that is not where a control
+     * goes.
+     *
+     * It is also load-bearing to leave it HERE. D1b moved it out so the strip
+     * could be hidden while RUN is up. But the prototype shows RUN as its own
+     * PAGE: the status bar and the tab strip both stay, and RUN gets its own
+     * row-3 header with a "back to work" button. So the strip is visible on RUN,
+     * and the ⚙ can -- and should -- live in it, next to the tabs it sits
+     * beside. */
     const runBtn = button("⚙", "The render controls: canvas, sampler, cache, upscaler",
         () => setSurface(getSurface() === "run" ? lastTab : "run"),
         "h3e-btn h3e-mode h3e-runbtn");
-    // First child of the status bar, so it reads as chrome rather than as one
-    // more status item -- the digest and the warning chip sit after it.
-    statusBar.insertBefore(runBtn, statusBar.firstChild);
+    tabs.strip.appendChild(runBtn);
 
     // A2's manual pin, on the tab strip so it is reachable without opening
     // RUN. Freezing the height is the answer to "I sized this node and it
@@ -465,14 +476,20 @@ node._h3PaintPin = paintPin;
         }
         tabs.bodies.hidden = run;
         runPanel.root.hidden = !run;
-        // D1b: the WORK tabs go away entirely when RUN is up, not just the tab
-        // bodies. Leaving six tab buttons lit above a panel that is not one of
-        // them is what made the ⚙ read as "a tab that opens a window" -- the
-        // chrome said you were on a tab, and the content disagreed. The strip
-        // comes back on exit, with the tab you came from still selected.
-        tabs.strip.hidden = run;
-        // The status bar stays: it is row 1 and it is global, and the digest is
-        // exactly what you want while deciding whether to queue.
+        /* D1c: the tab strip STAYS on RUN.
+         *
+         * D1b hid it, on the reasoning that six lit tabs above a panel that is
+         * not one of them is a contradiction. The prototype shows the opposite
+         * and the user was explicit about it: RUN is its own PAGE -- status bar
+         * up, tab strip up, RUN beneath it with its own row-3 header. Hiding
+         * the strip did not read as a cleaner surface; it read as the chrome
+         * falling away, which is why the panel "opened from the bottom, covering
+         * the UI" rather than replacing it.
+         *
+         * So the strip stays, and `runHead` (built below) takes the place of the
+         * active tab's row-3 header -- "RUN · n dials · n groups" plus a back
+         * button. The gear is back in the strip because the strip is always
+         * there, which is the honest reason it belongs there. */
         // A <details> cannot be told to be open by `hidden` alone -- if it was
         // left open, its body is still in the flow and would show through the
         // tab strip. Open it on entry and close it on exit so exactly one
@@ -482,6 +499,11 @@ node._h3PaintPin = paintPin;
         runBtn.title = run
             ? "Back to the tabs"
             : "The render controls: canvas, sampler, cache, upscaler";
+        // D1c: row 3 on the RUN page is its own, and it carries a way back.
+        // The prototype has this: RUN's header row reads "RUN · n dials · n
+        // groups" with a back control at the far right. Without it, the tab strip
+        // is the only way out and the gear is the only affordance saying so.
+        if (runPanel.back) runPanel.back.hidden = !run;
         if (run) runPanel.sync();
         // The height is the surface's, not the tab's: RUN is a long column of
         // groups and the Script tab is short by comparison.

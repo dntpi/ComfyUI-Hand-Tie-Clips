@@ -321,10 +321,44 @@ function stampSpeedMode(node, table, mode, onChange) {
 
 /* -- panel ---------------------------------------------------------------- */
 
-export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
+/* D1c: the row-3 tally. Takes the ELEMENT as an argument rather than closing
+ * over it, because it is declared inside the factory -- a module-level closure
+ * over `tally` reads as defined and resolves to nothing at call time, which is
+ * a ReferenceError at mount rather than a typo you can see. */
+function syncTally(node2) {
+    // GROUPS is [groupName, [widgetName, ...]], so the dial count is the sum of
+    // the inner arrays. Counted from the TABLE rather than from the DOM, so the
+    // number is right when every group is collapsed and does not depend on a
+    // render having happened.
+    let dials = 0;
+    for (const [, names] of GROUPS) {
+        if (Array.isArray(names)) dials += names.length;
+    }
+    node2.textContent = `${dials} dials · ${GROUPS.length} groups`;
+}
+
+// syncTally() is called from inside the factory, after `tally` exists. Calling
+// it here at module scope threw ReferenceError: tally is not defined -- the
+// element belongs to ONE panel instance, not to the module.
+
+export function createRunPanel(node, { onChange, suppressed, hopCount, onBack } = {}) {
+    /* D1c: this is a PAGE, not a disclosure.
+     *
+     * It is a <details> because it was originally one -- a collapsible block at
+     * the bottom of every tab, which is where "the tab opens from the bottom,
+     * covering the UI" came from. Now that RUN has its own surface it is always
+     * open, its <summary> is row 3 of the chrome rather than a triangle, and it
+     * carries the dial count and a way back. `open` is forced below and the
+     * triangle is removed in CSS.
+     *
+     * The elements are created exactly as before -- only the summary's contents
+     * grew -- so nothing downstream (the digest, applyVisibility, the hide list)
+     * has to know this is a page now. */
     const root = el("details", "h3e-section h3e-run");
     const sum = el("summary", "h3e-run-sum");
     sum.appendChild(el("span", "h3e-title", "RUN"));
+    // The dial/group count, so the page says what it holds. D1c.
+    const tally = el("span", "h3e-count h3e-run-tally");
     // The digest lives HERE, not in the summary. A3 hoisted it to the node's
     // permanent status bar, because the state it carries (resolution, aspect,
     // duration, hops, steps, sampler, cache) is the thing you check before
@@ -333,10 +367,30 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
     // the text -- it is the only thing that knows which widget holds what --
     // and the caller decides where the element is mounted.
     const digest = el("span", "h3e-count h3e-run-digest");
+    // D1c: the tally sits beside the title in row 3, so the RUN page says what
+    // it holds before you scroll it. Counted from GROUPS rather than from the
+    // DOM, because the count must be right even when every group is collapsed.
+    sum.appendChild(tally);
+    syncTally(tally);
     root.appendChild(sum);
 
     const body = el("div", "h3e-run-body");
     root.appendChild(body);
+
+    /* D1c: the way back. Created here because it has to live INSIDE the summary
+     * -- row 3 of the page -- and the entry hides it whenever RUN is not the
+     * surface. It calls back through `onBack` because run_panel does not know
+     * about the surface swap; that is the entry's business. */
+    const back = el("button", "h3e-btn h3e-run-back", "← back to work");
+    back.type = "button";
+    back.title = "Back to the tabs";
+    back.hidden = true;
+    back.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onBack?.();
+    });
+    sum.appendChild(back);
 
     // resolution label -> aspect label -> [w, h], from /vocab. Fetched once per
     // browser session and shared with every other consumer of the vocabulary.
@@ -607,8 +661,11 @@ export function createRunPanel(node, { onChange, suppressed, hopCount } = {}) {
 
     return {
 root,
-          render,
-          sync,
+            render,
+            sync,
+            /* D1c: the row-3 back control. The entry owns the surface swap, so
+             * it hides this unless RUN is the surface and wires onBack. */
+            back,
           /** The status text, for the caller to mount in the status bar (A3).
            *  Mounted once and left there, so the node's top row reads the same
            *  on every tab and on RUN itself. */

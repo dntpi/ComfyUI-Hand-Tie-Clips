@@ -574,30 +574,44 @@ console.log("\nmount: D1b the RUN frame");
   const runBtns = find("h3e-runbtn");
 
   ck("the ⚙ exists", runBtns.length === 1);
-  ck("the ⚙ is in the STATUS BAR, not the tab strip",
-     runBtns.length === 1 && runBtns[0].parentNode === bar,
-     runBtns.length ? "parent is not the status bar" : "no button");
+  // D1c reversed D1b. The gear goes BACK in the tab strip: it was moved to the
+  // 26px status bar and became so hard to find the user had to look for a
+  // minute ("i never asked to move the gear away"). It is also where a control
+  // belongs -- beside the tabs, not buried in a status line.
+  ck("the ⚙ is back in the TAB STRIP",
+     runBtns.length === 1 && runBtns[0].parentNode === strip,
+     runBtns.length ? "parent is not the tab strip" : "no button");
 
   // On Script: the strip is up, RUN is down.
   ck("on Script the tab strip is visible", strip && strip.hidden === false);
   ck("on Script RUN is hidden", run && run.hidden === true);
 
-  // Open RUN the way the user does -- click the ⚙.
+  // Click the ⚙ -- RUN is its own PAGE, and the chrome STAYS.
   runBtns[0].click();
   ck("clicking the ⚙ shows RUN", run.hidden === false, `hidden=${run.hidden}`);
-  ck("and the RUN frame is the whole surface: no tab strip above it",
-     strip.hidden === true, "the tab strip stayed up, so RUN reads as a tab");
-  ck("and the tab bodies are hidden too",
+  ck("RUN keeps the tab strip -- it is a page, not a covering panel",
+     strip.hidden === false, "the tab strip disappeared; D1c says it stays");
+  ck("and the tab bodies are hidden",
      find("h3e-scroll")[0].hidden === true);
   ck("the ⚙ is marked pressed while RUN is up",
      runBtns[0].classList.contains("h3e-on"));
 
-  // And it closes again, back to the tab you came from.
-  runBtns[0].click();
-  ck("clicking ⚙ again returns to the tabs", strip.hidden === false);
-  ck("and hides RUN", run.hidden === true);
-  ck("and clears the pressed state",
-     !runBtns[0].classList.contains("h3e-on"));
+  // Row 3 on the RUN page is its own: a tally and a way back.
+  const tally = find("h3e-run-tally")[0];
+  ck("RUN's header row has a dial/group tally",
+     !!tally && /\d+ dials\s*.\s*\d+ groups/.test(tally.textContent || ""),
+     tally ? (tally.textContent || "(empty)") : "(no tally)");
+  const back = find("h3e-run-back")[0];
+  ck("RUN's header row has a back control", !!back);
+  ck("and it is visible while RUN is up", !!back && back.hidden === false,
+     back ? `hidden=${back.hidden}` : "(none)");
+
+  // The back control actually goes back -- without it the gear is the only
+  // affordance, which is the thing the user had to hunt for.
+  if (back) {
+    back.fire("click", {});
+    ck("back returns to the work surface", strip.hidden === false && run.hidden === true);
+  }
 }
 
 /* -- D5: the Simple-mode block view, and Templates that stay put ------------ */

@@ -27,6 +27,7 @@ import json
 import re
 
 from . import directives as _d
+from . import hand_tie as _ht
 from . import plan as _plan
 from . import refs as _refs
 
@@ -353,7 +354,7 @@ def split_reply(raw):
 # -- validation ------------------------------------------------------------
 
 def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
-             duration=None):
+             duration=None, pin_mech=""):
     """Run the node's own checkers. Returns (errors, warnings).
 
     `errors` are what the node would REJECT -- they go back to the model.
@@ -468,7 +469,7 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
                 target = f"{int(secs * SPEECH_SPS)} syllables"
             else:
                 target = f"{int(secs * SPEECH_WPS)} words"
-            if speech < secs * SPEECH_MIN_SHARE:
+            if speech < secs * SPEECH_MIN_SHARE and pin_mech != "hand_tie":
                 warnings.append(
                     f"shot {i + 1}: the spoken lines run about {speech:.1f}s "
                     f"in a {secs:.0f}s hop. A character written as talking "
@@ -787,6 +788,16 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
     except Exception:
         pass
 
+    if pin_mech == "hand_tie":
+        # The node's own hand-tie lints: a line past the budget, a line and a
+        # bite in one hop. The talk-throughout target above is off for these.
+        try:
+            frames = [int(DURATION_FRAMES.get(str((sh or {}).get("duration") or duration or "").strip(),
+                                              192)) for sh in shots]
+            warnings += _ht.line_lints(shots, frames)
+        except Exception:
+            pass
+
     return errors, [str(w) for w in warnings]
 
 
@@ -844,7 +855,43 @@ def validator_turn(repair):
               "Correct what it names and change nothing else.")
 
 
-def build_user_turn(brief, hops, files, pinned=None, duration=None):
+def hand_tie_rules(duration=None):
+    """The writing rules a hand-tied plan needs, as one user-turn block.
+
+    Each one cost a render to learn (chain_00153-00161, 2026-10-10/11), and the
+    general length table contradicts two of them: it asks for ~20 spoken words in
+    8 s, where hand-tie keeps a hop's first and last 0.9 s for its windows.
+    """
+    try:
+        from .h3_ref_chain import DURATION_FRAMES  # noqa: PLC0415
+        frames = int(DURATION_FRAMES.get(str(duration or "").strip(), 0) or 0)
+    except Exception:
+        frames = 0
+    budget = _ht.line_budget(frames) if frames else _ht.line_budget(192)
+    return "\n".join([
+        "This chain is HAND-TIED: one preview render sets every hop's first and "
+        "last second, and the hops are cut together there. These rules replace "
+        "the spoken-word targets of the length table:",
+        "1. One place. The whole film stays in one continuous location under one "
+        "light. New things come INTO frame (a stall, a musician, a doorway); the "
+        "scene never relocates, and the light does not change unless the brief "
+        "asks for time to pass.",
+        f"2. A hop says at most ONE line of {budget} words or fewer"
+        + (f" (the {duration} hop's budget)" if duration else "")
+        + ". The node starts it one second in; a longer line runs into the cut "
+        "and is lost.",
+        "3. After the line, give the speaker a closed-mouth action and name the "
+        "sound: \"She smiles with her lips closed. Traffic hum, footsteps.\" A "
+        "hop that runs out of words fills the rest with mouthing.",
+        "4. One mouth action per hop. A bite, sip, lick or drink gets its OWN hop "
+        "with no line, lips closed and its sound named; the line goes in the hop "
+        "before. Speaking and eating in one hop plays the line over the eating.",
+        "5. Open each hop on an action and its sound, then the line. Do not name "
+        "talking as an action (\"talking into the phone\"): the line is the talking.",
+    ])
+
+
+def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech=""):
     """The one user message. Names the files that actually exist, so the model
     schedules pictures it has rather than inventing plausible filenames.
 
@@ -883,6 +930,8 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None):
             secs = DURATION_FRAMES.get(str(duration).strip(), 0) / float(FPS or 24)
         except Exception:
             secs = 0
+        if pin_mech == "hand_tie":
+            secs = 0       # hand_tie_rules below replaces the spoken-word target
         if secs:
             lines.append(
                 f"Speech runs about {SPEECH_WPS:g} words a second, so a "
@@ -902,6 +951,8 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None):
                 "picture and no sound assigned comes back as invented "
                 "dialogue over the action, even when the hop before it ended "
                 "silent.")
+    if pin_mech == "hand_tie":
+        lines += ["", hand_tie_rules(duration)]
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned:
         lines += ["",
@@ -1325,7 +1376,8 @@ def _subjects_repair(errors):
 _SPEECH_WARN = ("spoken line(s)",
                 "spoken lines run about",
                 "the beat is ",
-                "words of action run before")
+                "words of action run before",
+                "hand-tie: shot")
 
 
 def _speech_warnings(warns):
@@ -1333,7 +1385,16 @@ def _speech_warnings(warns):
             if any(k in str(w) for k in _SPEECH_WARN)]
 
 
-def _speech_repair(warns):
+def _speech_repair(warns, pin_mech=""):
+    if pin_mech == "hand_tie":
+        return (
+            "That plan is accepted -- do not restructure it. Keep every shot's id, "
+            "directives, @tags and files, and re-emit the ref_plan unchanged.\n\n"
+            "The beats below break the hand-tie rules. Rewrite ONLY the `beat` "
+            "text of the shots named: shorten a long line to the budget, or move "
+            "a bite / sip / drink into its own hop's beat with no line, keeping "
+            "the hop count. Count the words inside the quotes before you answer."
+            "\n\n" + "\n".join(f"- {w}" for w in warns))
     return (
         "That plan is accepted -- do not restructure it. Keep every shot, its "
         "id, its directives, its @tags and its files exactly as they are, and "
@@ -1502,8 +1563,6 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     files = ([p.get("file") for p in pinned if p.get("file")]
              if pinned else list(files or []))
-    rail_tags = {str(p.get("tag") or "").lstrip("@").strip()
-                 for p in pinned if p.get("tag")}
     lines = [fence((brief or "").strip() or "A short scene of your choosing.",
                    "scene_brief"),
              "",
@@ -1522,11 +1581,11 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
         if secs:
             lines.append(
                 "This chain will be hand-tied: one previs per section covers "
-                "about six hops of "
-                f"{secs:.0f}s, so a chain longer than that splits into "
-                "sections rather than growing without limit. Say where each "
-                "section starts and why the film can continue across it "
-                "instead of cutting.")
+                f"up to {_ht.max_hops(int(secs * 24))} hops of "
+                f"{secs:.0f}s, and a longer chain splits evenly into sections "
+                "that continue each other without a cut. Say where each "
+                "section starts.")
+            lines += ["", hand_tie_rules(duration)]
     if pinned:
         lines += ["",
                   "These pictures are on the rail. Read each one and say what "
@@ -1569,7 +1628,7 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
         if not last:
             obj = {k: v for k, v in obj.items() if v not in (None, "", [], {})}
             return {"ok": True, "proposal": obj, "note": str(obj.get("note") or ""),
-                    "errors": [], "warnings": list(rail_tags and [] or []),
+                    "errors": [], "warnings": [],
                     "attempts": attempt}
         print(f"[{TAG}] proposal attempt {attempt}/{attempts}: "
               + "; ".join(last[:3]), flush=True)
@@ -1603,7 +1662,8 @@ def _word_diff(before, after, limit=24):
 
 async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
                      files=None, pinned=None, duration=None, thread=None,
-                     attempts=MAX_ATTEMPTS, use_schema=True, on_step=None):
+                     attempts=MAX_ATTEMPTS, use_schema=True, on_step=None,
+                     pin_mech=""):
     """Stage 3: change named shots, leave every other byte alone.
 
     The model is asked for ONLY the shots it is changing, as `edits`, and this
@@ -1627,6 +1687,11 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
     except Exception as exc:
         return {"ok": False, "error": f"the current plan does not parse: {exc}",
                 "changed": [], "errors": ["the current plan does not parse"]}
+    # The editor saves {"shots": [...]} (plan_editor.js), WRITE's own plans may be
+    # a bare list. Edit both, and hand back the shape it was given.
+    wrapper = shots if isinstance(shots, dict) else None
+    if wrapper is not None:
+        shots = wrapper.get("shots")
     if not isinstance(shots, list) or not shots:
         return {"ok": False, "error": "the current plan is not a shot list",
                 "changed": [], "errors": ["the current plan is not a shot list"]}
@@ -1644,11 +1709,12 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
         + "\n\nThe plan as it stands:\n"
         + fence(listing, "shot_index")
         + "\n\nReturn ONLY the shots you changed, as edits: a list of objects "
-          "with the shot_id exactly as it appears above and the fields to "
-          "change on it. Copy every field you are NOT changing from the shot "
-          "you were given -- a field you leave out is replaced by a default, "
-          "which is a change. Do not return shots you were not asked to "
-          "change, and do not return the whole plan.")
+          "with the shot_id exactly as it appears above and ONLY the fields you "
+          "change on it. A field you leave out stays exactly as it is. To remove "
+          "a field, list its name in `clear` (for example \"clear\": [\"moment\"]). "
+          "Do not return shots you were not asked to change, and do not return "
+          "the whole plan."
+        + ("\n\n" + hand_tie_rules(duration) if pin_mech == "hand_tie" else ""))
     sch = {"type": "object",
            "properties": {"edits": {"type": "array", "items": {"type": "object"}},
                           "note": {"type": "string"}},
@@ -1681,11 +1747,14 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
                 before = shots[idx]
                 after = dict(before)
                 for k, v in e.items():
-                    if k in ("shot_id", "id"):
+                    if k in ("shot_id", "id", "clear"):
                         continue
                     if v in (None, ""):
                         continue
                     after[k] = v
+                for k in (e.get("clear") or []) if isinstance(e.get("clear"), list) else []:
+                    if str(k) not in ("id", "beat"):
+                        after.pop(str(k), None)
                 spliced.append((idx, before, after))
                 changed.append(idx)
             if unknown:
@@ -1697,10 +1766,11 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
                 merged = [dict(s) if isinstance(s, dict) else s for s in shots]
                 for idx, _before, after in sorted(spliced, key=lambda t: -t[0]):
                     merged[idx] = after
-                new_text = json.dumps(merged, indent=2)
+                new_text = json.dumps(merged if wrapper is None else dict(wrapper, shots=merged),
+                                      indent=2, ensure_ascii=False)
                 errors, warnings = validate(new_text, ref_text, hops=hops,
                                             known_files=files, pinned=pinned,
-                                            duration=duration)
+                                            duration=duration, pin_mech=pin_mech)
                 if not errors:
                     diffs = []
                     for idx, before, after in sorted(spliced, key=lambda t: t[0]):
@@ -1744,7 +1814,7 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
 async def write_plan(brief, hops, *, complete_fn, files=None,
                      pinned=None, images=None, duration=None,
                      attempts=MAX_ATTEMPTS, use_schema=True, on_step=None,
-                     thread=None, proposal=None):
+                     thread=None, proposal=None, pin_mech=""):
     """Generate a plan and repair it until the node would accept it.
 
     `complete_fn(messages, schema=...)` is injected rather than imported so the
@@ -1763,7 +1833,8 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
              if pinned else list(files or []))
     rail_tags = {str(p.get("tag") or "").lstrip("@").strip()
                  for p in pinned if p.get("tag")}
-    text = build_user_turn(brief, hops, files, pinned=pinned, duration=duration)
+    text = build_user_turn(brief, hops, files, pinned=pinned, duration=duration,
+                           pin_mech=pin_mech)
     # A thread or an accepted proposal turns this from a one-shot into a
     # conversation; with neither it is the same two messages it has always
     # been, byte for byte, so a plain Write plan is unchanged.
@@ -1829,7 +1900,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         else:
             last_errors, warnings = validate(
                 shot_text, ref_text, hops=hops, known_files=files,
-                pinned=pinned, duration=duration)
+                pinned=pinned, duration=duration, pin_mech=pin_mech)
         if not last_errors:
             speech = _speech_warnings(warnings)
             if accepted is None or len(speech) < len(accepted[3]):
@@ -1846,7 +1917,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                 messages.append({"role": "assistant", "content": reply})
                 messages.append({"role": "user",
                                  "content": validator_turn(
-                                     _speech_repair(accepted[3]))})
+                                     _speech_repair(accepted[3], pin_mech))})
                 turn_sch = sch
                 continue
             return {"ok": True, "shot_plan": accepted[0],
@@ -1900,7 +1971,8 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     if shot_text and ref_text and _only_register_prose_gaps(last_errors):
         stub = _stub_missing_subjects(ref_text)
         errs, warns = validate(
-            shot_text, stub, hops=hops, known_files=files, pinned=pinned)
+            shot_text, stub, hops=hops, known_files=files, pinned=pinned,
+            duration=duration, pin_mech=pin_mech)
         if not errs:
             note = ("subjects were filled from the photo descriptions because "
                     "the model left them empty; read them before Accept.")

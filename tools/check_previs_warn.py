@@ -102,11 +102,24 @@ print("\nA4: the surface swap has to be able to hide RUN")
 ck(".h3e-run is given display:flex, so [hidden] needs its own rule",
    re.search(r"\.h3e-root\s*>\s*\.h3e-run\s*\{[^}]*display:\s*flex", css))
 ck("and it has one", re.search(r"\.h3e-root\s*>\s*\.h3e-run\[hidden\]\s*\{[^}]*display:\s*none", css))
-# Same class of trap for the tab bodies: .h3e-scroll has no display, so its
-# `hidden` works -- but the panes inside it are flex, which is why
-# .h3e-pane[hidden] already carries a rule.
 ck("the tab panes keep their own [hidden] rule",
    re.search(r"\.h3e-pane\[hidden\]\s*\{[^}]*display:\s*none", css))
+
+# The scroller itself. This check was WRONG before D1c and said so in a comment:
+# it claimed ".h3e-scroll has no display, so its hidden works". The panes are
+# what get `hidden` -- the SCROLLER keeps them -- and a flex item with a
+# min-height does not collapse just because its children are hidden, so the
+# attribute on `.h3e-scroll` did nothing at all. It took a screenshot to find,
+# because every JS-level assertion passes: the attribute IS set.
+#
+# The general rule, now stated as a check rather than as a comment: any element
+# the JS toggles `.hidden` on, where the CSS gives that element a layout `display`
+# (or a flex/min-height that keeps it in flow), needs its own [hidden] rule.
+# `hidden` is `display: none` in the UA sheet and ANY author rule outranks it.
+ck("the tab SCROLLER keeps its own [hidden] rule (D1c)",
+   re.search(r"\.h3e-scroll\[hidden\]\s*\{[^}]*display:\s*none", css),
+   "setSurface() hides tabs.bodies -- that is .h3e-scroll -- and without this "
+   "the attribute is inert, so RUN lays out UNDER the tab bodies")
 
 print()
 if FAIL:

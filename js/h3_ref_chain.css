@@ -1626,6 +1626,22 @@ video.h3e-trim-media { height: auto; max-height: 110px; }
     min-height: 0;
 }
 .h3e-pane[hidden] { display: none !important; }
+
+/* D1c: and the SCROLLER needs one too, which is the bug that made RUN "lay at
+ * the bottom".
+ *
+ * setSurface() hides the tab bodies with `tabs.bodies.hidden = run`, and
+ * `tabs.bodies` is this element. `hidden` is only `display: none` in the UA
+ * sheet, and `.h3e-scroll` sets `flex` and a `min-height` -- neither of which
+ * is `display`, so this one is subtler than the pane case: the ATTRIBUTE was
+ * set, the rule above did not apply to this element, and the scroller carried
+ * on laying out its panes at full height underneath RUN.
+ *
+ * The tell is that the panes are what get hidden, so an empty-looking scroller
+ * still reserves `min-height: 160px` plus whatever the panes measured -- which
+ * is exactly "the tab opens from the bottom, covering the UI". Same trap as
+ * A4's run panel, one element over, and it took a screenshot to find. */
+.h3e-scroll[hidden] { display: none !important; }
 /* WRITE is a <details> and its pane opens it on show, so the disclosure
  * triangle would be a control that does nothing -- the same treatment RUN
  * gets a few rules down, for the same reason. The `::after` chevron is set

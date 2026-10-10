@@ -565,7 +565,7 @@ def register():
                 # when it is, so a second click cannot launch a second 27B --
                 # which is a real way to end up with two processes fighting over
                 # 32 GB.
-                "running": _llm.server_running(),
+                "running": await _llm.server_running_async(),
                 # [{id, loaded}] -- `loaded` is None on servers with no
                 # native state route. The panel marks the difference, because
                 # picking an unloaded model is picking a 400.
@@ -591,21 +591,21 @@ def register():
             # settings save can trigger. The panel's Start button posts it; a
             # queued graph never can.
             if isinstance(body, dict) and body.get("action") == "start":
-                _ok, _msg = _llm.start_process(
+                _ok, _msg = await _llm.start_process_async(
                     model_file=str(body.get("model_file") or "").strip() or None)
                 return web.json_response({"ok": _ok, "error": "" if _ok else _msg,
                                           "note": _msg,
-                                          "running": _llm.server_running(),
+                                          "running": await _llm.server_running_async(),
                                           **_llm.load_conn()})
             if isinstance(body, dict) and body.get("action") == "stop":
                 _n = _llm.stop_process()
                 return web.json_response({"ok": True,
                                           "note": f"stopped {_n} process(es)",
-                                          "running": _llm.server_running(),
+                                          "running": await _llm.server_running_async(),
                                           **_llm.load_conn()})
             if isinstance(body, dict) and body.get("action") == "status":
                 return web.json_response({"ok": True,
-                                          "running": _llm.server_running(),
+                                          "running": await _llm.server_running_async(),
                                           **_llm.load_conn()})
             conn = _llm.save_conn(body if isinstance(body, dict) else {})
             return web.json_response({"ok": True, **conn})
@@ -722,7 +722,8 @@ def register():
         # use it. A serving backend has already proven it fits, and stopping it
         # frees nothing this branch needs -- the render path is where the card
         # is actually contended.
-        _writer_down = not _llm.server_running(conn["server_url"])
+        _writer_down = not await _llm.server_running_async(
+            conn.get("backend"))
         if _llm.shares_this_gpu(conn["server_url"]) and _writer_down:
             try:
                 _note = _llm.free_for_render()

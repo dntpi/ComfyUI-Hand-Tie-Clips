@@ -109,8 +109,30 @@ def backend_spec(name=None):
 
 
 def backend_name(name=None):
+    """The backend id for `name`. Deliberately total -- never raises.
+
+    It is total because this is the function every "which writer?" question
+    goes through, and a raise here would take out the node's render path over a
+    settings typo. But it used to be total *silently*: an unknown value came
+    back as DEFAULT_BACKEND, so passing a URL where a backend id belongs
+    ("http://127.0.0.1:1234") quietly answered a question about LM Studio
+    instead. That is not a near-miss, it is the wrong server, and it was
+    load-bearing -- it is the guard that stops a plan request from killing the
+    nInfer process the Start button just launched.
+
+    So: still total, but it records the miss. If anything is watching the log
+    -- a human, or the checkers -- the wrong answer is now visible.
+    """
     n = str(name or "").strip().lower()
-    return n if n in BACKENDS else DEFAULT_BACKEND
+    if n in BACKENDS:
+        return n
+    if n:
+        # Not a silent coercion. A URL here is the specific mistake that made
+        # the eviction guard probe the wrong writer, so it is worth a line.
+        print(f"[{TAG}] backend_name({n!r}) is not a backend id "
+              f"({', '.join(sorted(BACKENDS))}); using {DEFAULT_BACKEND}",
+              flush=True)
+    return DEFAULT_BACKEND
 
 
 def active_label():
@@ -217,10 +239,23 @@ def _server_args(name, model_file=None):
     return []
 
 
-def server_running(name=None):
-    """Is the writer for this backend already answering? Never spawns."""
-    import asyncio
-    import urllib.request
+async def server_running_async(name=None, timeout=3):
+    """Is the writer for `name` answering right now? Awaitable, never blocks.
+
+    This exists because the blocking version was a real stall on ComfyUI's
+    event loop. Four route handlers called it on every panel refresh, and a
+    probe against a server that is not there waits the FULL timeout before
+    saying no -- so opening the panel, or pressing Start, froze the whole UI
+    (canvas included) for up to 3 s, twice for Start, which calls it again in
+    the response it returns. The rule at the top of this module -- never block
+    inside an aiohttp handler -- was being broken by the very function whose
+    job is to answer a cheap question.
+
+    So the probe is aiohttp, on the loop, with a short timeout. A refused
+    connection fails in about a millisecond; only a black-holed port costs
+    the full timeout, and 1.5 s is enough to notice a live server and short
+    enough that a dead one barely registers.
+    """
     n = backend_name(name or CONN.get("backend"))
     base = normalise_base(
         (CONN.get("servers") or {}).get(n, {}).get("server_url")
@@ -229,10 +264,53 @@ def server_running(name=None):
         return False
     url = base.rstrip("/") + "/v1/models"
     try:
-        with urllib.request.urlopen(url, timeout=3) as r:
-            return 200 <= r.status < 300
+        import aiohttp
+        async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout)) as s:
+            async with s.get(url) as r:
+                return 200 <= r.status < 300
     except Exception:
         return False
+
+
+def server_running(name=None):
+    """BLOCKING probe. Only for code that is already off the event loop.
+
+    Returns the async version's answer. This wrapper exists because the render
+    path and the checkers are synchronous, and they are allowed to block --
+    but a route handler is not one of those places, and calling this from one
+    is the bug this docstring is here to prevent. The one-second timeout is
+    deliberately shorter than the original three: nothing waits on it there.
+    """
+    try:
+        import asyncio
+        return asyncio.run(server_running_async(name, timeout=1.0))
+    except RuntimeError:
+        # Already inside a loop (ComfyUI's execute path). A probe is a
+        # convenience; a convenience must never be the thing that takes a
+        # render down, so it answers "unknown" rather than nesting a loop.
+        return False
+    except Exception:
+        return False
+
+
+async def start_process_async(model_file=None, name=None):
+    """The route-handler version of start_process. Awaits its own probe.
+
+    start_process() opens with a liveness probe so a second click does not
+    launch a second 27B, and that probe is blocking. Called straight from an
+    aiohttp handler -- which is where the Start button reaches it -- it put a
+    full timeout on the event loop before the spawn even began, and then the
+    handler called server_running() again to build its reply. Two stalls for
+    one click.
+
+    The duplicate-27B guard is the reason this cannot simply be dropped, so it
+    is done here on the loop instead.
+    """
+    n = backend_name(name or CONN.get("backend"))
+    if await server_running_async(n):
+        return True, f"{backend_spec(n)['label']} is already running."
+    return start_process(model_file=model_file, name=n)
 
 
 def start_process(model_file=None, name=None):

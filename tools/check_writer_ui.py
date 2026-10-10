@@ -110,20 +110,54 @@ check(
 # --- 5. the server must not evict itself mid-request ----------------------
 # free_for_render() ran on EVERY plan request when the writer shares the GPU,
 # so Start -> Write beats stopped the server Start had just launched.
-# The guard must exist AND the flag it consults must come from a liveness
-# probe -- a bare `and False` would satisfy the first half.
-down = re.search(r"_writer_down\s*=\s*([^\n]+)", py)
+#
+# This check was WRONG the first time and that is the point of it now. It only
+# asked whether the token `server_running` appeared near the guard, so it passed
+# a guard that passed conn["server_url"] into a function whose parameter is a
+# BACKEND ID. backend_name() is total -- an unknown value returns
+# DEFAULT_BACKEND -- so the URL silently became "lmstudio", the guard probed the
+# wrong writer, concluded it was down, and called free_for_render(), which stops
+# nInfer. The bug the guard existed to prevent, shipped inside the guard.
+#
+# So the check is now on the ARGUMENT, not the presence of a name.
+guard = re.search(
+    r"_writer_down\s*=\s*not\s+await\s+_llm\.server_running_async\("
+    r"(.+?)\)\s*\n", py, re.S)
 check(
-    "the eviction branch is guarded on the writer being down",
+    "the eviction guard is guarded on the writer being down",
     re.search(r"if _llm\.shares_this_gpu\([^)]*\)\s+and\s+_writer_down:", py)
     is not None,
     "-- a serving writer is stopped by the request that is about to use it",
 )
+arg = (guard.group(1) if guard else "").replace("\n", " ").strip()
 check(
-    "_writer_down is derived from a liveness probe",
-    down is not None and "server_running" in down.group(1),
-    "-- the guard must not be a constant",
+    "the guard probes a BACKEND ID, never a URL",
+    'conn.get("backend")' in arg,
+    "-- it passes %r; backend_name() turns an unknown value into lmstudio and "
+    "silently answers about the wrong server" % arg,
 )
+
+# --- 6. nothing in an aiohttp handler may block ---------------------------
+# server_running() waits on a socket. Called from a route handler it stalls
+# ComfyUI's event loop -- the whole UI, canvas included -- for the length of
+# its timeout, and a probe against a dead port always costs the FULL timeout.
+check(
+    "no route handler calls the blocking probe",
+    re.search(r"_llm\.server_running\(", py) is None,
+    "-- an event-loop stall behind every panel refresh and every Start click",
+)
+check(
+    "start_process is not called synchronously from a route",
+    re.search(r"_llm\.start_process\(", py) is None,
+    "-- its own duplicate-27B probe blocks before the spawn",
+)
+for _m in re.finditer(r'"running":\s*(await\s+)?_llm\.server_running', py):
+    check(
+        "the %s probe at L%d is awaited"
+        % ("async" if _m.group(1) else "BLOCKING", py[:_m.start()].count("\n") + 1),
+        _m.group(1) is not None,
+        "-- a 3 s socket wait on the event loop",
+    )
 
 print()
 if fails:

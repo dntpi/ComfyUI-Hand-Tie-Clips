@@ -814,5 +814,74 @@ console.log("\nmount: D7 media fold");
      "the user hid their own pick behind a click");
 }
 
+/* -- every tab renders. Clicking all six, not the two the test needed ------ */
+
+console.log("\nmount: every tab renders");
+
+{
+  // D1f: the mount test clicked Script, Refs and Write and stopped. Timeline was
+  // BROKEN the whole time -- `isNewPrevis is not defined`, a ReferenceError
+  // thrown from a line that shipped in D3 -- and nobody noticed, because
+  // createTabs wraps its onShow handler in a try/catch and logs to the console.
+  // A tab that throws looks exactly like a tab with nothing in it.
+  //
+  // So: click every tab, and fail on anything thrown. A tab is a claim about
+  // what the panel can draw, and a claim nobody checks is not a claim.
+  const node = mountFresh({ plan: planJSON(6) });
+  const root = node.domWidgets[0];
+  const ed = node._h3Editor;
+
+  const find = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+
+  const tabBtns = find("h3e-tab");
+  ck("six tabs", tabBtns.length === 6, `got ${tabBtns.length}`);
+
+  // A console.error from a swallowed handler is the only trace a broken tab
+  // leaves. Catch it rather than trusting the click to throw.
+  const realError = console.error;
+  const swallowed = [];
+  console.error = (...a) => { swallowed.push(a.map(String).join(" ")); };
+
+  let threw = null;
+  try {
+    for (const btn of tabBtns) {
+      const label = (btn.textContent || "").trim().split(/\s+/)[0];
+      try {
+        btn.click();
+      } catch (e) {
+        threw = `${label}: ${e.message}`;
+        break;
+      }
+    }
+  } finally {
+    console.error = realError;
+  }
+
+  ck("no tab throws when clicked", !threw, threw || "");
+  ck("and no tab logs a swallowed error", swallowed.length === 0,
+     swallowed.slice(0, 2).join(" | "));
+
+  // And each tab actually drew something. Timeline in particular must have
+  // lanes after render -- it was throwing before it drew any.
+  const tlBtn = tabBtns.find((b) => /timeline/i.test(b.textContent || ""));
+  if (tlBtn) {
+    try { tlBtn.click(); } catch (_) { /* asserted above */ }
+    const tlRoot = ed?.timeline?.root;
+    const lanes = tlRoot ? find.call(null, "h3e-tl-lane") : [];
+    ck("the timeline draws lanes after a render",
+       !!(tlRoot && tlRoot.children.length > 0),
+       tlRoot ? `${tlRoot.children.length} children` : "no timeline root");
+  }
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

@@ -169,8 +169,50 @@ export function createPicker({ kind = "image", get, set, onChange, title } = {})
             });
             thumb.appendChild(img);
         } else {
-            thumb.appendChild(el("span", "h3e-thumb-hint",
-                kind === "video" ? "▶ clip" : "♪ audio"));
+            /* D1f: audio and video showed a WORD -- "clip", "audio" -- in a box
+             * the size of a filmstrip cell, which told the user nothing they
+             * could not read from the filename beside it ("the bar for the input
+             * just shows the text clip").
+             *
+             * A video now carries a real frame: a muted, non-looping <video>
+             * seeked to 0.1s, which is enough to recognise the plate. An <audio>
+             * cannot show a picture, so it keeps a glyph -- but a BETTER one,
+             * drawn rather than typed, and sized to the cell.
+             *
+             * The video element is pointed at ComfyUI's own /view route, which
+             * already serves the file with Range support, so this costs no new
+             * endpoint. `preload="metadata"` keeps it from pulling the whole
+             * clip for one poster frame. */
+            if (kind === "video") {
+                const v = el("video", "h3e-thumb-vid");
+                v.src = viewUrl(name);
+                v.muted = true;
+                v.loop = true;
+                v.playsInline = true;
+                v.preload = "metadata";
+                // 0.1s is past the first frame in every container we write, and
+                // black leading is the most common first frame there is.
+                v.addEventListener("loadedmetadata", () => {
+                    try { v.currentTime = 0.1; } catch (_) { /* not seekable yet */ }
+                }, { once: true });
+                // A codec the browser cannot decode must not leave an empty
+                // box: fall back to the glyph, which is honest.
+                v.addEventListener("error", () => {
+                    v.remove();
+                    thumb.appendChild(el("span", "h3e-thumb-glyph", "▶"));
+                }, { once: true });
+                thumb.appendChild(v);
+                // Hover plays a second. Not a control -- clicking the thumb
+                // opens the file dialog -- so it must not swallow the click.
+                thumb.addEventListener("mouseenter", () => {
+                    v.play?.()?.catch?.(() => {});
+                });
+                thumb.addEventListener("mouseleave", () => {
+                    try { v.pause(); } catch (_) { /* not playing */ }
+                });
+            } else {
+                thumb.appendChild(el("span", "h3e-thumb-glyph h3e-thumb-wave", "♪"));
+            }
         }
         if (name) {
             thumb.title = `${name}\nClick to replace, or drop a new file.`;

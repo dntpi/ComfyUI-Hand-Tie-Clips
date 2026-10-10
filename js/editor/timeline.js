@@ -573,7 +573,12 @@ export function createTimeline(node, { editor, onChange } = {}) {
             // on the block. The join at a new previs is NOT a restart -- it
             // continues the film -- but everything from here to the next
             // boundary is cut from a different take, so it re-renders together.
-            if (isNewPrevis) {
+            // `newPrevis` is the Map built above for the BLOCK row; the seam row
+            // is a separate loop and cannot see a `const` from the other one, so
+            // it reads the Map directly. This line shipped referencing a name
+            // that existed only inside the block loop, so every render threw
+            // ReferenceError and the Timeline tab drew nothing at all.
+            if (newPrevis.get(i)) {
                 const cutMark = el("span", "h3e-tl-cutpoint");
                 cutMark.textContent = "❋";
                 cutMark.title = `A new hand-tie previs starts at hop ${i + 1}. `

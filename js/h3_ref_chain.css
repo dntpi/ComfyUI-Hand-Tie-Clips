@@ -1114,14 +1114,51 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
  * never `cover`: the whole job of this thumbnail is letting you identify the
  * picture, and a cropped face is worse than a letterboxed one.
  */
-.h3e-pick { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h3e-pick {
+    display: flex;
+    /* D1f: ROW, not column. The thumbnail used to sit on its own full-width
+     * line above the filename, so every set slot cost a row's height for a
+     * picture. Thumb left, filename right -- which is also how the prototype
+     * had it, and how a file manager has it. */
+    flex-direction: row;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    min-width: 0;
+}
+/* D1f: a real frame for a video, and a drawn glyph for audio. */
+.h3e-thumb-vid {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+}
+
+.h3e-thumb-glyph {
+    font-size: 20px;
+    line-height: 1;
+    color: var(--h3-faint);
+    user-select: none;
+}
+
+/* -- trim bars ------------------------------------------------------------ */
+
+.h3e-pick > .h3e-pickfile { flex: 1 1 auto; min-width: 0; }
 /* 46px was a swatch: enough to see that a slot is filled, not enough to see
  * WHICH file is in it, which is the question actually being asked of a strip
  * with eleven of them. */
 .h3e-thumb {
-    position: relative;
-    width: 100%;
-    height: 76px;
+position: relative;
+    /* D1f: was `width: 100%; height: 76px`. Full width meant a single
+     * 116x76 thumbnail floated in the middle of a 1200px row -- "a very long
+     * bar for... an image", as the user put it -- and 76px of dead height per
+     * set slot, which is what pushed the video player and the trim bars down
+     * the page. Now it is a fixed square that sits BESIDE the filename, the way
+     * a file row in any file manager does. */
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
     border: 1px dashed var(--h3-border);
     background: var(--h3-sunken);
     display: flex;
@@ -1130,7 +1167,7 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
     cursor: pointer;
     overflow: hidden;
     transition: border-color .12s ease, background-color .12s ease;
-}
+ }
 .h3e-thumb:hover { border-color: var(--h3-accent); }
 .h3e-thumb.h3e-has { border-style: solid; }
 .h3e-thumb.h3e-hot {
@@ -1269,11 +1306,26 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
 /* The body occupies column 2 -- the cell is a grid, and the head is column 1. */
 .h3e-media-body {
     grid-column: 2;
+    /* D1f: ROW, not column, and this is the change the user asked for by name:
+     * "maybe the scrubber and the preview should be on the input bar itself... or
+     * in the same row as the input row, like in the prototype."
+     *
+     * The picker takes what it needs (the thumbnail is a fixed 64px square plus a
+     * flexible filename) and the trim row, the description and the size take the
+     * rest. Every control for a slot is then on ONE horizontal line, so loading
+     * a reference clip no longer pushes the scrubber and the preview down the
+     * page -- they were never on their own line to begin with, they were pushed
+     * by the 76px thumbnail and the uncapped video above them. */
     display: flex;
-    flex-direction: column;
-    gap: 3px;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--h3-gap-sm);
     min-width: 0;
 }
+/* The picker keeps its own size; everything else shares what is left. */
+.h3e-media-body > .h3e-pick { flex: 0 1 auto; min-width: 220px; }
+.h3e-media-body > .h3e-trimrow { flex: 1 1 260px; min-width: 0; }
 /* One line, always. These are grid siblings that flow from the top of their
  * cell, so a label that wraps to two lines pushes ITS drop zone down and only
  * its own -- the row stops lining up, which is how `master audio (lip-sync
@@ -1372,7 +1424,19 @@ color: var(--h3-muted);
 }
 .h3e-trim-media { width: 100%; height: 26px; }
 .h3e-trim-media[src=""] { display: none; }
-video.h3e-trim-media { height: auto; max-height: 110px; }
+/* D1f: capped on BOTH axes. `height: auto; max-height: 110px` alone left the
+     * width free, so a video element took the full 1200px of the row and stood
+     * 110px tall -- a wide letterboxed band with a scrub bar under it, which is
+     * what pushed everything below it down the page. The trim bar's job is to
+     * show you WHERE in the take the window sits; it does not need to be a
+     * player. */
+video.h3e-trim-media {
+    height: auto;
+    max-height: 84px;
+    max-width: 148px;
+    border-radius: var(--h3-radius-sm);
+    background: var(--h3-sunken);
+}
 .h3e-trim-readout {
     font-size: var(--h3-fs-xs);
     font-variant-numeric: tabular-nums;

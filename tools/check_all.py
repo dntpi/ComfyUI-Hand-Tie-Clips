@@ -67,6 +67,7 @@ CHECKS = [
     ("check_refmod.py", []),
     ("check_timeline.py", []),
     ("check_planner.py", []),
+    ("check_writer_ui.py", []),
     ("gen_schema.py", ["--check"]),
 ]
 

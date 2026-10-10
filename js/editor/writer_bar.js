@@ -52,6 +52,7 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     // question. The accepted proposal and the plan are resent every turn by
     // build_thread, so what this bounds is the wandering, not the state.
     const THREAD_MAX = 12;
+    const THREAD_DROPPED_PROP = "h3_writer_dropped";
 
     const thread = el("div", "h3e-chat");
     const threadList = el("div", "h3e-chat-log");
@@ -99,11 +100,23 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         const t = node.properties?.[THREAD_PROP];
         return Array.isArray(t) ? t.slice(-THREAD_MAX) : [];
     }
-    function writeThread(t) {
-        node.properties ??= {};
-        node.properties[THREAD_PROP] = t.slice(-THREAD_MAX);
-        node.properties[PROPOSAL_PROP] = proposal || null;
-    }
+// Called after any turn, so it must NOT decide what the proposal is.
+      // It did, once, by copying a variable that was never declared -- which
+      // read as null and therefore wiped an accepted proposal on the very next
+      // line that touched the thread. The proposal is owned by exactly one
+      // place, its own property: the card's Accept writes it, Discard clears
+      // it, and nothing that happens to the thread may touch it.
+function writeThread(t) {
+              node.properties ??= {};
+              // Count BEFORE slicing, and carry the number, because after the
+              // slice the length can never exceed THREAD_MAX again -- which is
+              // why measuring it in paintThread() was permanently false and the
+              // notice below could never fire.
+              const over = t.length - THREAD_MAX;
+              node.properties[THREAD_DROPPED_PROP] =
+                  over > 0 ? (node.properties[THREAD_DROPPED_PROP] || 0) + over : 0;
+              node.properties[THREAD_PROP] = t.slice(-THREAD_MAX);
+          }
     function addTurn(role, content) {
         const t = readThread();
         t.push({ role, content: String(content || "") });
@@ -124,7 +137,7 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
             row.appendChild(el("span", "h3e-chat-text", m.content));
             threadList.appendChild(row);
         }
-        const dropped = (node.properties?.[THREAD_PROP] || []).length > THREAD_MAX;
+        const dropped = (node.properties?.[THREAD_DROPPED_PROP] || 0) > 0;
         if (dropped) {
             // Say it rather than silently truncating: a model that has
             // forgotten what you said three turns ago looks like it never
@@ -849,8 +862,16 @@ if (!list.length) {
                 draft.style.display = "none";
                 draftList.textContent = "";
             }));
-        c.acts.appendChild(button("Discard", "Throw this away",
-            () => { draft.style.display = "none"; draftList.textContent = ""; }));
+// Discard means discard. It used to only hide the card, which left an
+              // earlier accepted proposal in place -- so a card you had
+              // already said no to still shaped the next "write the beats".
+              c.acts.appendChild(button("Discard", "Throw this away",
+                  () => {
+                      node.properties ??= {};
+                      node.properties[PROPOSAL_PROP] = null;
+                      draft.style.display = "none";
+                      draftList.textContent = "";
+                  }));
     }
 
     function renderSongCard(s, note) {
@@ -921,15 +942,19 @@ if (!list.length) {
             }
         }
         if (note) b.appendChild(el("div", "h3e-cardbox-row", note));
-        c.acts.appendChild(button("Accept edit",
-            "Put these shots on the cards. Every other shot is untouched.",
-            () => {
-                showDraft(j.shot_plan || "", j.ref_plan || "");
-                draft.style.display = "none";
-                draftList.textContent = "";
-                say("Edit accepted. The cards now carry it.", "hint");
-                addTurn("assistant", "Edit accepted.");
-            }));
+c.acts.appendChild(button("Accept edit",
+              "Put these shots on the cards. Every other shot is untouched.",
+              () => {
+                  // showDraft RENDERS INTO draftList, so the two lines that
+                  // used to follow this call wiped the edit on its way in --
+                  // the button accepted a draft nobody could see. Showing it
+                  // is the last thing that happens, and the draft panel's own
+                  // Accept is what writes the cards.
+                  draft.style.display = "block";
+                  showDraft(j.shot_plan || "", j.ref_plan || "");
+                  say("Edit ready. Review it, then Accept in the panel.",
+                      "hint");
+              }));
         c.acts.appendChild(button("Discard", "Keep the cards as they are",
             () => { draft.style.display = "none"; draftList.textContent = ""; }));
     }

@@ -711,10 +711,19 @@ def register():
         # reservation and fails to start with ~6.5 GB free, which is what
         # ComfyUI's own idle models leave behind.
         #
-        # So: ask the writer's own eviction first, and only then complain. The
+# So: ask the writer's own eviction first, and only then complain. The
         # note comes back to the panel, which says it rather than letting a
         # cryptic server error arrive thirty seconds later.
-        if _llm.shares_this_gpu(conn["server_url"]):
+        #
+        # ONLY while it is down. This used to run on every plan request, so the
+        # sequence Start -> Write beats stopped the server the Start button had
+        # just launched, thirty seconds earlier, and then failed to reach it:
+        # the writer evicting itself out from under the very request about to
+        # use it. A serving backend has already proven it fits, and stopping it
+        # frees nothing this branch needs -- the render path is where the card
+        # is actually contended.
+        _writer_down = not _llm.server_running(conn["server_url"])
+        if _llm.shares_this_gpu(conn["server_url"]) and _writer_down:
             try:
                 _note = _llm.free_for_render()
             except Exception:

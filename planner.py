@@ -1403,9 +1403,348 @@ def _stub_missing_subjects(ref_text):
         indent=2)
 
 
+# How many turns of the thread are replayed. Bounded on purpose: the thread
+# lives in the workflow, so an unbounded one grows every saved file, and a long
+# conversation puts the brief far enough back that the model answers an earlier
+# question. The accepted proposal and the current plan are resent EVERY turn
+# (see build_thread), so what this bounds is the wandering, not the state.
+THREAD_TURNS = 12
+
+
+def build_thread(system, thread, *, proposal=None, shot_text=None,
+                 ref_text=None, instruction=None, images=None, extra=None):
+    """system + the bounded thread + the state that is always resent.
+
+    The state blocks are resent on every turn deliberately. A thread is a log
+    of the CONVERSATION, not of the plan: the plan can be accepted, reverted,
+    hand-edited or thrown away between two turns of talking, so anything the
+    next turn must obey has to arrive IN the turn. Proposal and plan are
+    therefore not "earlier context" and are not dropped when the thread trims.
+
+    `extra` is appended after the state and before the instruction, so a stage
+    can add its own framing without every stage re-implementing the order.
+    """
+    out = [{"role": "system", "content": str(system or "")}]
+    for m in (thread or [])[-THREAD_TURNS:]:
+        role = str((m or {}).get("role") or "")
+        content = (m or {}).get("content")
+        # Only the two roles the chat API has, and only non-empty turns: a
+        # blank assistant turn is a decode failure that would otherwise ride
+        # along in every later request as if it were a real reply.
+        if role in ("user", "assistant") and isinstance(content, str) \
+                and content.strip():
+            out.append({"role": role, "content": content})
+    if proposal:
+        out.append({"role": "user", "content":
+                    "This proposal is ACCEPTED. Write the beats to it. Where "
+                    "the beats must differ from it, the beats win and you say "
+                    "so in your reply."
+                    + fence(str(proposal), "accepted_proposal")})
+    if shot_text:
+        out.append({"role": "user", "content":
+                    "This is the plan as it stands. It is the one you are "
+                    "editing, and the one that stays exactly as it is if you "
+                    "do not touch it."
+                    + fence(str(shot_text), "current_shot_plan")})
+        if ref_text:
+            out.append({"role": "user", "content":
+                        "The reference register as it stands."
+                        + fence(str(ref_text), "current_ref_plan")})
+    for block in (extra or []):
+        if block and str(block).strip():
+            out.append({"role": "user", "content": str(block)})
+    if instruction and str(instruction).strip():
+        # Images ride the LAST user turn only. Put them earlier and every
+        # repair turn resends a megabyte of base64 to rewrite two sentences.
+        text = str(instruction)
+        out.append({"role": "user",
+                    "content": attach_images(text, images) if images else text})
+    return out
+
+
+# What a Proposal card has to carry. The brief's list, as keys: a proposal is
+# the one thing the user reads before deciding whether to spend a render, so a
+# missing piece is a card that cannot be judged rather than a shorter card.
+PROPOSAL_KEYS = ("one_line", "look", "frames", "refs", "shots", "sections")
+
+
+def proposal_errors(obj):
+    """What is missing from a proposal reply. Lints, not errors: the caller
+    shows them and lets the user accept anyway, because a proposal is prose."""
+    out = []
+    if not isinstance(obj, dict):
+        return ["the reply was not a proposal object"]
+    if not str(obj.get("one_line") or "").strip():
+        out.append("no one-line description of the film")
+    if not str(obj.get("look") or "").strip():
+        out.append("no description of how it looks")
+    if not str(obj.get("frames") or "").strip():
+        out.append("no note on who is where in frame")
+    if not isinstance(obj.get("shots"), dict) or not obj["shots"].get("count"):
+        out.append("no shot count")
+    return out
+
+
+async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
+                        images=None, duration=None, thread=None, attempts=2,
+                        pin_mech="", on_step=None):
+    """Stage 1: the film, in words, before any beat exists.
+
+    No repair loop. A proposal is not the plan, so `validate()` does not apply
+    to it and there is nothing to converge on -- the only thing to converge on
+    would be the model agreeing with itself. Two attempts at most, and the
+    second one is told what was missing, which is cheap and usually enough.
+
+    Returns {ok, proposal, note, errors, warnings}. `note` is the model's own
+    sentence about the shot arithmetic, kept apart from the structured fields so
+    the card can show it as prose rather than as data.
+    """
+    pinned = [p for p in (pinned or []) if isinstance(p, dict)]
+    files = ([p.get("file") for p in pinned if p.get("file")]
+             if pinned else list(files or []))
+    rail_tags = {str(p.get("tag") or "").lstrip("@").strip()
+                 for p in pinned if p.get("tag")}
+    lines = [fence((brief or "").strip() or "A short scene of your choosing.",
+                   "scene_brief"),
+             "",
+             "Do not write the plan yet. Describe the film first, so the "
+             "person can agree with it before any beat exists."]
+    if duration:
+        lines.append(f"Every hop will be {duration}.")
+    if pin_mech == "hand_tie":
+        # The section count is the one number a proposal gets wrong by an
+        # order of magnitude, and it is what the render cost hangs on.
+        try:
+            from .h3_ref_chain import DURATION_FRAMES, FPS  # noqa: PLC0415
+            secs = DURATION_FRAMES.get(str(duration).strip(), 0) / float(FPS or 24)
+        except Exception:
+            secs = 0
+        if secs:
+            lines.append(
+                "This chain will be hand-tied: one previs per section covers "
+                "about six hops of "
+                f"{secs:.0f}s, so a chain longer than that splits into "
+                "sections rather than growing without limit. Say where each "
+                "section starts and why the film can continue across it "
+                "instead of cutting.")
+    if pinned:
+        lines += ["",
+                  "These pictures are on the rail. Read each one and say what "
+                  "you took it to be -- a person, a place, a garment plate. "
+                  "Do not invent a picture that is not here, and do not "
+                  "silently drop one."]
+        rail = []
+        for p in pinned:
+            bit = f"- @{p.get('tag')}  file={p.get('file')}"
+            if p.get("subject") is not None:
+                bit += f"  subject={p['subject']}"
+            rail.append(bit)
+        lines.append(fence("\n".join(rail), "rail"))
+        lines.append("Stills of those rows are attached below, labelled with "
+                     "their @tag. Look at them.")
+    elif files:
+        lines += ["", "These reference files are on disk:"]
+        lines.append(fence("\n".join(f"- {f}" for f in files), "files"))
+
+    sch = {"type": "object",
+           "properties": {
+               "one_line": {"type": "string"},
+               "look": {"type": "string"},
+               "frames": {"type": "string"},
+               "refs": {"type": "array", "items": {"type": "object"}},
+               "shots": {"type": "object"},
+               "sections": {"type": "array", "items": {"type": "object"}},
+               "note": {"type": "string"},
+           },
+           "required": ["one_line", "look", "frames", "shots"]}
+    messages = build_thread(system_prompt(), thread, instruction="\n".join(lines),
+                            images=images)
+    last = []
+    for attempt in range(1, int(attempts) + 1):
+        if on_step:
+            on_step({"attempt": attempt, "of": int(attempts), "errors": last})
+        reply = await complete_fn(messages, schema=sch)
+        obj = _parse_obj(reply)
+        last = proposal_errors(obj)
+        if not last:
+            obj = {k: v for k, v in obj.items() if v not in (None, "", [], {})}
+            return {"ok": True, "proposal": obj, "note": str(obj.get("note") or ""),
+                    "errors": [], "warnings": list(rail_tags and [] or []),
+                    "attempts": attempt}
+        print(f"[{TAG}] proposal attempt {attempt}/{attempts}: "
+              + "; ".join(last[:3]), flush=True)
+        if attempt >= int(attempts):
+            break
+        messages.append({"role": "assistant", "content": reply})
+        messages.append({"role": "user", "content":
+                         "That proposal was missing: "
+                         + "; ".join(last)
+                         + ". Return the same proposal with those filled in. "
+                           "Change nothing else."})
+    return {"ok": False, "proposal": None, "note": "", "errors": last,
+            "warnings": [], "attempts": int(attempts)}
+
+
+def _word_diff(before, after, limit=24):
+    """Words that differ between two beats, for the Edit card.
+
+    Not a proper diff algorithm and does not pretend to be one: it reports the
+    words present in one side and not the other, capped, which is enough for a
+    card to show "she trips on the curb" as what the edit did. Computing a real
+    LCS here would be a second thing to get subtly wrong, for a label.
+    """
+    a = [w for w in re.split(r"(\W+)", str(before or "")) if w.strip()]
+    b = [w for w in re.split(r"(\W+)", str(after or "")) if w.strip()]
+    sa, sb = set(a), set(b)
+    gone = [w for w in a if w not in sb and w.isalnum()][:limit]
+    added = [w for w in b if w not in sa and w.isalnum()][:limit]
+    return {"removed": gone, "added": added}
+
+
+async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
+                     files=None, pinned=None, duration=None, thread=None,
+                     attempts=MAX_ATTEMPTS, use_schema=True, on_step=None):
+    """Stage 3: change named shots, leave every other byte alone.
+
+    The model is asked for ONLY the shots it is changing, as `edits`, and this
+    splices them into the existing plan. It never gets to return a whole plan,
+    so "every other shot is byte-identical" is true by construction rather than
+    by checking afterwards -- a model asked to resend twelve shots and change
+    one will quietly rewrite a conjunction in the other eleven, and the only
+    way to be sure is to never let it hold the text.
+
+    The spliced result then goes through the same `validate()` as a fresh plan,
+    so an edit that breaks the plan is repaired or reported like any other.
+    """
+    if not str(shot_text or "").strip():
+        return {"ok": False, "error": "there is no plan to edit yet",
+                "changed": [], "errors": ["there is no plan to edit yet"]}
+    pinned = [p for p in (pinned or []) if isinstance(p, dict)]
+    files = ([p.get("file") for p in pinned if p.get("file")]
+             if pinned else list(files or []))
+    try:
+        shots = json.loads(shot_text)
+    except Exception as exc:
+        return {"ok": False, "error": f"the current plan does not parse: {exc}",
+                "changed": [], "errors": ["the current plan does not parse"]}
+    if not isinstance(shots, list) or not shots:
+        return {"ok": False, "error": "the current plan is not a shot list",
+                "changed": [], "errors": ["the current plan is not a shot list"]}
+    # The ids the model may name, so a reply cannot invent a target.
+    known = {str(s.get("id") or f"s{i + 1}"): i
+             for i, s in enumerate(shots) if isinstance(s, dict)}
+
+    listing = "\n".join(
+        f"- {sid} (hop {i + 1}): "
+        + re.sub(r"\s+", " ", str(shots[i].get("beat") or "")).strip()[:160]
+        for sid, i in sorted(known.items(), key=lambda kv: kv[1]))
+    instruction = (
+        "Change the shots this message names, and nothing else.\n\n"
+        + fence(str(message or "").strip() or "Nothing was asked for.", "edit_request")
+        + "\n\nThe plan as it stands:\n"
+        + fence(listing, "shot_index")
+        + "\n\nReturn ONLY the shots you changed, as edits: a list of objects "
+          "with the shot_id exactly as it appears above and the fields to "
+          "change on it. Copy every field you are NOT changing from the shot "
+          "you were given -- a field you leave out is replaced by a default, "
+          "which is a change. Do not return shots you were not asked to "
+          "change, and do not return the whole plan.")
+    sch = {"type": "object",
+           "properties": {"edits": {"type": "array", "items": {"type": "object"}},
+                          "note": {"type": "string"}},
+           "required": ["edits"]}
+
+    messages = build_thread(system_prompt(), thread, shot_text=shot_text,
+                            ref_text=ref_text, instruction=instruction)
+    last_errors = []
+    for attempt in range(1, int(attempts) + 1):
+        if on_step:
+            on_step({"attempt": attempt, "of": int(attempts),
+                     "errors": last_errors})
+        reply = await complete_fn(messages, schema=sch if use_schema else None)
+        obj = _parse_obj(reply)
+        edits = (obj or {}).get("edits")
+        if not isinstance(edits, list):
+            edits = [e for e in (obj or {}).get("shots", []) if isinstance(e, dict)]
+        if not edits:
+            last_errors = ["the reply named no shot to change"]
+        else:
+            spliced, changed, unknown = [], [], []
+            for e in edits:
+                if not isinstance(e, dict):
+                    continue
+                sid = str(e.get("shot_id") or e.get("id") or "").strip()
+                idx = known.get(sid)
+                if idx is None:
+                    unknown.append(sid or "(no id)")
+                    continue
+                before = shots[idx]
+                after = dict(before)
+                for k, v in e.items():
+                    if k in ("shot_id", "id"):
+                        continue
+                    if v in (None, ""):
+                        continue
+                    after[k] = v
+                spliced.append((idx, before, after))
+                changed.append(idx)
+            if unknown:
+                last_errors = [f"no such shot: {', '.join(unknown[:4])}. The "
+                               f"ids are in the shot index above."]
+            elif changed:
+                # Splice by index, deepest first, so a multi-shot edit does
+                # not shift the targets of the ones after it.
+                merged = [dict(s) if isinstance(s, dict) else s for s in shots]
+                for idx, _before, after in sorted(spliced, key=lambda t: -t[0]):
+                    merged[idx] = after
+                new_text = json.dumps(merged, indent=2)
+                errors, warnings = validate(new_text, ref_text, hops=hops,
+                                            known_files=files, pinned=pinned,
+                                            duration=duration)
+                if not errors:
+                    diffs = []
+                    for idx, before, after in sorted(spliced, key=lambda t: t[0]):
+                        if json.dumps(before, sort_keys=True) == json.dumps(after, sort_keys=True):
+                            continue
+                        diffs.append({
+                            "shot_id": str((before or {}).get("id") or f"s{idx + 1}"),
+                            "hop": idx + 1,
+                            "before": str((before or {}).get("beat") or ""),
+                            "after": str((after or {}).get("beat") or ""),
+                            "diff": _word_diff((before or {}).get("beat"),
+                                               (after or {}).get("beat")),
+                        })
+                    if not diffs:
+                        return {"ok": False,
+                                "error": "the reply named a shot but changed "
+                                         "nothing in it",
+                                "changed": [], "errors": last_errors,
+                                "warnings": warnings}
+                    return {"ok": True, "shot_plan": new_text,
+                            "ref_plan": ref_text, "changed": [d["shot_id"] for d in diffs],
+                            "diffs": diffs, "note": str((obj or {}).get("note") or ""),
+                            "attempts": attempt, "errors": [], "warnings": warnings}
+                last_errors = errors
+            else:
+                last_errors = ["the reply named no shot to change"]
+        print(f"[{TAG}] edit attempt {attempt}/{attempts} rejected: "
+              + "; ".join(last_errors[:3]), flush=True)
+        if attempt >= int(attempts):
+            break
+        messages.append({"role": "assistant", "content": reply})
+        messages.append({"role": "user", "content":
+                         "The node rejected that edit:\n\n"
+                         + "\n".join(f"- {e}" for e in last_errors)
+                         + "\n\nReturn the edits again with the same shot_ids. "
+                           "Change only what the errors name."})
+    return {"ok": False, "error": "the edit did not validate", "changed": [],
+            "errors": last_errors, "warnings": []}
+
+
 async def write_plan(brief, hops, *, complete_fn, files=None,
                      pinned=None, images=None, duration=None,
-                     attempts=MAX_ATTEMPTS, use_schema=True, on_step=None):
+                     attempts=MAX_ATTEMPTS, use_schema=True, on_step=None,
+                     thread=None, proposal=None):
     """Generate a plan and repair it until the node would accept it.
 
     `complete_fn(messages, schema=...)` is injected rather than imported so the
@@ -1425,8 +1764,15 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     rail_tags = {str(p.get("tag") or "").lstrip("@").strip()
                  for p in pinned if p.get("tag")}
     text = build_user_turn(brief, hops, files, pinned=pinned, duration=duration)
-    messages = [{"role": "system", "content": system_prompt()},
-                {"role": "user", "content": attach_images(text, images)}]
+    # A thread or an accepted proposal turns this from a one-shot into a
+    # conversation; with neither it is the same two messages it has always
+    # been, byte for byte, so a plain Write plan is unchanged.
+    if thread or proposal:
+        messages = build_thread(system_prompt(), thread, proposal=proposal,
+                                instruction=text, images=images)
+    else:
+        messages = [{"role": "system", "content": system_prompt()},
+                    {"role": "user", "content": attach_images(text, images)}]
     sch = schema() if use_schema else None
     # The schema in force for the NEXT call. A prose repair swaps in a grammar
     # that cannot spell the empty answer; everything else uses the shipped one.

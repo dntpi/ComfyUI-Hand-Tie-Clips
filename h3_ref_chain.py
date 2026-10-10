@@ -4293,22 +4293,18 @@ class HandTieClips:
                     if hop_store is not None:
                         hop_store.put(_p_key, _p_imgs, _p_wav, _p_sr,
                                       {"previs": _si + 1, "block": pblock[:400]})
-                _all = _ht.previs_cuts(_p_imgs[:_p_len])
-                # Only a cut inside a window costs the film anything; one between
-                # windows is carried by the hop as a camera move (00150, the vlog).
-                _cuts = _ht.window_cuts(_all, _lay["windows"])
-                _gap = [c for c in _all if c not in _cuts]
-                if _gap:
-                    print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts between "
-                          "windows at " + ", ".join(f"f{c} ({c / FPS:.2f}s)" for c in _gap)
-                          + "; the hop there carries it as a camera move", flush=True)
-                if _best is None or len(_cuts) < len(_best[3]):
-                    _best = (_p_imgs, _p_wav, _p_sr, _cuts, _p_seed)
+                # Every cut earns a new take: a hop copies one between its windows
+                # about half the time (chain_00154's hop 1, from f66). A cut inside
+                # a window is worse, so it ranks the takes when all of them cut.
+                _cuts = _ht.previs_cuts(_p_imgs[:_p_len])
+                _rank = (len(_ht.window_cuts(_cuts, _lay["windows"])), len(_cuts))
+                if _best is None or _rank < _best[5]:
+                    _best = (_p_imgs, _p_wav, _p_sr, _cuts, _p_seed, _rank)
                 if not _cuts:
                     break
                 _again = _ht.same_cut(_last_cuts, _cuts)
                 _last_cuts = _cuts
-                print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts INSIDE a window at "
+                print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts at "
                       + ", ".join(f"f{c} ({c / FPS:.2f}s)" for c in _cuts)
                       + ("; the same place as the last take, so the text asks for it: "
                          "no more takes" if _again
@@ -4317,15 +4313,14 @@ class HandTieClips:
                 if _again:
                     break
             del _pc, _pl
-            _p_imgs, _p_wav, _p_sr, _cuts, _p_seed = _best
+            _p_imgs, _p_wav, _p_sr, _cuts, _p_seed = _best[:5]
             if _cuts:
-                # chain_00150: a previs cut between two windows came out of the
-                # hop as a camera move, not a cut. Kept as a warning because a
-                # cut INSIDE a window is pinned into the film as it is.
+                # A cut that survives every take is usually the text's: a beat that
+                # moves to a new place. The hop there may carry it as a camera move
+                # (00150's hop 5) or copy it (00154's hop 1).
                 print(f"[{TAG}] WARNING: hand-tie previs {_si + 1}: using seed {_p_seed}, "
-                      "which cuts at " + ", ".join(f"f{c}" for c in _cuts) + ". A hop "
-                      "usually carries a cut between its windows as a camera move; "
-                      "check the film there.", flush=True)
+                      "which cuts at " + ", ".join(f"f{c}" for c in _cuts) + ". A beat that "
+                      "moves to a new place asks for a cut; check the film there.", flush=True)
                 ht_previs_warn.append((_si + 1, _p_seed, _cuts))
             elif _p_seed != _p_seed0:
                 print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} holds one take",

@@ -273,15 +273,23 @@ def moments(shots, sound=PREVIS_SOUND):
     """One moment per window: shot k's `moment` (else the first sentence of its beat)
     for window k. There is no closing moment: the last hop ends where its beat goes.
 
-    `sound` appends each beat's trailing sound sentence to its own moment, so the
-    previs's audio branch has a named non-voice target.
+    `sound` appends a trailing sound sentence, so the previs's audio branch has a
+    named non-voice target. Window k is the first 0.9 s of hop k, which is the moment
+    hop k-1 ENDS, so it takes the latest closing sound before hop k (ambience carries
+    until a beat names another); window 0 takes its own beat's.
+    A beat's last sentence is how it ends: chain_00154's "The crunch of her chewing"
+    on the bite hop put chewing at that hop's opening window, the previs ate early,
+    hop 3 opened with the skewer already in her mouth and hop 4 spoke its line while
+    chewing.
     """
     out = []
-    for sh in shots:
+    for k, sh in enumerate(shots):
         beat = (sh or {}).get("beat")
         m = str((sh or {}).get("moment") or "").strip() or _first_sentence(beat)
         if m and sound:
-            snd = _sound_sentence(beat)
+            snd = _sound_sentence(beat) if not k else next(
+                (s for s in (_sound_sentence((shots[j] or {}).get("beat")) for j in range(k - 1, -1, -1))
+                 if s), "")
             if snd and snd not in m:
                 m = m.rstrip() + " " + snd
         out.append(m)
@@ -606,10 +614,10 @@ def deflicker(master, frames=DEFLICKER, still=SEAM_STILL):
     return float(corr.abs().max())
 
 
-CUT_RATIO = 6.0          # a cut changes the frame this many times more than its neighbours do
-CUT_COMP_RATIO = 12.0    # ... and the coarse composition this many times more
-CUT_FLOOR = 20.0 / 255   # ... and by at least this much: a jump in a still shot is no cut
-CUT_SPAN = 12            # frames either side that set "its neighbours"
+CUT_JUMP = 1.4           # a cut's one-frame change beats CUT_SPAN frames of motion either side
+CUT_FLOOR = 20.0 / 255   # ... and is at least this big: a jump in a still shot is no cut
+CUT_SPAN = 3             # the motion yardstick: frames either side
+CUT_CELL = 32            # px per coarse cell: layout, not texture
 PREVIS_TRIES = 3         # previs renders before the least-cut one is used anyway
 PREVIS_RETRY_STRIDE = 104729   # seed step between tries: clear of every hop's own seed
 
@@ -631,14 +639,14 @@ def same_cut(before, now, near=CUT_SAME_FRAMES):
 
 
 def window_cuts(cuts, windows):
-    """The cuts that land INSIDE a window, the only ones worth a new take.
+    """The cuts that land INSIDE a window: the worse kind, used to rank takes.
 
-    A previs compresses ~8 s of action into ~2.8 s per hop, so a beat that changes
-    place cuts (chain_00150 f314/f321, the 9:16 vlog f200 and f191). Between two
-    windows that is harmless: the hop is pinned at both ends to clean frames and
-    carries the gap as a camera move (00150's hop 5, the vlog's hop 3). Inside a
-    window the cut is pinned into two hops' guides. `cuts` are first-new-frame
-    indices, so a cut AT a window's first frame leaves that window whole.
+    Inside a window a cut is pinned into two hops' guides. Between two windows a hop
+    carries it as a camera move about half the time (00150's hop 5, 00154's hop 3)
+    and copies it the other half (00154's hop 1, from the previs's f66), so every cut
+    earns a new take; this only picks the least bad take when all of them cut.
+    `cuts` are first-new-frame indices, so a cut AT a window's first frame leaves
+    that window whole.
     """
     return [c for c in cuts if any(w < c < w + WINDOW for w in windows)]
 
@@ -649,28 +657,35 @@ def previs_cuts(frames):
     The previs is the single point of failure: every hop follows it, and a cut in it
     becomes a cut in the film (chain_00135 split two kitchens; chain_00146 jumped
     from a medium to a wide at 13.08 s). Nobody runs a previs-only dry run first, so
-    the node checks its own. A cut is a frame whose change is CUT_RATIO times the
-    median change of the CUT_SPAN frames either side, whose coarse composition jumps
-    CUT_COMP_RATIO times, and by at least CUT_FLOOR. Calibrated on films: real cuts
-    9-87x / 25-164x / 52-74 per 255; clean hand-tie films (rain, dancing, walking
-    included) at most 4.2x / 6.6x.
+    the node checks its own.
+
+    A cut is a ONE-frame jump in the coarse layout bigger than CUT_SPAN frames of
+    change on either side of it, by CUT_JUMP, and at least CUT_FLOOR. Motion, however
+    fast, accumulates: three frames of a walk move the layout more than one does. A
+    cut does not. The old test (a frame's change against the median of its
+    neighbours') read a handheld walk's every frame as a big change and missed
+    chain_00154's previs cut at f66, road to shopfronts, at 3.6x against its 6x;
+    hop 1 copied it into the film. Calibrated on 23 clips: cuts 1.81-5.22 at
+    29-45/255 (00146 f314, 00154 previs f66 / f192, its hop 1 f123); clean films
+    (00141-00153: walking, rain, dancing, 12 native hops) at most 1.64, and every
+    clean frame over 1.0 moves 14/255 or less.
     """
     import torch  # noqa: PLC0415
     import torch.nn.functional as F  # noqa: PLC0415
-    x = frames.float()
-    if int(x.shape[0]) < 2 * CUT_SPAN:
+    n = int(frames.shape[0])
+    if n < 2 * CUT_SPAN + 2:
         return []
-    x = F.avg_pool2d(x.permute(0, 3, 1, 2), 4)                 # quarter size is plenty
-    m = (x[1:] - x[:-1]).abs().mean(dim=(1, 2, 3))
-    small = F.avg_pool2d(x.mean(1, keepdim=True), 8)[:, 0]
-    c = (small[1:] - small[:-1]).abs().mean(dim=(1, 2))
-    n, out = int(m.shape[0]), []
-    for t in range(n):
-        idx = [k for k in range(max(0, t - CUT_SPAN), min(n, t + CUT_SPAN + 1)) if abs(k - t) > 1]
-        lm, lc = float(m[idx].median()), float(c[idx].median())
-        if (float(m[t]) >= CUT_FLOOR and float(m[t]) > CUT_RATIO * max(lm, 1e-4)
-                and float(c[t]) > CUT_COMP_RATIO * max(lc, 1e-4)):
-            out.append(t + 1)
+    h, w = int(frames.shape[1]), int(frames.shape[2])
+    grid = (max(1, h // CUT_CELL), max(1, w // CUT_CELL))
+    luma = torch.cat([F.adaptive_avg_pool2d(frames[i:i + 32].float().mean(-1)[:, None], grid)[:, 0]
+                      for i in range(0, n, 32)])           # chunked: a native previs is 4 GB
+    d = lambda a, b: float((luma[a] - luma[b]).abs().mean())  # noqa: E731
+    out = []
+    for t in range(CUT_SPAN + 1, n - CUT_SPAN):
+        j = d(t - 1, t)
+        if j >= CUT_FLOOR and j >= CUT_JUMP * max(d(t - 1 - CUT_SPAN, t - 1), d(t, t + CUT_SPAN),
+                                                  0.5 / 255):
+            out.append(t)
     return out
 
 

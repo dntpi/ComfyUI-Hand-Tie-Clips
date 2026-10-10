@@ -133,9 +133,9 @@ ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,
 # the bug _sound_sentence exists for: a moment is a picture, and a previs whose
 # text names only pictures gives its audio branch nothing to do but invent a
 # voice (chain_00147: 6 invented words, all in the first 4 s).
-ck("plain beats: first sentence per window with its sound sentence, nothing after the last",
+ck("plain beats: first sentence per window; the last beat's own closing sound reaches no window",
    plain == ("At 00:00.000 @cook chops herbs. At 00:02.833 @cook looks out of the window. "
-             "At 00:05.667 @cook sips. The low hum of the refrigerator."), plain)
+             "At 00:05.667 @cook sips."), plain)
 ck("_last_sentence still reads a pronoun ending (kept for moment_end's split)",
    HT._last_sentence("@dex steps out. He walks toward the camera.") == "@dex walks toward the camera.",
    HT._last_sentence("@dex steps out. He walks toward the camera."))
@@ -175,6 +175,16 @@ _on = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."
 ck("sound=False restores the exact old text (the A/B lever)",
    _off == "At 00:00.000 @dex walks. At 00:02.833 @dex turns.", _off)
 ck("and the default is the sound-carrying one", "The low hum of the refrigerator." in _on, _on)
+_eat = HT.moments([{"beat": "@mina slows by a stall. A sizzling grill, the vendor calling out orders."},
+                   {"beat": "@mina holds the skewer up. (S1) says, <d>[English] Here goes.</d> She bites. "
+                            "The crunch of her chewing, traffic hum, footsteps."}])
+ck("a window's sound is the PREVIOUS beat's closing sound (00154: chewing at the bite hop's opening)",
+   _eat == ["@mina slows by a stall. A sizzling grill, the vendor calling out orders.",
+            "@mina holds the skewer up. A sizzling grill, the vendor calling out orders."], _eat)
+_carry = HT.moments([{"beat": "@cook chops. The low hum of the refrigerator."}, {"beat": "@cook turns. She sips."},
+                     {"beat": "@cook sits. She reads."}])
+ck("a beat that names no sound passes the last named one on (a soundless window invents a voice)",
+   all(m.endswith("The low hum of the refrigerator.") for m in _carry), _carry)
 ck("PREVIS_SOUND is on by default, so a plain plan needs no extra input",
    HT.PREVIS_SOUND is True)
 # the movement test that produced the finding: every beat ends on a real sound
@@ -188,10 +198,10 @@ _move = [{"beat": "@dex walks down a busy night street of neon shop signs, rolli
                   "He walks toward the camera down the glistening street. "
                   "Steady rain, distant traffic, footsteps splashing."}]
 _t = HT.compile_previs(_move, [192] * 3)[0]
-ck("all three movement-test beats name their sound",
-   all(s in _t for s in ("A sizzling grill, crowd chatter, footsteps on wet pavement.",
-                         "Rain pattering on the canvas awning, the bass beat muffled behind him.",
-                         "Steady rain, distant traffic, footsteps splashing.")), _t)
+ck("each window carries the sound the hop before it ends on (window 0: its own)",
+   _t.count("A sizzling grill, crowd chatter, footsteps on wet pavement.") == 2
+   and "Rain pattering on the canvas awning, the bass beat muffled behind him." in _t
+   and "Steady rain" not in _t, _t)
 ck("and the bass line the sound vocabulary misses is still carried",
    "A thumping bass beat fills the street, with cheers from inside the club."
    in HT.compile_previs(
@@ -315,11 +325,11 @@ ck("a cut too close to the start is left alone", HT.detail_settle(before.clone()
 
 print("\nthe previs checks itself for hard cuts (chain_00146: medium to wide at 13.08 s)")
 torch.manual_seed(3)
-def _scene(seed):
+def _scene(seed):                                                     # a 512p-sized frame (16 x 8 cells)
     g = torch.Generator().manual_seed(seed)
-    coarse = torch.rand(1, 3, 4, 7, generator=g)                       # big shapes: a composition
-    big = torch.nn.functional.interpolate(coarse, size=(64, 112), mode="bilinear", align_corners=False)
-    return (0.8 * big + 0.2 * torch.rand(1, 3, 64, 112, generator=g))[0].permute(1, 2, 0)
+    coarse = torch.rand(1, 3, 6, 4, generator=g)                       # big shapes: a composition
+    big = torch.nn.functional.interpolate(coarse, size=(512, 288), mode="bilinear", align_corners=False)
+    return (0.8 * big + 0.2 * torch.rand(1, 3, 512, 288, generator=g))[0].permute(1, 2, 0)
 scene_a, scene_b = _scene(10), _scene(11)
 pan = torch.stack([torch.roll(scene_a, shifts=t, dims=1) for t in range(60)])          # a moving camera
 pan += 0.03 * torch.randn_like(pan)                                                   # and rain
@@ -329,17 +339,25 @@ cut[37:] = torch.stack([torch.roll(scene_b, shifts=t, dims=1) for t in range(23)
 ck("a hard cut to another shot is found at its first new frame", HT.previs_cuts(cut) == [37], HT.previs_cuts(cut))
 ck("run() renders the previs again on a cut, PREVIS_TRIES at most, keeping the least-cut take",
    "for _try in range(_ht.PREVIS_TRIES):" in src and "_ht.previs_cuts(_p_imgs[:_p_len])" in src
-   and "len(_cuts) < len(_best[3])" in src)
+   and "_rank < _best[5]" in src)
 ck("a previs that cuts on every try is a warning in the log and in info",
    "ht_previs_warn.append(" in src and "check the film there" in src)
 ck("a cut the text asks for (same place twice) stops the re-rolls (chain_00150: 13.38/13.42/13.62 s)",
    HT.same_cut([321], [322]) and HT.same_cut([314], [327]) and "if _again:" in src)
 _w = HT.layout([192] * 6)["windows"]
-ck("only a cut INSIDE a window counts: every cut so far fell between windows",
+ck("window_cuts finds the cuts inside a window",
    HT.window_cuts([314, 321, 200, 191], _w) == [] and HT.window_cuts([145, 210], _w) == [145, 210]
    and HT.window_cuts([136, 158], _w) == [], HT.window_cuts([314, 321, 200, 191, 145, 210, 136, 158], _w))
-ck("run() re-rolls the previs on window cuts only, and logs the others as bridged",
-   "_cuts = _ht.window_cuts(_all, _lay[\"windows\"])" in src and "the hop there carries it as a camera move" in src)
+ck("run() re-rolls on EVERY cut (00154's hop 1 copied one between windows), window cuts rank the takes",
+   "_cuts = _ht.previs_cuts(_p_imgs[:_p_len])" in src and "_rank < _best[5]" in src
+   and "window_cuts(_cuts" in src)
+_walk = torch.stack([torch.roll(scene_a, shifts=6 * t, dims=1) for t in range(60)])     # a fast handheld walk
+_walk += 0.03 * torch.randn_like(_walk)
+_wcut = _walk.clone()
+_wcut[30:] = torch.stack([torch.roll(scene_b, shifts=6 * t, dims=1) for t in range(30)])
+ck("a fast walk is not a cut", HT.previs_cuts(_walk) == [], HT.previs_cuts(_walk))
+ck("a cut inside a fast walk is found (00154 f66: 3.6x under the old median test)",
+   HT.previs_cuts(_wcut) == [30], HT.previs_cuts(_wcut))
 ck("a cut that moved, or a new one, is not the same cut",
    not HT.same_cut([321], [261, 327]) and not HT.same_cut([100], [200]) and not HT.same_cut([], [321]))
 

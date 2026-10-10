@@ -202,6 +202,12 @@ function mountEditor(node) {
     // solo and lock are driven from here and from the cards and RUN alike.
     let timeline = null;
 
+    // D2: the filmstrip draws a sprite for each hop the last run rendered, and
+    // the TIMELINE is what already receives those hop keys. Wired here rather
+    // than inside the editor because the timeline is built after it -- so this
+    // is a late bind, not a call at construction time.
+    editor.setHopKeySource(() => timeline?.hopKeys?.() || null);
+
     const runPanel = createRunPanel(node, {
         onChange: () => {
             // render_from / render_through are drawn in RUN and also driven by

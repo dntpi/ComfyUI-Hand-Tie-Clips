@@ -62,6 +62,9 @@
    * status bar, row 2 the tab strip, row 3 the tab's own tools -- and a token
    * shared between them is a token that cannot be sized for any of them. */
   --h3-head-h: 24px;
+  /* D2: the one card under the filmstrip. A max-height, not a min -- the
+   * detail pane is what would otherwise grow the node once per shot. */
+  --h3-detail-h: 420px;
 
     /* A type scale, which this sheet did not have. Hierarchy was carried by
      * four literal sizes plus alpha, with nothing bold anywhere, which is why
@@ -207,6 +210,115 @@
     border-radius: var(--h3-radius-sm);
 }
 .h3e-empty-cta { display: block; margin: 8px auto 0; }
+
+/* -- D2: the filmstrip, and the one card under it ------------------------- */
+
+/* The strip scrolls HORIZONTALLY and has a fixed height. That is the whole of
+ * the §9.2 requirement -- the Script surface is the same size at 6 shots and at
+ * 19 -- and it is why the strip must never be allowed to wrap: a wrapped strip
+ * is a taller strip, which is a taller node, which is the bug this replaces. */
+.h3e-filmstrip {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: var(--h3-gap-sm);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    padding: 2px 0 var(--h3-gap-sm);
+    min-height: 0;
+    max-height: none;
+}
+
+.h3e-poster {
+    flex: 0 0 auto;
+    width: 116px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    background: var(--h3-panel);
+    border: 1px solid var(--h3-border);
+    border-radius: var(--h3-radius-sm);
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    user-select: none;
+}
+
+.h3e-poster:hover { border-color: color-mix(in srgb, var(--h3-accent) 40%, var(--h3-border)); }
+.h3e-poster.h3e-on {
+    border-color: var(--h3-accent);
+    background: color-mix(in srgb, var(--h3-accent) 6%, var(--h3-panel));
+}
+
+.h3e-poster-thumb {
+    height: 62px;
+    background: var(--h3-sunken);
+    border: 1px solid var(--h3-border-soft);
+    border-radius: 2px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.h3e-poster-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.h3e-poster-noimg { color: var(--h3-faint); font-size: var(--h3-fs-sm); }
+
+/* Slate number in tabular mono so a row of them lines up column-wise. */
+.h3e-poster-no {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-accent);
+    letter-spacing: 0.04em;
+}
+
+.h3e-poster-meta {
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.h3e-poster-beat {
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-muted);
+    line-height: 1.35;
+    /* Two lines of peek, then ellipsis. A poster that grows with its beat is a
+       strip whose height depends on the text, which is §9.2 again. */
+    max-height: 2.7em;
+    overflow: hidden;
+}
+
+.h3e-poster-row { display: flex; gap: 3px; margin-top: auto; }
+.h3e-mini { padding: 1px 5px; font-size: var(--h3-fs-xs); line-height: 1.5; }
+.h3e-mini.h3e-soft { opacity: 0.4; }
+
+.h3e-poster-add {
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border-style: dashed;
+    background: transparent;
+    color: var(--h3-faint);
+}
+.h3e-poster-add:hover { color: var(--h3-accent); }
+.h3e-poster-plus { font-size: 18px; line-height: 1; }
+
+/* The detail pane holds exactly one card and scrolls itself, so its height is
+ * the node's height and does not depend on how many shots there are. */
+.h3e-detail {
+    min-height: 0;
+    max-height: var(--h3-detail-h);
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+}
+.h3e-detail > .h3e-card { margin-top: 0; }
 
 /* -- shot cards ----------------------------------------------------------- */
 

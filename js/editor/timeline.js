@@ -731,5 +731,18 @@ export function createTimeline(node, { editor, onChange } = {}) {
         closePlayer();
     }
 
-    return { root, render, badge, destroy };
+    /* D2: the per-hop cache keys of the last run, for the Script filmstrip's
+   * thumbnails. This module already receives every hop's key on the preview
+   * event and keeps them in h3_timeline_run, so handing them out costs nothing
+   * and avoids a second copy of the same run record on the node.
+   *
+   * Index 0 is hop 1. A hop that never rendered has no key and reads null,
+   * which the filmstrip draws as the bare slate. */
+  function hopKeys() {
+    const r = run();
+    if (!r || !Array.isArray(r.hops)) return null;
+    return r.hops.map((h) => (h && h.key) || null);
+  }
+
+  return { root, render, badge, destroy, hopKeys };
 }

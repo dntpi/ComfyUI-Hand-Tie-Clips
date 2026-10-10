@@ -258,5 +258,96 @@ function mountFresh(opts) {
   }
 }
 
+/* -- D2: the filmstrip, and a surface that does not grow with shot count --- */
+
+console.log("\nmount: D2 filmstrip");
+
+{
+  const small = mountFresh({ plan: planJSON(6) });
+  const big = mountFresh({ plan: planJSON(19) });
+  const rSmall = small.domWidgets[0];
+  const rBig = big.domWidgets[0];
+
+  const posters = (root) => {
+    let n = 0;
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList && e.classList.contains("h3e-poster")) n += 1;
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return n;
+  };
+  const detailCards = (root) => {
+    let n = 0;
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList && e.classList.contains("h3e-detail")) {
+        n = (e.children || []).filter((c) => c.classList?.contains("h3e-card")).length;
+      }
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return n;
+  };
+
+  ck("6 shots draws 7 posters (6 + the + card)", posters(rSmall) === 7,
+     `got ${posters(rSmall)}`);
+  ck("19 shots draws 20 posters", posters(rBig) === 20, `got ${posters(rBig)}`);
+
+  // The whole point of §9.2: ONE card in the detail pane at any shot count.
+  ck("6 shots shows exactly one card in the detail pane",
+     detailCards(rSmall) === 1, `got ${detailCards(rSmall)}`);
+  ck("19 shots shows exactly one card in the detail pane",
+     detailCards(rBig) === 1, `got ${detailCards(rBig)}`);
+
+  // And the shot count is visible on the posters, not by stacking cards.
+  const beats = (root) => {
+    let n = 0;
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList && e.classList.contains("h3e-poster-beat")) n += 1;
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return n;
+  };
+  ck("every poster carries its beat's first words",
+     beats(rBig) === 19, `got ${beats(rBig)} of 19`);
+
+  // Selection: clicking poster 3 moves the detail pane to shot 3.
+  const findPosters = (root) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList && e.classList.contains("h3e-poster")
+          && !e.classList.contains("h3e-poster-add")) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+  const ps = findPosters(rSmall);
+  ck("poster 1 is selected by default",
+     ps.length > 0 && ps[0].classList.contains("h3e-on"));
+  if (ps.length >= 3) {
+    let clickErr = null;
+    try { ps[2].click(); } catch (e) { clickErr = e; }
+    ck("clicking a poster does not throw", !clickErr,
+       clickErr ? String(clickErr.message || clickErr).slice(0, 120) : "");
+    // The strip is REBUILT on selection, so the node references from before the
+    // click are stale -- querying again is the only way to see the new state.
+    const after = findPosters(rSmall);
+    ck("clicking poster 3 selects it",
+       after.length > 2 && after[2].classList.contains("h3e-on"),
+       `selection did not move (${after.length} posters, sel prop ${
+         small.properties.h3_film_selected})`);
+    ck("poster 1 is no longer selected",
+       after.length > 0 && !after[0].classList.contains("h3e-on"));
+    ck("only one poster is selected at a time",
+       after.filter((p) => p.classList.contains("h3e-on")).length === 1);
+  }
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

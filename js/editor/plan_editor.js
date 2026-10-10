@@ -271,6 +271,26 @@ export function createPlanEditor(node, { onChange }) {
     const list = el("div", "h3e-shots");
     root.appendChild(list);
 
+    /* -- D2: the filmstrip, and the card editor re-homed below it ---------- */
+    //
+    // Shots mode draws ONE row of mini posters with the selected shot's full
+    // card underneath, instead of every card stacked full height. That is the
+    // whole change, and it is what makes the Script surface a fixed height: at
+    // six shots and at nineteen the panel is the same size, because the strip
+    // scrolls horizontally and the detail pane shows exactly one card.
+    //
+    // NOT a rewrite. The card below is renderCard(), the same builder the old
+    // list used, so there is one implementation of a shot card and one place
+    // that writes shot_plan. `cardFor(i)` returns this same pane's editor, so
+    // a TIMELINE click still lands the caret in that shot's beat.
+    const strip = el("div", "h3e-filmstrip");
+    const detail = el("div", "h3e-detail");
+    root.appendChild(strip);
+    root.appendChild(detail);
+    // The old stacked list stays in the DOM but is not drawn in Shots mode --
+    // it is still what `shots` mode falls back to if the strip is ever off.
+    list.style.display = "none";
+
     /* JSON escape hatch */
     const jsonWrap = el("details", "h3e-json-wrap");
     const jsonSum = el("summary", null, "JSON");
@@ -328,6 +348,26 @@ export function createPlanEditor(node, { onChange }) {
     onVocabRefresh(() => { loadVocab(); });
 
     /* -- state plumbing -- */
+
+    /* Which shot the filmstrip has selected. View state only -- the brief is
+     * explicit that shot_plan and ref_plan stay the only sources of truth for
+     * the PLAN, and a selection is neither written to the widget nor read by
+     * run(). It lives in node.properties so it survives a re-render, a tab
+     * switch and a workflow reload, exactly like the fold state above. */
+    const SEL_PROP = "h3_film_selected";
+    function selected() {
+        const v = parseInt(node.properties?.[SEL_PROP], 10);
+        return Number.isFinite(v) ? v : 0;
+    }
+    function setSelected(i) {
+        node.properties ??= {};
+        node.properties[SEL_PROP] = Math.max(0, i);
+    }
+    /** Coerce the selection back into range when shots are removed. */
+    function clampSelection() {
+        if (!shots.length) { setSelected(0); return; }
+        if (selected() >= shots.length) setSelected(shots.length - 1);
+    }
 
     /* Collapsed cards persist in node.properties so the state survives both a
      * re-render and a workflow reload. This is presentation state only -- it
@@ -473,12 +513,15 @@ export function createPlanEditor(node, { onChange }) {
     }
 
     /** The SCRIPT card for shot `index`, unfolded, for editing elsewhere.
-     *  The same builder the list uses, so both write the same `shot_plan`. */
+     *  The same builder the detail pane uses, so both write the same
+     *  `shot_plan`. After D2 this also SELECTS the shot: a TIMELINE block
+     *  click has to land the caret in that shot's beat, and the card the user
+     *  can reach is now the one in the detail pane. */
     function cardFor(index) {
         if (!shots[index]) return null;
-        const card = renderCard(shots[index], index);
-        card.classList.remove("h3e-collapsed");
-        return card;
+        setSelected(index);
+        renderCards();
+        return detail.firstChild || null;
     }
 
     /** 1-based shot number against the range. 0 on either end means open. */
@@ -854,6 +897,166 @@ export function createPlanEditor(node, { onChange }) {
         return card;
     }
 
+    /* -- D2: the filmstrip ----------------------------------------------------- */
+
+    /* Where the thumbnails come from. The route serves a sprite for a hop the
+     * last run rendered; anything else draws the slate alone. Never
+     * HopStore.get() -- that builds a ~3 GB float copy of a whole hop in
+     * memory, which is what the timeline's frames() route exists to avoid.
+     *
+     * The keys arrive from the last run's preview event, which the TIMELINE
+     * already receives and keeps. They are read through `getHopKeys`, which
+     * the host wires up after construction -- the timeline is built after this
+     * editor, so a direct reference would be a cycle. Absent that, every
+     * poster draws its slate, which is the correct answer for a plan that has
+     * never been rendered. */
+    const SPRITE_ROUTE = "/h3_ref_chain/hop_sprite";
+    let getHopKeys = null;
+    function setHopKeySource(fn) { getHopKeys = fn; }
+    function hopKeyAt(i) {
+        try {
+            const keys = getHopKeys?.();
+            return Array.isArray(keys) ? (keys[i] || null) : null;
+        } catch (_) {
+            return null;
+        }
+    }
+    function spriteFor(hopKey) {
+        if (!hopKey) return "";
+        return `${SPRITE_ROUTE}?key=${encodeURIComponent(hopKey)}&n=24`;
+    }
+
+    /* One mini poster: slate number, framing + duration, the beat's first
+     * words, and the two controls that have to be reachable per shot without
+     * opening it (Solo and Lock). Everything else is in the detail pane. */
+    function renderPoster(shot, index) {
+        const shotNo = index + 1;
+        const card = el("div", "h3e-poster" + (index === selected() ? " h3e-on" : ""));
+
+        const t = timing();
+        const frames = t.lengths[index] || 0;
+        const delivered = index === 0 ? frames : Math.max(0, frames - t.ov);
+
+        // Thumbnail, if the last run rendered this hop.
+        const thumb = el("div", "h3e-poster-thumb");
+        const src = spriteFor(hopKeyAt(index));
+        if (src) {
+            const img = el("img", "h3e-poster-img");
+            img.src = src;
+            img.alt = "";
+            img.loading = "lazy";
+            img.draggable = false;
+            img.title = `hop ${shotNo} as last rendered`;
+            thumb.appendChild(img);
+        } else {
+            // No sprite: the slate alone, rather than a broken-image box.
+            thumb.appendChild(el("span", "h3e-poster-noimg", "—"));
+        }
+        card.appendChild(thumb);
+
+        // Slate number in tabular mono, so a column of them lines up.
+        card.appendChild(el("span", "h3e-poster-no", String(shotNo).padStart(2, "0")));
+
+        const d = shot.directives || {};
+        const meta = [];
+        if (d.framing) meta.push(d.framing);
+        if (frames) meta.push(clock(delivered / t.fps));
+        card.appendChild(el("span", "h3e-poster-meta", meta.join(" · ")));
+
+        const peek = String(shot.beat || "").replace(/\s+/g, " ").trim();
+        card.appendChild(el("span", "h3e-poster-beat",
+            peek.length > 58 ? peek.slice(0, 58) + "…" : peek));
+
+        // Solo / Lock, without opening the shot.
+        const row = el("span", "h3e-poster-row");
+        const range = renderRange();
+        const inR = inRange(shotNo, range);
+        const solo = button("solo", `Render only shot ${shotNo}`, (e) => {
+            e?.stopPropagation?.();
+            toggleSolo(shotNo);
+            commit();
+        }, "h3e-btn h3e-mini" + (range.from === shotNo && range.through === shotNo ? " h3e-on" : ""));
+        solo.classList.toggle("h3e-soft", !inR && !(range.from === shotNo && range.through === shotNo));
+        const lock = button(shot.locked ? "locked" : "lock",
+            shot.locked ? `Shot ${shotNo} is locked: reuse its cached render` : `Lock shot ${shotNo}`,
+            (e) => {
+                e?.stopPropagation?.();
+                toggleLock(index);
+                commit();
+            }, "h3e-btn h3e-mini" + (shot.locked ? " h3e-on" : ""));
+        row.appendChild(solo);
+        row.appendChild(lock);
+        card.appendChild(row);
+
+        // The whole poster selects. The click target is the card, not the
+        // buttons above, so a shot with a long beat is still one click away.
+        card.addEventListener("click", (e) => {
+            if (e.target !== card && e.target.closest?.(".h3e-mini")) return;
+            setSelected(index);
+            renderCards();
+        });
+        card.title = `Shot ${shotNo}` + (shot.beat ? ` — ${String(shot.beat).slice(0, 120)}` : "");
+        return card;
+    }
+
+    /* The dashed + that ends the strip. It appends through the SAME
+     * appendShot() the header button and the TIMELINE's "+ extend" call, so
+     * there is one definition of what appending a shot does -- including the
+     * `join: continuous` that makes the new hop continue rather than restart. */
+    function renderAddCard() {
+        const c = el("button", "h3e-poster h3e-poster-add");
+        c.type = "button";
+        c.appendChild(el("span", "h3e-poster-plus", "+"));
+        c.appendChild(el("span", "h3e-poster-no",
+            String(shots.length + 1).padStart(2, "0")));
+        c.title = "Add a shot. It continues the one before it.";
+        c.addEventListener("click", () => {
+            appendShot();
+            setSelected(shots.length - 1);
+            renderCards();
+        });
+        return c;
+    }
+
+    function renderStrip() {
+        strip.textContent = "";
+        if (broken || !shots.length) return;
+        shots.forEach((s, i) => strip.appendChild(renderPoster(s, i)));
+        strip.appendChild(renderAddCard());
+    }
+
+    /* The detail pane is the selected shot's card -- the same renderCard() the
+     * old list used. Not rebuilt while the caret is inside it, because a
+     * re-render under a live textarea eats the selection and the undo stack. */
+    function renderDetail() {
+        if (detailIsCurrent()) return;
+        detail.textContent = "";
+        const i = selected();
+        if (broken) {
+            detail.appendChild(el("div", "h3e-note h3e-note-error",
+                "shot_plan is not valid JSON. Fix it in the JSON section below."));
+            return;
+        }
+        if (!shots.length) {
+            detail.appendChild(el("div", "h3e-empty",
+                "No shots yet. The + at the end of the strip adds shot 1."));
+            return;
+        }
+        if (!shots[i]) { setSelected(0); return renderDetail(); }
+        const card = renderCard(shots[i], i);
+        card.classList.remove("h3e-collapsed");
+        // The detail card is always open; its own fold control would have
+        // nothing to expand, since there is exactly one card down here.
+        detail.appendChild(card);
+        detailKey = shotKeyOf(shots[i], i);
+    }
+    let detailKey = null;
+    function shotKeyOf(shot, i) { return `${shot.id || "s" + (i + 1)}:${selected()}`; }
+    function detailIsCurrent() {
+        if (!detailKey) return false;
+        return detailKey === shotKeyOf(shots[selected()] || {}, selected());
+    }
+
     function renderCards() {
         const m = mode();
         simpleBtn.classList.toggle("h3e-on", m === "simple");
@@ -895,7 +1098,10 @@ export function createPlanEditor(node, { onChange }) {
             }, "h3e-btn h3e-empty-cta"));
             list.appendChild(empty);
         }
-        shots.forEach((s, i) => list.appendChild(renderCard(s, i)));
+        clampSelection();
+        // D2: the strip and the one card under it, rather than every card.
+        renderStrip();
+        renderDetail();
 
         const t = timing();
         summary.textContent = shots.length
@@ -917,7 +1123,8 @@ export function createPlanEditor(node, { onChange }) {
     // the box resizes as shots are added rather than on the next accept.
     // The timeline reads the live card list and drives solo and lock through
     // the same functions the cards use -- no second copy of either rule.
-    return { root, render: renderCards, reload, mode, timing,
-             shots: () => shots, renderRange, toggleSolo, toggleLock,
-             appendShot, removeShot, cardFor };
+return { root, render: renderCards, reload, mode, timing,
+               shots: () => shots, renderRange, toggleSolo, toggleLock,
+               appendShot, removeShot, cardFor, setHopKeySource,
+               selected, setSelected };
 }

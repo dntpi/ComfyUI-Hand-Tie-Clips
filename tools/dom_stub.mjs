@@ -45,7 +45,12 @@ class StubElement {
     this.dataset = {};
     this._listeners = new Map();
     this.classList = new StubClassList(this);
-    this.textContent = "";
+    // `textContent = ""` REMOVES THE CHILDREN. This was a plain field, so every
+    // `list.textContent = ""` in the panel silently did nothing and the strip
+    // accumulated a second copy of itself on each re-render -- which presented
+    // as a selection bug and was not one. A stub that is more permissive than
+    // the real DOM hides real bugs rather than surfacing them.
+    this._text = "";
     this.value = "";
     this.checked = false;
     this.disabled = false;
@@ -106,6 +111,18 @@ class StubElement {
   hasAttribute(k) { return k in this.attributes; }
 
   // --- class / style ------------------------------------------------------
+  get textContent() { return this._text || ""; }
+  set textContent(v) {
+    this._text = v == null ? "" : String(v);
+    // Assigning text replaces the children. Every `x.textContent = ""` in the
+    // panel relies on this to clear a container, so a stub that kept the
+    // children would make re-render append forever -- which is exactly the
+    // class of bug this stub exists to catch.
+    if (this._text === "") {
+      for (const c of this.children) c.parentNode = null;
+      this.children.length = 0;
+    }
+  }
   get className() { return this.classList.value; }
   set className(v) { this.classList.value = v; }
   get innerHTML() { return ""; }

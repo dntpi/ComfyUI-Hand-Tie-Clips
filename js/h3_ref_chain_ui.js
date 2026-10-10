@@ -403,14 +403,19 @@ function mountEditor(node) {
     root.appendChild(tabs.bodies);
     root.appendChild(runPanel.root);
 
-    // The ⚙ control. A tab rather than a seventh work tab, because RUN is not
-    // where you write the film -- it is the panel you check before every
-    // queue, and keeping it out of the tab strip is what keeps the strip
-    // legible.
+    // D1b: the ⚙ lives in the STATUS BAR, not the tab strip.
+    //
+    // It used to sit at the end of the tab strip, which is the whole reason the
+    // surface read as a tab that popped a window: a control among peers looks
+    // like a peer. In the status bar it is chrome that opens a different panel,
+    // which is what it is, and it is reachable while RUN is up -- hiding the
+    // strip is only possible because the ⚙ was never inside it.
     const runBtn = button("⚙", "The render controls: canvas, sampler, cache, upscaler",
         () => setSurface(getSurface() === "run" ? lastTab : "run"),
         "h3e-btn h3e-mode h3e-runbtn");
-    tabs.strip.appendChild(runBtn);
+    // First child of the status bar, so it reads as chrome rather than as one
+    // more status item -- the digest and the warning chip sit after it.
+    statusBar.insertBefore(runBtn, statusBar.firstChild);
 
     // A2's manual pin, on the tab strip so it is reachable without opening
     // RUN. Freezing the height is the answer to "I sized this node and it
@@ -460,6 +465,14 @@ node._h3PaintPin = paintPin;
         }
         tabs.bodies.hidden = run;
         runPanel.root.hidden = !run;
+        // D1b: the WORK tabs go away entirely when RUN is up, not just the tab
+        // bodies. Leaving six tab buttons lit above a panel that is not one of
+        // them is what made the ⚙ read as "a tab that opens a window" -- the
+        // chrome said you were on a tab, and the content disagreed. The strip
+        // comes back on exit, with the tab you came from still selected.
+        tabs.strip.hidden = run;
+        // The status bar stays: it is row 1 and it is global, and the digest is
+        // exactly what you want while deciding whether to queue.
         // A <details> cannot be told to be open by `hidden` alone -- if it was
         // left open, its body is still in the flow and would show through the
         // tab strip. Open it on entry and close it on exit so exactly one

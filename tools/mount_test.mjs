@@ -549,5 +549,56 @@ console.log("\nmount: D4 ranges and keys");
   }
 }
 
+/* -- D1b: RUN is a frame, not a tab that pops a window -------------------- */
+
+console.log("\nmount: D1b the RUN frame");
+
+{
+  const node = mountFresh({ plan: planJSON(6) });
+  const root = node.domWidgets[0];
+  const ed = node._h3Editor;
+
+  const find = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+  const bar = find("h3e-statusbar")[0];
+  const strip = find("h3e-tabs")[0];
+  const run = find("h3e-run")[0];
+  const runBtns = find("h3e-runbtn");
+
+  ck("the ⚙ exists", runBtns.length === 1);
+  ck("the ⚙ is in the STATUS BAR, not the tab strip",
+     runBtns.length === 1 && runBtns[0].parentNode === bar,
+     runBtns.length ? "parent is not the status bar" : "no button");
+
+  // On Script: the strip is up, RUN is down.
+  ck("on Script the tab strip is visible", strip && strip.hidden === false);
+  ck("on Script RUN is hidden", run && run.hidden === true);
+
+  // Open RUN the way the user does -- click the ⚙.
+  runBtns[0].click();
+  ck("clicking the ⚙ shows RUN", run.hidden === false, `hidden=${run.hidden}`);
+  ck("and the RUN frame is the whole surface: no tab strip above it",
+     strip.hidden === true, "the tab strip stayed up, so RUN reads as a tab");
+  ck("and the tab bodies are hidden too",
+     find("h3e-scroll")[0].hidden === true);
+  ck("the ⚙ is marked pressed while RUN is up",
+     runBtns[0].classList.contains("h3e-on"));
+
+  // And it closes again, back to the tab you came from.
+  runBtns[0].click();
+  ck("clicking ⚙ again returns to the tabs", strip.hidden === false);
+  ck("and hides RUN", run.hidden === true);
+  ck("and clears the pressed state",
+     !runBtns[0].classList.contains("h3e-on"));
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

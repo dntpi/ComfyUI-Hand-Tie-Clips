@@ -257,6 +257,32 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     optRow.appendChild(saveBtn);
     cog.appendChild(optRow);
 
+    // Start / Stop the writer. A backend that holds the card by PROCESS
+    // (nInfer) cannot be freed by an unload call, so the loop with a render is
+    // inevitably write -> render -> stopped -> write again. Making the second
+    // write a console command makes the loop unusable, so it is a button here.
+    //
+    // Explicit, never automatic: nothing a settings save does starts a process,
+    // and nothing a queued render can. Only this button, and only the explicit
+    // `action: "start"` verb behind it.
+    const serverRow = el("div", "h3e-writer-row");
+    const startBtn = button("Start writer", "Start the writer server and load "
+        + "the model. A 27B takes about 30 s. The card is unavailable until "
+        + "you stop it or queue a render.",
+        () => serverAction("start"));
+    const stopBtn = button("Stop writer", "Stop the writer server and give "
+        + "the card back, straight away.", () => serverAction("stop"));
+    serverRow.appendChild(startBtn);
+    serverRow.appendChild(stopBtn);
+    cog.appendChild(serverRow);
+    let serverUp = false;
+    function paintServer() {
+        startBtn.disabled = serverUp;
+        stopBtn.disabled = !serverUp;
+        startBtn.classList.toggle("h3e-on", serverUp);
+    }
+    paintServer();
+
     const connNote = el("div", "h3e-note h3e-note-hint");
     connNote.textContent = "Settings are saved on this machine only — they are "
         + "not part of the workflow, so a shared .json never points at your "
@@ -484,6 +510,8 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         }
         url.value = conn.server_url || "";
         unload.checked = conn.keep_warm !== false;
+        serverUp = Boolean(conn.running);
+        paintServer();
 
         // The backend dropdown, rebuilt from the server's own list so adding a
         // backend in llm.py does not mean editing this file too. Never let the
@@ -610,6 +638,29 @@ if (!list.length) {
         } catch (e) {
             say(String(e), "error");
             return false;
+        }
+    }
+
+    async function serverAction(action) {
+        const b = action === "start" ? startBtn : stopBtn;
+        b.disabled = true;
+        say(action === "start"
+            ? "Starting the writer… a 27B takes about 30 s to load."
+            : "Stopping the writer…", "hint");
+        try {
+            const r = await fetch(LLM_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action }),
+            });
+            const j = await r.json();
+            serverUp = Boolean(j.running);
+            say(j.note || (j.ok ? "" : (j.error || "failed")),
+                j.ok ? "hint" : "error");
+        } catch (e) {
+            say(String(e), "error");
+        } finally {
+            paintServer();
         }
     }
 

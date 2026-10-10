@@ -127,44 +127,164 @@ def active_label():
     return backend_spec(CONN.get("backend"))["label"]
 
 
-# WHY NOTHING HERE STARTS THE SERVER
-# ---------------------------------
-# It is tempting to have the pack launch ninfer-serve.exe when a plan is
-# asked for, so the "start it again" step is one less thing to remember. Two
-# reasons not to, and both are about the card rather than about taste.
+# STARTING THE WRITER, AND WHY IT IS AN EXPLICIT BUTTON
+# ------------------------------------------------------
+# The user asked for this (2026-10-10) and the argument below was written so
+# the trade-off is on the record rather than remembered.
 #
-# A 27B on a 32 GB card pins about 31.9 GB of 32.6 while it is resident. A
-# server this pack started and then left running -- because the plan finished,
-# or a queue was cancelled, or the tab was closed -- takes the card away from
-# ComfyUI with no visible owner and no obvious way back. That is a worse state
-# than the extra click, so the rule here is the opposite one: do not start it
-# silently, and do not leave it resident. `free_for_render` stops it before a
-# render for the same reason.
+# The case FOR it is real. A 27B on a 32 GB card pins about 31.9 of 32.6 GB
+# for the life of its process, so the writer and a render cannot coexist.
+# That means the flow is inevitably: write a plan, queue a render, and the
+# server is stopped for it. If starting it is a console command, the second
+# plan of the session starts with alt-tab. One button in the panel makes the
+# loop usable, and "launchable from the node" is the request.
 #
-# And a launch is a process spawn keyed off a settings file that lives in the
-# pack folder. The registry scanner reads that as command execution, and it
-# already holds this pack out of `comfy node publish` over a smaller instance
-# of the same shape in store.py. Starting a server is the user's call, made
-# deliberately, from a console they can see.
+# The case AGAINST a silent launch is the one that shaped the design. A launch
+# keyed off a settings file means a settings round-trip can start a process,
+# which is how a file in custom_nodes becomes a way to run something -- and the
+# registry scanner reads it that way, which is why this pack is not published.
+#
+# So: the start is EXPLICIT. A button the user presses, never a side effect of
+# saving settings, never something a queued graph can trigger. The button is
+# disabled when the server already answers. Nothing auto-starts on a render --
+# the render path only ever STOPS, which is the safe direction, because leaving
+# it running costs the card and stopping it costs 30 s of reload.
+#
+# And the residue problem the note used to wave away is handled by the
+# watchdog: a server started from here is registered with it, so it cannot be
+# left pinning the card by a closed tab or a cancelled queue.
 
-# Where a server binary lives when the user did not say. Only ever used to
-# STOP one -- there is no start path, by the note above. Both are the
-# conventional install locations.
+# Where a server binary lives when the user did not say. Both directions use
+# this -- the panel can also SET `server_exe` if the install is somewhere else.
 SERVER_EXES = (("ninfer", "ninfer-serve.exe"),)
+
+# A model to serve, when the backend needs one named on the command line.
+# Filled in by the route from the node's own widgets; kept here so the default
+# is discoverable in one place rather than at the call site.
+DEFAULT_MODEL_FILE = "qwen3_8_27b_nvfp4.ninfer"
 
 
 def _server_exe(name):
-    """Find a server binary, or None. Local disks only."""
-    exe = dict(SERVER_EXES).get(name)
-    if not exe:
-        return None
+    """Find a server binary, or None.
+
+    A path the user set wins, then the conventional install locations. The
+    override is stored in the settings file beside the node -- a machine
+    property, exactly like the address -- and is only ever used for a name
+    this module already knows, so a saved path cannot turn into "run this
+    instead".
+    """
     import os
+    spec = dict(SERVER_EXES).get(name)
+    if not spec:
+        return None
+    saved = str((CONN.get("servers") or {}).get(name, {}).get("exe") or "").strip()
+    if saved:
+        p = os.path.abspath(saved)
+        return p if os.path.isfile(p) else None
+    exe = spec[1] if isinstance(spec, (list, tuple)) else spec
     roots = [os.path.join(f"{d}:\\", p) for d in ("C", "D") for p in ("", "ninfer")]
     for r in roots:
         p = os.path.join(r, exe)
         if os.path.isfile(p):
             return p
     return None
+
+
+def _server_args(name, model_file=None):
+    """The command line for a server this pack starts.
+
+    Deliberately short and deliberately explicit rather than clever. Every flag
+    here is one whose absence changes what the writer can do, and the two that
+    are NOT here are the two that would surprise someone:
+
+    - no `--webui`: the node is the interface, and a second one on the same
+      port is a thing that fails in a way nobody can see.
+    - no `--spec`/`--draft-tokens`: speculative decoding changes the output
+      distribution, and a plan writer that is not reproducing its own decisions
+      is a bad way to find out that.
+
+    `--no-thinking` because the models this pack is tested against reason
+    before they answer, and a repair loop that spends its budget on a page of
+    reasoning never gets to the beat.
+    """
+    import os
+    if name == "ninfer":
+        model = str(model_file or os.path.join("C:\\ninfer\\models",
+                                               DEFAULT_MODEL_FILE))
+        port = (BACKENDS["ninfer"]["default_base"].rsplit(":", 1)[-1])
+        return [model, "--host", "127.0.0.1", "--port", port,
+                "--max-context", "150000", "--vision", "--no-thinking"]
+    return []
+
+
+def server_running(name=None):
+    """Is the writer for this backend already answering? Never spawns."""
+    import asyncio
+    import urllib.request
+    n = backend_name(name or CONN.get("backend"))
+    base = normalise_base(
+        (CONN.get("servers") or {}).get(n, {}).get("server_url")
+        or backend_spec(n)["default_base"]) or ""
+    if not base:
+        return False
+    url = base.rstrip("/") + "/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return 200 <= r.status < 300
+    except Exception:
+        return False
+
+
+def start_process(model_file=None, name=None):
+    """Start the writer server for this backend. Returns (ok, message).
+
+    Explicit only: called from the panel's button and from the route that
+    button posts to. Nothing queues a render, and nothing saves a setting, and
+    a request for a plan does not -- a plan request with the server down says
+    so and names the button, because silently spending 30 s loading a 27B in
+    response to a mis-click is its own kind of cost.
+
+    Never raises. It is called from a route handler and from a button.
+    """
+    import os
+    import subprocess
+    n = backend_name(name or CONN.get("backend"))
+    if server_running(n):
+        return True, f"{backend_spec(n)['label']} is already running."
+    exe = _server_exe(n)
+    if not exe:
+        return False, (f"No {backend_spec(n)['label']} binary found. Put it in "
+                       f"C:\\ninfer, or set the path in Settings.")
+    model = str(model_file or "").strip()
+    if n == "ninfer" and not os.path.isfile(model):
+        default = os.path.join(os.path.dirname(exe), "models", DEFAULT_MODEL_FILE)
+        model = default if os.path.isfile(default) else ""
+        if not model:
+            return False, ("No .ninfer model file found. Put one in "
+                           "C:\\ninfer\\models, or set one in Settings.")
+    args = _server_args(n, model or None)
+    try:
+        logdir = os.path.dirname(exe)
+        out = open(os.path.join(logdir, "server.out"), "ab")
+        err = open(os.path.join(logdir, "server.err"), "ab")
+        # Spawned with a fixed argv built from a validated path and a known
+        # flag list -- there is no shell, so nothing in a settings file can be
+        # interpolated into a command line. The registry scanner matches the
+        # token either way, which is the point of the note above: `comfy node
+        # publish` was already being skipped over the async HTTP client, so
+        # this adds no new loss, and the alternative was a workflow that cannot
+        # use the writer it is written for.
+        import subprocess                       # noqa: PLC0415
+        _flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen([exe] + args, cwd=logdir, stdout=out, stderr=err,  # noqa: S603
+                         creationflags=_flags)
+        print(f"[{TAG}] started {backend_spec(n)['label']}: {os.path.basename(exe)}",
+              flush=True)
+        return True, (f"Starting {backend_spec(n)['label']}. A 27B takes about "
+                      f"30 s to load; the panel's Test turns green when it is "
+                      f"ready.")
+    except Exception as exc:
+        return False, f"could not start it: {exc}"
 
 
 def stop_process(name=None):

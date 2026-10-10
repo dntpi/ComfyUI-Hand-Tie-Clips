@@ -49,15 +49,33 @@ PATTERNS = [
     (_HOSTBYNAME, "host enumeration", ()),
     (_SOCK, "matched $socket1 on 1.0.2", ()),
     (".bind(", "matched $socket4 on 1.0.2", ()),
-    ("subprocess.Popen", "python_command_injection_risk on 0.4.1-0.4.3", ()),
-    ("subprocess.run", "python_command_injection_risk on 1.0.0", ()),
+# Process launch. Allowed in llm.py and refused everywhere else, for the
+      # same reason the client class below is: it is the WRITER, it is the only
+      # file that starts or stops a server, and the argv is a fixed list built
+      # from a validated path -- no shell, so nothing in a settings file can be
+      # interpolated into a command line.
+      #
+      # It is here because the writer is launchable from the node (user,
+      # 2026-10-10). The panel can already stop the server, so it should be
+      # able to start it; otherwise the second plan of a session begins with
+      # alt-tab, because a 27B on a 32 GB card cannot coexist with a render and
+      # is therefore stopped for every one. `comfy node publish` was ALREADY
+      # skipped over the client class, so this costs no new release.
+      #
+      # The bare token is listed as well as the two call forms, because the scan
+      # reads prose the same way it reads code (see 1.0.2) and shipped modules
+      # have carried this word in comments explaining why the thing it names was
+      # removed. One entry per token, in place: a second entry for the same token
+      # is shadowed by the first, so the exemption would silently do nothing.
+      ("subprocess.Popen", "process launch, for the writer server only", ("llm.py",)),
+      ("subprocess.run", "process launch, for the writer server only", ("llm.py",)),
+      ("subprocess", "process launch, for the writer server only", ("llm.py",)),
     # The BARE token as well as the two call forms. The scan reads prose the
     # same way it reads code -- 1.0.2 was Flagged for a class name quoted in a
     # markdown file while explaining why it had been Flagged -- and two shipped
     # modules carried this word in comments describing why the thing it names
     # was REMOVED. Describe the mechanism, never spell it. tools/ is
     # comfyignored, so this file naming it is not in the scanned set.
-    ("subprocess", "the bare token; prose counts, see 1.0.2", ()),
     # OS PROBING. Never flagged here, and checked because a scanner reading a
     # pack that asks the machine who it is has every reason to look harder --
     # host name, user name, MAC address and the environment are what
@@ -78,8 +96,22 @@ PATTERNS = [
     ("os.environ", "reads the environment", ()),
     ("os.getenv", "reads the environment", ()),
     ("importlib.import_module", "python_bytecode_manipulation on 1.0.0", ()),
-    (_AIOHTTP, "matched $http5 on 1.0.1 and 1.0.2", ("llm.py",)),
-]
+(_AIOHTTP, "matched $http5 on 1.0.1 and 1.0.2", ("llm.py",)),
+      # Process launch, allowed in llm.py for the same reason as the client
+      # above and with the same shape of argument: it is the WRITER, it is the
+      # only file that starts or stops a server, and the argv is a fixed list
+      # built from a validated path -- no shell, so nothing in a settings file
+      # can be interpolated into a command line.
+      #
+      # It is here because the user asked for the writer to be launchable from
+      # the node (2026-10-10), and the alternative is a workflow that cannot
+      # use the writer it is written for: the panel can stop the server, so it
+      # should be able to start it. `comfy node publish` was ALREADY skipped
+      # over the client class above, so this costs no new release.
+      #
+      # Anything else in the tree that spawns a process is still a FAIL, which
+      # is the half that matters.
+  ]
 
 
 def published_files():

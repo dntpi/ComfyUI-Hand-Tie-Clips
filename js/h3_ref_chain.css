@@ -1766,6 +1766,32 @@ video.h3e-trim-media {
  * scrolls inside a fixed page, so the header does not travel, and an opaque
  * background on it painted a second border band across the top of the frame. */
 
+/* -- D1h: the per-backend path fields --------------------------------------- */
+
+/* A label above the box rather than beside it: a Windows path is long, and a
+ * 150px label column would leave the field too narrow to read what it says. */
+.h3e-writer-pathfield {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 100%;
+    min-width: 0;
+}
+
+.h3e-writer-pathlab {
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* Monospace: these are paths, and the eye is checking a drive letter and a
+ * file extension, which proportional type makes needlessly hard. */
+.h3e-writer-path {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+    font-size: var(--h3-fs-sm);
+}
+
 /* -- template panel -------------------------------------------------------
  * Sits between the SCRIPT header and the card list, hidden until asked for.
  * Each row is text plus one button, so the whole thing survives the narrow

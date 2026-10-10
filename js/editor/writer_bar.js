@@ -20,6 +20,12 @@ import { el, button, widgetByName } from "./widget_utils.js";
 import { parseRefPlan } from "./ref_rail.js";
 
 const LLM_URL = "/h3_ref_chain/llm";
+
+/* Which backends have a server program this pack starts, filled from the
+ * server's own list on every load. Empty until the first response, which is why
+ * the path fields start hidden: a field for a backend with no binary would be a
+ * field that cannot do anything. */
+let BACKEND_PROGRAMS = [];
 const PLAN_URL = "/h3_ref_chain/plan";
 const UNLOAD_URL = "/h3_ref_chain/llm/unload";
 
@@ -252,6 +258,71 @@ function writeThread(t) {
     modelRow.appendChild(model);
     cog.appendChild(modelRow);
 
+    /* -- D1h: the server PROGRAM and the MODEL FILE, for backends that need
+     * one. --------------------------------------------------------------
+     *
+     * Until this, picking nInfer on a machine that did not have it in
+     * `C:\ninfer` was a dead end: `start_process` said "No nInfer binary
+     * found. Put it in C:\ninfer, or set the path in Settings" -- and Settings
+     * had no path field. The only escape hatch was hand-editing
+     * `htc_llm.json`, which is exactly what a user will not find.
+     *
+     * Both fields are PER BACKEND and both are ordinary machine properties in
+     * the same settings file, which is the design that was already there: the
+     * server reads `servers[<name>].exe` and `servers[<name>].model_file`.
+     * Nothing new to store, and nothing that could turn a saved path into "run
+     * this instead" -- the override is only consulted for a name the module
+     * already knows.
+     *
+     * Only shown for backends that HAVE a program. LM Studio loads its model
+     * from a GUI and has no binary to point at, so showing a path field there
+     * would be a field that cannot do anything. */
+    const exeRow = el("div", "h3e-writer-row h3e-writer-pathrow");
+    const exeField = el("label", "h3e-writer-pathfield");
+    exeField.appendChild(el("span", "h3e-writer-pathlab", "server program"));
+    const exeInput = el("input", "h3e-writer-path");
+    exeInput.type = "text";
+    exeInput.spellcheck = false;
+    exeInput.placeholder = "ninfer-serve.exe";
+    exeInput.title = "The server binary this pack starts. Leave blank to search "
+        + "C:\\, D:\\, C:\\ninfer and D:\\ninfer. A full path wins over all of "
+        + "them, which is the case on any machine where nInfer lives somewhere "
+        + "else -- including every machine but this one.";
+    exeField.appendChild(exeInput);
+    exeRow.appendChild(exeField);
+
+    const modelFileRow = el("div", "h3e-writer-row h3e-writer-pathrow");
+    const modelFileField = el("label", "h3e-writer-pathfield");
+    modelFileField.appendChild(el("span", "h3e-writer-pathlab", "model file"));
+    const modelFileInput = el("input", "h3e-writer-path");
+    modelFileInput.type = "text";
+    modelFileInput.spellcheck = false;
+    modelFileInput.placeholder = "qwen3_8_27b_nvfp4.ninfer";
+    modelFileInput.title = "The weights to serve. Leave blank to look for a "
+        + ".ninfer model beside the binary, in a `models` folder.";
+    modelFileField.appendChild(modelFileInput);
+    modelFileRow.appendChild(modelFileField);
+    // Both persist on blur, not on input: a half-typed path should not become
+    // the saved one, and the same reasoning as the settings SAVE button.
+    for (const inp of [exeInput, modelFileInput]) {
+        inp.addEventListener("change", () => { saveConn(); });
+        inp.addEventListener("blur", () => { saveConn(); });
+    }
+    cog.appendChild(exeRow);
+    cog.appendChild(modelFileRow);
+
+    /** Is this backend started BY this pack, rather than by its own app? */
+    function backendNeedsProgram(name) {
+        // The server decides; the panel asks, so adding a backend in llm.py does
+        // not mean remembering to hide a field here.
+        return (BACKEND_PROGRAMS || []).includes(name);
+    }
+    function paintPathRows() {
+        const need = backendNeedsProgram(backend.value);
+        exeRow.style.display = need ? "" : "none";
+        modelFileRow.style.display = need ? "" : "none";
+    }
+
     const optRow = el("div", "h3e-writer-row");
     const unloadWrap = el("label", "h3e-writer-check");
     const unload = el("input");
@@ -282,7 +353,16 @@ function writeThread(t) {
     const startBtn = button("Start writer", "Start the writer server and load "
         + "the model. A 27B takes about 30 s. The card is unavailable until "
         + "you stop it or queue a render.",
-        () => serverAction("start"));
+        async () => {
+            // D1h: bank the path fields FIRST. Someone who typed a path and
+            // pressed Start in the same breath must not have to press Save in
+            // between, or the first press fails with "no binary found" on a
+            // machine where they can see the path they just typed.
+            if (await saveConn()) return serverAction("start");
+            say("could not save the settings, so the paths were not used",
+                "error");
+            return serverAction("start");
+        });
     const stopBtn = button("Stop writer", "Stop the writer server and give "
         + "the card back, straight away.", () => serverAction("stop"));
     serverRow.appendChild(startBtn);
@@ -538,6 +618,21 @@ function writeThread(t) {
             backend.appendChild(o);
         }
         backend.value = conn.backend || "lmstudio";
+          // D1h: which backends have a program this pack starts, and the paths
+          // saved for the one shown. Both come from the server, so adding a
+          // backend in llm.py does not mean remembering to hide a field here.
+          BACKEND_PROGRAMS = (conn.backends || [])
+              .filter((b) => b.program).map((b) => b.id);
+          const paths = (conn.server_paths || {})[backend.value] || {};
+          exeInput.value = paths.exe || "";
+          modelFileInput.value = paths.model_file || "";
+          // The search found a binary even though none was typed. Say so,
+          // because "the field is blank" reads as "nothing is configured" and
+          // the next question is always "where do I put it".
+          const found = paths.found_exe || "";
+          exeInput.title = exeInput.title
+              + (found ? `\n\nCurrently starting: ${found}` : "");
+          paintPathRows();
         // The address placeholder follows the backend, because :1234 typed into
         // a nInfer panel is the single most likely wrong thing here.
         url.placeholder = conn.backend === "ninfer"
@@ -678,12 +773,22 @@ if (!list.length) {
     }
 
     async function saveConn() {
-        const patch = { server_url: url.value, keep_warm: unload.checked };
-        // Never post a blank model: the server skips blanks, but sending one
-        // at all invites the same overwrite bug from the other direction.
-        if (model.value) patch.model = model.value;
-        if (await postConn(patch)) await loadConn(false);
-    }
+const patch = { server_url: url.value, keep_warm: unload.checked };
+          // Never post a blank model: the server skips blanks, but sending one
+          // at all invites the same overwrite bug from the other direction.
+          if (model.value) patch.model = model.value;
+          // D1h: the per-backend paths, but ONLY for a backend that has them.
+          // Posting empty strings for a backend with no program would write two
+          // blank keys into its settings entry on every Save, which is noise in
+          // a file people read when something goes wrong.
+          const here = backend.value;
+          if (here && BACKEND_PROGRAMS.includes(here)) {
+              patch.servers = {
+                  [here]: { exe: exeInput.value.trim(), model_file: modelFileInput.value.trim() },
+              };
+          }
+          if (await postConn(patch)) await loadConn(false);
+      }
 
     function railRefs() {
         const plan = parseRefPlan(widgetByName(node, "ref_plan")?.value);

@@ -334,12 +334,20 @@ def start_process(model_file=None, name=None):
         return False, (f"No {backend_spec(n)['label']} binary found. Put it in "
                        f"C:\\ninfer, or set the path in Settings.")
     model = str(model_file or "").strip()
+    # D1h: the SAVED model file, before the search order. Before this the
+    # settings panel could show and write the path and the server would ignore
+    # it -- the field would have looked broken on every machine that is not the
+    # author's. Argument first, then saved, then beside-the-binary, then the
+    # conventional folder.
+    if n == "ninfer" and not model:
+        model = str((CONN.get("servers") or {}).get(n, {})
+                    .get("model_file") or "").strip()
     if n == "ninfer" and not os.path.isfile(model):
         default = os.path.join(os.path.dirname(exe), "models", DEFAULT_MODEL_FILE)
         model = default if os.path.isfile(default) else ""
         if not model:
             return False, ("No .ninfer model file found. Put one in "
-                           "C:\\ninfer\\models, or set one in Settings.")
+                           "C:\\ninfer\\models, or set the path in Settings.")
     args = _server_args(n, model or None)
     try:
         logdir = os.path.dirname(exe)
@@ -579,6 +587,30 @@ def load_conn():
     return dict(CONN)
 
 
+def _merge_servers(current, patch):
+    """Merge a `servers` patch one backend at a time.
+
+    Only the keys the panel actually sends are touched, and a BLANK string is a
+    deliberate clear rather than "no change" -- the path fields post their real
+    contents on blur, including empty, because clearing a path is a thing a user
+    does on purpose when they go back to the search order.
+    """
+    if not isinstance(patch, dict):
+        return current if isinstance(current, dict) else {}
+    out = dict(current) if isinstance(current, dict) else {}
+    for name, entry in patch.items():
+        if not isinstance(entry, dict):
+            continue
+        keep = dict(out.get(name) or {})
+        for k, v in entry.items():
+            if isinstance(v, str):
+                keep[k] = v.strip()
+            else:
+                keep[k] = v
+        out[name] = keep
+    return out
+
+
 def save_conn(patch):
     """Merge and persist. Blank strings are SKIPPED, not stored.
 
@@ -606,7 +638,11 @@ def save_conn(patch):
         if k == "backend":
             v = backend_name(v)
         elif k == "servers":
-            v = v if isinstance(v, dict) else CONN["servers"]
+                # MERGE, not replace. The panel posts one backend's entry at a
+                # time, so an assignment would drop the other backends' saved
+                # paths -- a user who set nInfer's model file, switched to LM
+                # Studio, and switched back would find it gone.
+                v = _merge_servers(CONN["servers"], v)
         elif k == "server_url":
             v = normalise_base(v)
             if not v:
@@ -626,6 +662,15 @@ def save_conn(patch):
             except (TypeError, ValueError):
                 continue
         CONN[k] = v
+        # D1h: `servers` is also read from the LOCAL `servers` dict further
+        # down -- by the backend switch, to bank the outgoing pair and restore
+        # the incoming one. So the merge has to land there too, or a saved path
+        # is written to CONN, read back from `servers`, and found missing. The
+        # first version of this did exactly that: 41 green checks and nothing
+        # round-tripped.
+        if k == "servers":
+            servers.clear()
+            servers.update(v if isinstance(v, dict) else {})
 
     # A switch that carries NO address or model of its own must land on the pair
     # already banked for the backend being switched TO -- otherwise "ninfer"
@@ -673,9 +718,16 @@ def save_conn(patch):
         # "own" pair already equal to the nInfer one, concluded nothing had been
         # typed, and dropped the model. Switching away is what banks the
         # outgoing pair; a plain edit only updates the backend you are on.
-        servers[prev_name] = {"server_url": url, "model": model}
+        servers[prev_name] = dict(servers.get(prev_name) or {}, **{
+            "server_url": url, "model": model})
     else:
-        servers[name] = {"server_url": url, "model": model}
+        # D1h: MERGE, never assign. These two lines replaced the whole entry,
+        # which dropped the `exe` and `model_file` a previous save had put
+        # there -- so the panel would show the paths, Save would write them, and
+        # the next Save would erase them. 41 green checks, because every check
+        # looked at the source and none of them round-tripped a value.
+        servers[name] = dict(servers.get(name) or {}, **{
+            "server_url": url, "model": model})
     CONN["servers"] = servers
     CONN["backend"] = name
     CONN["server_url"] = url

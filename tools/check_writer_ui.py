@@ -19,6 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 JS = os.path.join(ROOT, "js", "editor", "writer_bar.js")
 PY = os.path.join(ROOT, "routes.py")
+LLM = os.path.join(ROOT, "llm.py")
 
 fails = []
 
@@ -30,6 +31,7 @@ def src(path):
 
 js = src(JS)
 py = src(PY)
+llm = src(LLM)
 
 
 def check(name, cond, why=""):
@@ -158,6 +160,106 @@ for _m in re.finditer(r'"running":\s*(await\s+)?_llm\.server_running', py):
         _m.group(1) is not None,
         "-- a 3 s socket wait on the event loop",
     )
+
+# --- 7. D1h: the per-backend paths are settable FROM THE PANEL -------------
+# The Start button used to fail with "set the path in Settings" and Settings had
+# no path field. The only escape hatch was hand-editing htc_llm.json, so nInfer
+# worked on the author's machine and nowhere else. Three halves, and all three
+# have to hold: the panel offers the field, the panel posts it, and the SERVER
+# reads it -- a field the server ignores looks broken on every other machine.
+check("the panel offers a server-program field",
+      '"server program"' in js,
+      "-- the error message points at a Settings path that does not exist")
+check("and a model-file field", '"model file"' in js)
+check("saveConn posts them under the active backend",
+      re.search(r"patch\.servers\s*=\s*\{", js) is not None,
+      "-- a field that is never saved is a field that does nothing")
+check("Start banks them before launching",
+      re.search(r"async\s*\(\)\s*=>\s*\{[^}]{0,400}?saveConn\(\)"
+                r"[^}]{0,400}?serverAction\(\"start\"\)", js, re.S) is not None,
+      "-- typing a path and pressing Start must not need a Save in between")
+# The half that is easy to get wrong and invisible until someone else's machine:
+# a panel field the SERVER never reads. It would save cleanly, display
+# correctly, and be ignored -- which looks exactly like a broken button.
+check("the server reads the saved model_file when starting",
+      re.search(r"get\(\"model_file\"\)\s*or\s*\"\"\)\.strip\(\)", llm) is not None,
+      "-- a field the server ignores is worse than no field: it looks broken")
+check("the server merges the per-backend patch instead of replacing it",
+      "_merge_servers" in llm,
+      "-- replacing drops the other backends' paths on the next Save")
+check("the /llm route publishes which backends have a program",
+      re.search(r'"program"\s*:', py) is not None,
+      "-- the panel cannot hide a field it is not told about")
+check("and publishes the saved paths",
+      re.search(r'"server_paths"\s*:', py) is not None)
+
+# --- 8. the paths actually SURVIVE a save --------------------------------
+# The source-text checks above all passed against a build where the panel
+# offered the fields, posted them, and the server read model_file -- and where
+# save_conn then REPLACED the whole per-backend entry with {server_url, model},
+# erasing exe and model_file on the very next Save. Ten checks, all green, and
+# nothing round-tripped.
+#
+# So this one is behavioural: it drives save_conn/load_conn through a temp
+# settings file and asserts the values come back. Nothing above it can catch
+# that class of bug; only a value surviving a round trip can.
+print("\nD1h: the paths survive a save (behavioural)")
+
+import importlib.util  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import tempfile  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("h3llm_probe", LLM)
+_llm = importlib.util.module_from_spec(_spec)
+try:
+    _spec.loader.exec_module(_llm)
+except Exception as _exc:  # noqa: BLE001
+    _llm = None
+    ck("llm.py imports under the checker", False, str(_exc)[:120])
+
+if _llm is not None:
+    _tmp = os.path.join(ROOT, "htc_llm_checkwriterui.json")
+    _saved_file, _saved_conn = _llm.CONN_FILE, dict(_llm.CONN)
+    try:
+        if os.path.isfile(_tmp):
+            os.remove(_tmp)
+        _llm.CONN_FILE = "htc_llm_checkwriterui.json"
+        _llm.CONN.update({"backend": "ninfer", "servers": {}})
+        # The panel's REAL shape: the paths arrive in the same patch as the
+        # address and the keep-warm flag. A first version of this check sent the
+        # paths alone, which does not reach the branch that was broken, so the
+        # negative test passed against a build that lost them.
+        _llm.save_conn({
+            "servers": {"ninfer": {
+                "exe": "E:/tools/ninfer-serve.exe",
+                "model_file": "E:/models/qwen3_8_27b_nvfp4.ninfer"}},
+            "server_url": "http://127.0.0.1:8080",
+            "keep_warm": True,
+        })
+        _llm.CONN.update({"servers": {}})
+        _llm.load_conn()
+        _got = (_llm.CONN.get("servers") or {}).get("ninfer") or {}
+        check("a saved server program survives the round trip",
+              _got.get("exe") == "E:/tools/ninfer-serve.exe", f"got {_got.get('exe')!r}")
+        check("a saved model file survives the round trip",
+              _got.get("model_file") == "E:/models/qwen3_8_27b_nvfp4.ninfer",
+              f"got {_got.get('model_file')!r}")
+        # And a second backend's save must not take them with it.
+        _llm.save_conn({"servers": {"lmstudio": {"exe": "", "model_file": ""}}})
+        _llm.CONN.update({"servers": {}})
+        _llm.load_conn()
+        _kept = ((_llm.CONN.get("servers") or {}).get("ninfer") or {}).get("model_file")
+        check("and survives a save for ANOTHER backend",
+              _kept == "E:/models/qwen3_8_27b_nvfp4.ninfer", f"got {_kept!r}")
+    except Exception as _exc:  # noqa: BLE001
+        check("the settings round trip runs", False, str(_exc)[:140])
+    finally:
+        if os.path.isfile(_tmp):
+            os.remove(_tmp)
+        _llm.CONN_FILE = _saved_file
+        _llm.CONN.clear()
+        _llm.CONN.update(_saved_conn)
 
 print()
 if fails:

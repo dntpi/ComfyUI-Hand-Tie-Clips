@@ -559,8 +559,25 @@ def register():
                 "backend_label": _llm.backend_spec(conn.get("backend"))["label"],
                 "model_optional": bool(_llm.backend_spec(
                     conn.get("backend"))["model_optional"]),
-                "backends": [{"id": k, "label": v["label"]}
-                             for k, v in _llm.BACKENDS.items()],
+"backends": [{"id": k, "label": v["label"],
+                                     "program": k in _llm.SERVER_EXES}
+                                for k, v in _llm.BACKENDS.items()],
+                  # D1h: the per-backend paths this pack would launch with, so
+                  # the panel can show them. Before this the Start button's
+                  # failure ("set the path in Settings") pointed at a field that
+                  # did not exist, and the only way to set one was to hand-edit
+                  # htc_llm.json. Both are read from the same file the settings
+                  # write to, so this is a read-out and nothing more.
+                  "server_paths": {
+                      name: {
+                          "exe": str((conn.get("servers") or {}).get(name, {})
+                                     .get("exe") or ""),
+                          "model_file": str((conn.get("servers") or {}).get(name, {})
+                                            .get("model_file") or ""),
+                          "found_exe": _llm._server_exe(name) or "",
+                      }
+                      for name in _llm.BACKENDS
+                  },
                 # Whether the writer is up. The panel's Start button is disabled
                 # when it is, so a second click cannot launch a second 27B --
                 # which is a real way to end up with two processes fighting over
@@ -818,12 +835,12 @@ def register():
                 out = await _planner.write_edit(
                     brief, cur_shots, cur_refs, complete_fn=complete_fn,
                     hops=hops, files=files, pinned=pinned, duration=duration,
-                    thread=thread)
+                    thread=thread, pin_mech=pin_mech)
             else:
                 out = await _planner.write_plan(
                     brief, hops, complete_fn=complete_fn, files=files,
                     pinned=pinned, images=images, duration=duration,
-                    thread=thread, proposal=proposal)
+                    thread=thread, proposal=proposal, pin_mech=pin_mech)
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:

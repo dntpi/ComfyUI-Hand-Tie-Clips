@@ -345,8 +345,8 @@ def main():
     oh7, log7 = run(shot_plan=json.dumps({"shots": [{"beat": "x %d" % k, "duration": "8 s"}
                                                      for k in range(7)]}),
                     pin_mech="hand_tie", duration="8 s")
-    ck("hand_tie: 7 x 8 s chain into two sections, the second continuing hop 6",
-       "hand-tie section 2: hops 7-7, previs 90f, windows at [0, 68], continuing hop 6's last frames" in log7,
+    ck("hand_tie: 7 x 8 s chain into two even sections (4 + 3), the second continuing hop 4",
+       "hand-tie section 2: hops 5-7, previs 226f, windows at [0, 68, 136, 204], continuing hop 4's last frames" in log7,
        log7[-600:])
     ck("hand_tie: no hop is assembled as a continuation (no next-beat airlock)",
        "next-beat assembled" not in log_h)

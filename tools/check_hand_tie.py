@@ -60,7 +60,13 @@ ck("5 x 8 s still close (362 = PREVIS_MAX); a full 6 x 8 s section's last hop is
    (_l5, _l6))
 ck("the closing window never splits a section: 6 x 8 s is still one",
    HT.sections([{"beat": "x"}] * 6, [192] * 6) == [[0, 1, 2, 3, 4, 5]]
-   and HT.sections([{"beat": "x"}] * 7, [192] * 7) == [[0, 1, 2, 3, 4, 5], [6]])
+   and HT.sections([{"beat": "x"}] * 7, [192] * 7) == [[0, 1, 2, 3], [4, 5, 6]])
+ck("a run split by size alone is split evenly: 10 x 8 s is 5 + 5, every last hop closed",
+   HT.sections([{"beat": "x"}] * 10, [192] * 10) == [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]]
+   and all(HT.layout([192] * len(s))["closing"] for s in HT.sections([{"beat": "x"}] * 10, [192] * 10)))
+_ex = [{"beat": "x"}] * 3 + [{"beat": "x", "anchor": "extend"}] + [{"beat": "x"}] * 2
+ck("an authored extend or restart is never moved by the balancing",
+   HT.sections(_ex, [192] * 6) == [[0, 1, 2], [3, 4, 5]], HT.sections(_ex, [192] * 6))
 ck("the closing window has no moment: the previs text keeps one stamp per hop",
    HT.compile_previs([{"beat": "@a walks."}, {"beat": "@a sits."}], [192, 192])[0].count("At ") == 2)
 ck("run() ties a hop's end wherever a next window exists (the closing one included)",

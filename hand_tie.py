@@ -106,8 +106,13 @@ def sections(shots, hop_frames=None):
     anchor=extend and a hop that would push the previs past PREVIS_MAX; those
     sections are CHAINED (see `chained`) and continue the film without a cut.
     Without `hop_frames` only the shot fields split.
+
+    A run the previs size alone splits is split EVENLY into the same number of
+    sections: 10 x 8 s is 5 + 5, not 6 + 4. Same previs count, and a section of 5
+    or fewer has room for its last hop's closing window (`layout`), which a full
+    6 does not -- the start-only last hop is the one that snapped at f22.
     """
-    out, frames = [], []
+    out, frames, auto = [], [], []
     for i, sh in enumerate(shots or []):
         f = int(hop_frames[i]) if hop_frames is not None else None
         # layout() only adds a closing window that fits, so this is the
@@ -116,11 +121,29 @@ def sections(shots, hop_frames=None):
                 and layout(frames + [f])["previs"] > PREVIS_MAX)
         if i == 0 or _anchor(sh) in ("restart", "extend") or full:
             out.append([])
+            auto.append(bool(full) and _anchor(sh) not in ("restart", "extend"))
             frames = []
         out[-1].append(i)
         if f is not None:
             frames.append(f)
-    return out
+    if hop_frames is None:
+        return out
+    even, s = [], 0
+    while s < len(out):
+        e = s + 1
+        while e < len(out) and auto[e]:
+            e += 1
+        hops = [h for sec in out[s:e] for h in sec]
+        k, n = e - s, len(hops)
+        sizes = [n // k + (1 if j < n % k else 0) for j in range(k)]
+        cut, pos = [], 0
+        for z in sizes:
+            cut.append(hops[pos:pos + z])
+            pos += z
+        fits = all(layout([int(hop_frames[h]) for h in sec])["previs"] <= PREVIS_MAX for sec in cut)
+        even.extend(cut if fits else out[s:e])
+        s = e
+    return even
 
 
 def chained(shots, section):

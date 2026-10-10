@@ -130,6 +130,12 @@ const secs = tieSections(twelve, twelve.map(() => 192));
 ck("hand-tie: 12 x 8 s is two sections of 6, the second chained",
    secs.map((s) => s.hops.length).join() === "6,6" && secs.map((s) => s.chained).join() === "false,true",
    JSON.stringify(secs));
+const ten = tieSections(twelve.slice(0, 10), twelve.slice(0, 10).map(() => 192));
+ck("hand-tie: 10 x 8 s is 5 + 5, as hand_tie.sections (balanced)",
+   ten.map((s) => s.hops.length).join() === "5,5" && ten.map((s) => s.chained).join() === "false,true",
+   JSON.stringify(ten));
+const sevn = tieSections(twelve.slice(0, 7), twelve.slice(0, 7).map(() => 192));
+ck("hand-tie: 7 x 8 s is 4 + 3", sevn.map((s) => s.hops.length).join() === "4,3", JSON.stringify(sevn));
 // "+ extend" after a render: only the new shot renders.
 const extd = [...base, shot("s5", "e", { anchor: "extend" })];
 fc = forecastPlan({ shots: extd, rec, now: snapOf(extd), tie: true, frames: extd.map(() => 192) });

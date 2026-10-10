@@ -42,7 +42,8 @@ export function tieSections(shots, frames) {
         const f = frames[i] ?? 192;
         const grown = cur ? previs - HT_WINDOW + htSpacing(last) + HT_WINDOW : 0;
         if (!cur || a === "restart" || a === "extend" || grown > HT_PREVIS_MAX) {
-            cur = { hops: [], chained: i > 0 && a !== "restart" };
+            cur = { hops: [], chained: i > 0 && a !== "restart",
+                    auto: !!cur && a !== "restart" && a !== "extend" };
             out.push(cur);
             previs = HT_WINDOW;
         } else {
@@ -51,7 +52,30 @@ export function tieSections(shots, frames) {
         cur.hops.push(i);
         last = f;
     });
-    return out;
+    // As hand_tie.sections: a run split by previs size alone is split evenly
+    // into the same number of sections (10 x 8 s: 5 + 5, not 6 + 4).
+    const fits = (hops) => hops.length > 0 && hops.slice(0, -1).reduce(
+        (p, h) => p + htSpacing(frames[h] ?? 192), HT_WINDOW) <= HT_PREVIS_MAX;
+    const even = [];
+    for (let s = 0; s < out.length;) {
+        let e = s + 1;
+        while (e < out.length && out[e].auto) e += 1;
+        const hops = out.slice(s, e).flatMap((x) => x.hops);
+        const k = e - s, n = hops.length;
+        const cut = [];
+        for (let j = 0, pos = 0; j < k; j += 1) {
+            const z = Math.floor(n / k) + (j < n % k ? 1 : 0);
+            cut.push(hops.slice(pos, pos + z));
+            pos += z;
+        }
+        if (k > 1 && cut.every(fits)) {
+            cut.forEach((h, j) => even.push({ hops: h, chained: j > 0 || out[s].chained }));
+        } else {
+            out.slice(s, e).forEach((x) => even.push({ hops: x.hops, chained: x.chained }));
+        }
+        s = e;
+    }
+    return even;
 }
 
 /* Widgets whose value moves no hop key. Everything else that changes between

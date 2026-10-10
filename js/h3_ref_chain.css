@@ -57,6 +57,11 @@
     --h3-radius: 4px;
     --h3-radius-sm: 3px;
     --h3-row-h: 28px;
+  /* Row 3 of the chrome: the ACTIVE tab's own 24px header. Separate from
+   * --h3-row-h because the three rows are not interchangeable -- row 1 is the
+   * status bar, row 2 the tab strip, row 3 the tab's own tools -- and a token
+   * shared between them is a token that cannot be sized for any of them. */
+  --h3-head-h: 24px;
 
     /* A type scale, which this sheet did not have. Hierarchy was carried by
      * four literal sizes plus alpha, with nothing bold anywhere, which is why
@@ -116,7 +121,9 @@
     align-items: center;
     gap: var(--h3-gap-sm);
     margin: 0 0 var(--h3-gap);
-    padding: 4px 0;
+    padding: 0;
+    min-height: var(--h3-head-h);
+    box-sizing: border-box;
     background: var(--h3-bg);
 }
 

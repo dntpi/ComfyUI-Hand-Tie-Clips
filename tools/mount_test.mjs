@@ -185,5 +185,78 @@ for (const [name, opts] of cases) {
   ck(`  tab strip: ${name}`, countClass(root, "h3e-tabs") >= 1);
 }
 
+/* -- D1: only the ACTIVE tab draws its own header row --------------------- */
+
+console.log("\nmount: D1 chrome rows");
+
+/** Visible headers are the ones inside a pane that is not hidden. */
+function visibleHeads(root) {
+  const out = [];
+  const walk = (e, hidden) => {
+    if (!e) return;
+    const hid = hidden || e.hidden === true;
+    if (!hid && e.classList && e.classList.contains("h3e-head")) {
+      out.push((e.querySelector ? null : null)
+        || (e.children.find((c) => c.classList?.contains("h3e-title")) || {}).textContent
+        || "");
+    }
+    (e.children || []).forEach((c) => walk(c, hid));
+  };
+  walk(root, false);
+  return out;
+}
+
+function mountFresh(opts) {
+  const node = withWidgets(makeNode(), {
+    shot_plan: opts.plan ?? planJSON(6),
+    ref_plan: opts.refPlan ?? REF_PLAN,
+    chains: 3,
+  });
+  mount(node);
+  return node;
+}
+
+{
+  const node = mountFresh({});
+  const root = node.domWidgets[0];
+
+  // Row 1: the status bar, on every tab (global chrome).
+  ck("row 1: exactly one status bar", countClass(root, "h3e-statusbar") === 1);
+  // Row 2: the tab strip, global.
+  ck("row 2: exactly one tab strip", countClass(root, "h3e-tabs") === 1);
+
+  // Row 3: exactly ONE visible header -- the active tab's. All tab bodies stay
+  // in the DOM (createTabs toggles .hidden), so this is the assertion that the
+  // inactive ones are genuinely not drawn.
+  const heads = visibleHeads(root);
+  ck(`row 3: one visible header, not ${heads.length}`, heads.length === 1,
+     `saw ${JSON.stringify(heads)}`);
+
+  // And it is SCRIPT's, because that is the default surface.
+  ck("row 3: the visible header is SCRIPT's",
+     heads.length === 1 && /SCRIPT/i.test(heads[0]), JSON.stringify(heads));
+
+  // Switching tabs moves the header rather than adding one.
+  const tabBtns = [];
+  const walkTabs = (e) => {
+    if (!e) return;
+    if (e.classList && e.classList.contains("h3e-tab")) tabBtns.push(e);
+    (e.children || []).forEach(walkTabs);
+  };
+  walkTabs(root);
+  ck("row 2: six tab buttons", tabBtns.length === 6, `got ${tabBtns.length}`);
+
+  const refsBtn = tabBtns.find((b) => /refs/i.test(b.textContent));
+  ck("row 2: a Refs tab exists", !!refsBtn);
+  if (refsBtn) {
+    refsBtn.click();
+    const after = visibleHeads(root);
+    ck("row 3: still one header after switching to Refs", after.length === 1,
+       `saw ${JSON.stringify(after)}`);
+    ck("row 3: it is now REFERENCES'",
+       after.length === 1 && /REFERENCE/i.test(after[0]), JSON.stringify(after));
+  }
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

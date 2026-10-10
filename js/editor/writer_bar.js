@@ -68,6 +68,12 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     stageRow.appendChild(button("Write plan", "Propose and write the beats in "
         + "one go.", () => sendCanned("develop", "propose the film, then write "
         + "the beats for it")));
+    // MV mode's entry point, and only meaningful with a song attached. Kept on
+    // the same row because it IS the same conversation -- the song card it
+    // produces is a reply, not a separate mode.
+    stageRow.appendChild(button("Song", "Measure the attached song — tempo, "
+        + "bar grid, suggested sections, lyrics. Writes nothing.",
+        () => sendCanned("song", "measure this song")));
     body.appendChild(stageRow);
 
     const chatRow = el("div", "h3e-writer-row");
@@ -664,6 +670,10 @@ if (!list.length) {
                 body: JSON.stringify({
                     stage: stage || "chat",
                     brief: msg,
+                    // The song comes off the node, not from a field the user
+                    // has to fill again here: MEDIA owns the soundtrack, and a
+                    // second place to choose it is a second place to forget.
+                    song_file: String(widgetByName(node, "master_audio_file")?.value || ""),
                     hops: Number(hops.value) || 3,
                     duration: String(widgetByName(node, "duration")?.value || ""),
                     refs: railRefs(),
@@ -680,7 +690,9 @@ if (!list.length) {
             const j = await r.json();
             const note = (j.note || j.warnings || []).join?.("\n")
                 || (j.warnings || []).join("\n");
-            if (j.proposal) {
+            if (j.song) {
+                renderSongCard(j.song, note);
+            } else if (j.proposal) {
                 // A proposal is accepted by READING it, and Accepting it
                 // stores the proposal and writes nothing to the plan.
                 renderProposalCard(j.proposal, note);
@@ -787,6 +799,50 @@ if (!list.length) {
                 draftList.textContent = "";
             }));
         c.acts.appendChild(button("Discard", "Throw this away",
+            () => { draft.style.display = "none"; draftList.textContent = ""; }));
+    }
+
+    function renderSongCard(s, note) {
+        const c = cardShell("plan", "SONG",
+            s.bpm ? `${Math.round(s.bpm)} BPM` : "");
+        const b = c.bodyEl;
+        const secs = Math.round(s.dur || 0);
+        b.appendChild(field("length", secs ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}` : ""));
+        b.appendChild(field("bar", s.bar_s
+            ? `${s.bar_s.toFixed(3)}s (${s.beats_per_bar || 4}/bar)` : ""));
+        // Steadiness first: it says whether the grid above can be trusted, and
+        // a cut landing off the bar is otherwise the solver's fault by default.
+        if (s.steady != null) {
+            b.appendChild(field("steady", `${s.steady}${(s.grid_drift_f != null) ? `, drift ${s.grid_drift_f}f` : ""}`));
+        }
+        if ((s.sections || []).length) {
+            b.appendChild(el("div", "h3e-cardbox-k", "sections — suggestions"));
+            for (const x of s.sections) {
+                b.appendChild(el("div", "h3e-cardbox-row",
+                    `bar ${x.bar ?? "?"}${x.from != null ? ` (${x.from.toFixed(1)}s)` : ""}`
+                    + `${x.why ? ` — ${x.why}` : ""}`));
+            }
+            b.appendChild(el("div", "h3e-note h3e-note-hint",
+                s.sections_confidence
+                || "Section detection is a suggestion — confirm or move them."));
+        }
+        if ((s.lines || []).length) {
+            b.appendChild(el("div", "h3e-cardbox-k", "lyrics"));
+            b.appendChild(el("div", "h3e-chat-text", s.lines.join("\n")));
+        }
+        // No Accept. A song card is a MEASUREMENT, and nothing about the plan
+        // changes because you read it. The bar grid is the trustworthy part and
+        // the user should see it before anything is written.
+        c.acts.appendChild(button("Propose the film", "Ask for a film cut to "
+            + "this song — hop lengths on bar lines, cuts at the sections you "
+            + "confirm above.", () => {
+                draft.style.display = "none";
+                draftList.textContent = "";
+                sendCanned("develop", `propose a music video cut to this song. `
+                    + `Sections: ${(s.sections || []).map((x) => `bar ${x.bar}`).join(", ") || "none yet"}.`
+                    + ` Nobody speaks: the song carries it.`);
+            }));
+        c.acts.appendChild(button("Close", "Dismiss this card",
             () => { draft.style.display = "none"; draftList.textContent = ""; }));
     }
 

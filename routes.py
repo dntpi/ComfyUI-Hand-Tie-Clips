@@ -84,6 +84,47 @@ def _secs_or_none(value):
     return out if out > 0 else None
 
 
+def _songmap_summary(m):
+    """The song map as the card wants it: the trustworthy part big, the
+    uncertain part explicitly marked as uncertain.
+
+    The bar grid is measured and reliable. Section detection is 4/9 on the
+    headliner set and 2/9 with listening, so sections are SUGGESTIONS the user
+    confirms or moves -- the card must not present them as measurements. And the
+    whole map carries per-bar features nobody reads, so it is trimmed here
+    rather than posted over a websocket.
+    """
+    def _f(v):
+        try:
+            return round(float(v), 3)
+        except (TypeError, ValueError):
+            return None
+
+    secs = []
+    for s in (m.get("sections") or [])[:12]:
+        if not isinstance(s, dict):
+            continue
+        secs.append({"bar": s.get("bar"), "from": _f(s.get("from_s")),
+                     "to": _f(s.get("to_s")),
+                     "why": str(s.get("why") or "")[:80],
+                     "confidence": _f(s.get("confidence"))})
+    return {
+        "bpm": _f(m.get("bpm")),
+        "bar_s": _f(m.get("bar_s")),
+        "beats_per_bar": m.get("beats_per_bar"),
+        "dur": _f(m.get("dur")),
+        # Steadiness and drift say whether the GRID can be trusted. A song that
+        # wanders is why a cut lands off the bar, and the user should see that
+        # before blaming the solver.
+        "steady": _f(m.get("steady")),
+        "grid_drift_f": _f(m.get("grid_drift_f")),
+        "sections": secs,
+        "sections_confidence":
+            "measured 4/9, 2/9 with listening - confirm or move them",
+        "lines": [str(x) for x in (m.get("lines") or [])][:24],
+    }
+
+
 def _pinned_refs(raw, limit):
     """Rail rows from the Write-plan POST. Only rows with a tag and a file."""
     out = []
@@ -592,10 +633,10 @@ def register():
         # second route is a second place for the "no model selected" answer and
         # the unload policy to drift apart.
         stage = str(body.get("stage") or "develop").strip().lower()
-        if stage not in ("propose", "develop", "edit"):
+        if stage not in ("propose", "develop", "edit", "song"):
             return web.json_response(
                 {"ok": False,
-                 "error": f"unknown stage {stage!r}: propose, develop, edit"},
+                 "error": f"unknown stage {stage!r}: propose, develop, edit, song"},
                 status=400)
         # The conversation. Bounded server-side as well as in the panel: a
         # hand-rolled client that posts a thousand turns gets the last twelve,
@@ -712,7 +753,27 @@ def register():
                 raise
 
         try:
-            if stage == "propose":
+            if stage == "song":
+                # MV mode's entry point. Measures a song and returns it; writes
+                # nothing. `listen` is off by default and stays off unless the
+                # user asks, because it downloads a stem -- 4/9 sections become
+                # 2/9 WITH listening, which is a real but small improvement for
+                # a fetch, so it is the user's call rather than a default.
+                from . import songmap as _songmap
+                _song = str(body.get("song_file") or "").strip()
+                if not _song:
+                    return web.json_response(
+                        {"ok": False,
+                         "error": "no song file -- pick one in MEDIA, or set a "
+                                  "master_audio_file, then ask for the song "
+                                  "again."})
+                out = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: _songmap.song_map(
+                        _song, listen=bool(body.get("listen")),
+                        status=lambda m: print(f"[{TAG}] {m}", flush=True),
+                        allow_download=False))
+                out = {"ok": True, "song": _songmap_summary(out)}
+            elif stage == "propose":
                 out = await _planner.write_propose(
                     brief, complete_fn=complete_fn, hops=hops, files=files,
                     pinned=pinned, images=images, duration=duration,

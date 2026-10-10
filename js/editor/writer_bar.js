@@ -34,6 +34,106 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const body = el("div", "h3e-writer-body");
     root.appendChild(body);
 
+    /* -- the conversation (Phase B) ------------------------------------- */
+    //
+    // The WRITE tab is a CHAT THREAD, and the cards are its output. Propose,
+    // Write beats and Write plan are shortcuts that post a canned message --
+    // free text works at every point, and the model sees the thread, the
+    // accepted proposal and the current plan every time (planner.build_thread).
+    //
+    // Nothing here writes the plan. Every turn produces a DRAFT CARD, and the
+    // plan changes only when Accept is pressed on that card. A plan silently
+    // rewritten under you is worse than no plan.
+    const THREAD_PROP = "h3_writer_thread";
+    const PROPOSAL_PROP = "h3_writer_proposal";
+    // Bounded for the same reason as the server side: the thread rides the
+    // saved workflow, so an unbounded one grows every file, and a long
+    // conversation puts the brief so far back the model answers an old
+    // question. The accepted proposal and the plan are resent every turn by
+    // build_thread, so what this bounds is the wandering, not the state.
+    const THREAD_MAX = 12;
+
+    const thread = el("div", "h3e-chat");
+    const threadList = el("div", "h3e-chat-log");
+    thread.appendChild(threadList);
+    body.appendChild(thread);
+
+    const stageRow = el("div", "h3e-writer-row");
+    stageRow.appendChild(button("Propose", "Ask for the film in words first — "
+        + "the look, who is in frame, how many hops and why. Writes nothing.",
+        () => sendCanned("propose", "propose the film")));
+    stageRow.appendChild(button("Write beats", "Write the beats for the "
+        + "proposal you accepted.", () => sendCanned("develop",
+            "write the beats for the accepted proposal")));
+    stageRow.appendChild(button("Write plan", "Propose and write the beats in "
+        + "one go.", () => sendCanned("develop", "propose the film, then write "
+        + "the beats for it")));
+    body.appendChild(stageRow);
+
+    const chatRow = el("div", "h3e-writer-row");
+    const chat = el("input", "h3e-writer-chat");
+    chat.type = "text";
+    chat.placeholder = "talk to the writer — an idea, a change, a line of "
+        + "dialogue… (Enter sends)";
+    chat.title = "Free text. The model sees this conversation, the proposal "
+        + "you accepted and the plan as it stands.";
+    chat.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        e.stopPropagation();
+        sendCanned(null, chat.value);
+    });
+    chatRow.appendChild(chat);
+    chatRow.appendChild(button("Send", "Send this to the writer",
+        () => sendCanned(null, chat.value)));
+    body.appendChild(chatRow);
+
+    // ---- the thread, in node.properties so it survives a pane switch -----
+    function readThread() {
+        const t = node.properties?.[THREAD_PROP];
+        return Array.isArray(t) ? t.slice(-THREAD_MAX) : [];
+    }
+    function writeThread(t) {
+        node.properties ??= {};
+        node.properties[THREAD_PROP] = t.slice(-THREAD_MAX);
+        node.properties[PROPOSAL_PROP] = proposal || null;
+    }
+    function addTurn(role, content) {
+        const t = readThread();
+        t.push({ role, content: String(content || "") });
+        writeThread(t);
+        paintThread();
+    }
+    function paintThread() {
+        threadList.textContent = "";
+        const t = readThread();
+        if (!t.length) {
+            threadList.appendChild(el("div", "h3e-chat-empty",
+                "Ask for the film, or just describe the scene."));
+        }
+        for (const m of t) {
+            const row = el("div", "h3e-chat-msg " + (m.role === "user" ? "me" : "him"));
+            row.appendChild(el("span", "h3e-chat-who",
+                m.role === "user" ? "you" : "writer"));
+            row.appendChild(el("span", "h3e-chat-text", m.content));
+            threadList.appendChild(row);
+        }
+        const dropped = (node.properties?.[THREAD_PROP] || []).length > THREAD_MAX;
+        if (dropped) {
+            // Say it rather than silently truncating: a model that has
+            // forgotten what you said three turns ago looks like it never
+            // heard you.
+            threadList.appendChild(el("div", "h3e-note h3e-note-hint",
+                `Older turns dropped — the last ${THREAD_MAX} are kept. The `
+                + `proposal and the plan are still sent every turn.`));
+        }
+        scrollerToEnd();
+    }
+    function scrollerToEnd() {
+        const p = thread.closest(".h3e-scroll");
+        if (p) p.scrollTop = p.scrollHeight;
+    }
+
     /* -- the brief ----------------------------------------------------- */
     const row = el("div", "h3e-writer-row");
     const brief = el("input", "h3e-writer-brief");
@@ -542,61 +642,189 @@ if (!list.length) {
     }
 
     async function run() {
-        if (busy) return;                       // one generation at a time
+        // "Write plan" is the whole thing in one go: propose, then beats.
+        await sendCanned("develop", "propose the film, then write the beats for it");
+    }
+
+    // The one call every stage button and every free-text line goes through.
+    // `stage` is null for free text -- the model decides what was asked for,
+    // and the route answers with whichever card it produced.
+    async function sendCanned(stage, text) {
+        if (busy) return;
+        const msg = String(text || "").trim();
+        if (!msg) return;
         setBusy(true);
-        say(`Writing a ${hops.value}-hop plan… this can take a minute on a `
-            + `large model.`, "hint");
+        chat.value = "";
+        addTurn("user", msg);
+        say("Thinking… this can take a minute on a large model.", "hint");
         try {
             const r = await fetch(PLAN_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    brief: brief.value,
+                    stage: stage || "chat",
+                    brief: msg,
                     hops: Number(hops.value) || 3,
-                    // The node's hop length. The prompt's length table has a
-                    // row per duration and the model could not tell which row
-                    // it was writing to -- it is told to ask, and a button
-                    // cannot answer.
                     duration: String(widgetByName(node, "duration")?.value || ""),
                     refs: railRefs(),
+                    thread: readThread(),
+                    proposal: node.properties?.[PROPOSAL_PROP] || null,
+                    // Edit reads the plan off the node, so a change never
+                    // depends on the panel having re-sent a register the user
+                    // has since hand-edited.
+                    shot_plan: String(widgetByName(node, "shot_plan")?.value || ""),
+                    ref_plan: String(widgetByName(node, "ref_plan")?.value || ""),
+                    pin_mech: String(widgetByName(node, "pin_mech")?.value || ""),
                 }),
             });
             const j = await r.json();
-            // A rejected loop can still hold a usable script. Put it in the
-            // draft so Accept is not behind a red wall that threw the work away.
-            if (j.shot_plan) showDraft(j.shot_plan || "", j.ref_plan || "");
-            if (!j.ok) {
-                // A plan that would not converge still comes back, so the
-                // errors name real shots. Showing them beats "generation
-                // failed", which tells the user nothing they can act on.
-                // All of them, not the first three. The status box scrolls.
-                // Capping diagnostics is how a repair loop spending an attempt
-                // on a filename mismatch stayed invisible through 1.0.0 and
-                // 1.0.1 -- the error that explained it was the fourth one.
-                const errs = (j.errors || []).map((e) => `• ${e}`).join("\n");
-                say(errs
-                    ? `Gave up after ${j.attempts} attempts. The model could `
-                      + `not fix:\n${errs}`
-                      + (j.shot_plan
-                          ? "\n\nA partial draft is below; Accept still writes it."
-                          : "")
-                    : (j.error || "the plan writer failed"), "error");
-                return;
+            const note = (j.note || j.warnings || []).join?.("\n")
+                || (j.warnings || []).join("\n");
+            if (j.proposal) {
+                // A proposal is accepted by READING it, and Accepting it
+                // stores the proposal and writes nothing to the plan.
+                renderProposalCard(j.proposal, note);
+            } else if (j.diffs) {
+                renderEditCard(j, note);
+            } else if (j.shot_plan) {
+                showDraft(j.shot_plan || "", j.ref_plan || "");
+                addTurn("assistant", note
+                    || `Draft of ${j.shot_plan ? "a plan" : ""}. Accept to put it on the cards.`);
+            } else if (typeof j.text === "string" && j.text) {
+                addTurn("assistant", j.text);
             }
-            const warn = (j.warnings || []).map((w) => `• ${w}`).join("\n");
-            say(`Draft of ${hops.value} hop(s) in ${j.attempts} attempt(s). `
-                + `Accept to put it on the cards, or Discard to keep what you have.`
-                + (warn ? `\n\nWorth a look before you accept:\n${warn}` : ""),
-                // Lints are shown but never auto-retried: a model asked to fix
-                // a lint it disagrees with rewrites the parts that were fine.
-                // "warn" is the absence of both modifiers -- a bare .h3e-note
-                // is already the warning colour.
-                warn ? "warn" : "hint");
+            if (!j.ok) {
+                const errs = (j.errors || []).map((e) => `• ${e}`).join("\n");
+                say(errs || (j.error || "the writer failed"), "error");
+                if (!j.proposal && !j.shot_plan && !j.text) {
+                    addTurn("assistant", j.error || "the writer failed");
+                }
+            } else if (j.warnings?.length) {
+                say((j.warnings || []).map((w) => `• ${w}`).join("\n"), "warn");
+            }
         } catch (e) {
             say(String(e), "error");
+            addTurn("assistant", String(e));
         } finally {
             setBusy(false);
         }
+    }
+
+    // ---- the cards ------------------------------------------------------
+    //
+    // A card is a STRUCTURED thing the user reads and then acts on. Accept is
+    // the only thing that writes the plan, and each card says plainly what its
+    // own Accept does -- a proposal writes nothing, a plan replaces the cards,
+    // an edit replaces only the shots it names.
+    // The three card kinds are separate literals rather than one name built by
+    // concatenation: check_ui.py's dead-class check reads the source for
+    // literal class strings, and a class only ever assembled at runtime is a
+    // class the check cannot see -- so a rule for it would look dead forever.
+    function cardShell(kind, title, subtitle) {
+        const box = el("div", "h3e-cardbox");
+        if (kind === "proposal") box.classList.add("h3e-cardbox-proposal");
+        if (kind === "edit") box.classList.add("h3e-cardbox-edit");
+        if (kind === "plan") box.classList.add("h3e-cardbox-plan");
+        const head = el("div", "h3e-cardbox-head");
+        head.appendChild(el("span", "h3e-title", title));
+        if (subtitle) head.appendChild(el("span", "h3e-count", subtitle));
+        box.appendChild(head);
+        const bodyEl = el("div", "h3e-cardbox-body");
+        box.appendChild(bodyEl);
+        const acts = el("div", "h3e-writer-row");
+        box.appendChild(acts);
+        draft.style.display = "";
+        draftList.textContent = "";
+        draftList.appendChild(box);
+        return { box, bodyEl, acts };
+    }
+    function field(label, value) {
+        if (value == null || value === "") return null;
+        const row = el("div", "h3e-cardbox-row");
+        row.appendChild(el("span", "h3e-cardbox-k", label));
+        row.appendChild(el("span", "h3e-cardbox-v", String(value)));
+        return row;
+    }
+
+    function renderProposalCard(p, note) {
+        const c = cardShell("proposal", "PROPOSAL",
+            p?.shots?.count ? `${p.shots.count} hops` : "");
+        const b = c.bodyEl;
+        const rows = [
+            field("the film", p.one_line),
+            field("how it looks", p.look),
+            field("in frame", p.frames),
+            field("hops", p.shots?.arithmetic || p.shots?.count),
+            field("note", note),
+        ].filter(Boolean);
+        for (const r of rows) b.appendChild(r);
+        if (Array.isArray(p.refs) && p.refs.length) {
+            b.appendChild(el("div", "h3e-cardbox-k", "the pictures, read as"));
+            for (const r of p.refs) {
+                b.appendChild(el("div", "h3e-cardbox-row",
+                    `@${r.tag || "?"} — ${r.read_as || r.why || "not said"}`));
+            }
+        }
+        if (Array.isArray(p.sections) && p.sections.length > 1) {
+            b.appendChild(el("div", "h3e-cardbox-k", "sections"));
+            for (const s of p.sections) {
+                b.appendChild(el("div", "h3e-cardbox-row",
+                    `hops ${s.from ?? "?"}–${s.to ?? "?"}${s.why ? ` — ${s.why}` : ""}`));
+            }
+        }
+        // Accepting a proposal stores it and writes NOTHING to the plan. That
+        // is the point of the card: you agree to the shape before a beat is
+        // written against it.
+        c.acts.appendChild(button("Accept proposal",
+            "Keep this as the agreement to write beats against. No plan is "
+            + "written yet.", () => {
+                node.properties ??= {};
+                node.properties[PROPOSAL_PROP] = p;
+                writeThread(readThread());
+                say("Proposal accepted. Write beats writes to it.", "hint");
+                addTurn("assistant", "Proposal accepted. Say 'write the beats'.");
+                draft.style.display = "none";
+                draftList.textContent = "";
+            }));
+        c.acts.appendChild(button("Discard", "Throw this away",
+            () => { draft.style.display = "none"; draftList.textContent = ""; }));
+    }
+
+    function renderEditCard(j, note) {
+        const c = cardShell("edit", "EDIT",
+            (j.diffs || []).length ? `${j.diffs.length} shot(s)` : "");
+        const b = c.bodyEl;
+        for (const d of (j.diffs || [])) {
+            b.appendChild(el("div", "h3e-cardbox-k",
+                `hop ${d.hop} · ${d.shot_id}`));
+            // Word-level diff, so the user sees what the edit DID rather than
+            // two paragraphs and a hunch.
+            if (d.before) {
+                const before = el("div", "h3e-diff-before", d.before);
+                b.appendChild(before);
+            }
+            if (d.after) b.appendChild(el("div", "h3e-diff-after", d.after));
+            const rem = (d.diff?.removed || []);
+            const add = (d.diff?.added || []);
+            if (rem.length || add.length) {
+                const bits = [];
+                if (rem.length) bits.push(`− ${rem.join(" ")}`);
+                if (add.length) bits.push(`+ ${add.join(" ")}`);
+                b.appendChild(el("div", "h3e-diff-words", bits.join("   ")));
+            }
+        }
+        if (note) b.appendChild(el("div", "h3e-cardbox-row", note));
+        c.acts.appendChild(button("Accept edit",
+            "Put these shots on the cards. Every other shot is untouched.",
+            () => {
+                showDraft(j.shot_plan || "", j.ref_plan || "");
+                draft.style.display = "none";
+                draftList.textContent = "";
+                say("Edit accepted. The cards now carry it.", "hint");
+                addTurn("assistant", "Edit accepted.");
+            }));
+        c.acts.appendChild(button("Discard", "Keep the cards as they are",
+            () => { draft.style.display = "none"; draftList.textContent = ""; }));
     }
 
     // Only reach the network when the section is actually opened. A panel that
@@ -621,6 +849,11 @@ if (!list.length) {
         }
         const d = p[DRAFT_PROP];
         if (!pending && d && (d.shot || d.ref)) showDraft(d.shot, d.ref);
+        // The thread and the accepted proposal. Properties arrive with the
+        // workflow AFTER the mount, so this is the only place they can be put
+        // back -- without it a reload drops the whole conversation and the
+        // accepted proposal, and the writer starts from nothing.
+        paintThread();
     }
     restore();
 

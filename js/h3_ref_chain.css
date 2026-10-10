@@ -777,7 +777,97 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
     padding-left: var(--h3-gap-sm);
 }
 
-/* -- media pickers --------------------------------------------------------
+/* -- WRITE: the conversation ---------------------------------------------- */
+
+/* The thread is the surface; the cards are its output. Kept above the brief
+ * box so the conversation reads top-down the way it happened, and so a draft
+ * card appears where you are already looking rather than below the fold. */
+.h3e-chat {
+    display: flex;
+    flex-direction: column;
+    gap: var(--h3-gap-sm);
+    max-height: 260px;
+    overflow-y: auto;
+    padding: var(--h3-gap-sm);
+    border: 1px solid var(--h3-border-soft);
+    border-radius: var(--h3-radius-sm);
+    background: var(--h3-sunken);
+}
+.h3e-chat-empty {
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-faint);
+}
+.h3e-chat-msg {
+    display: flex;
+    gap: var(--h3-gap-sm);
+    align-items: baseline;
+    font-size: var(--h3-fs-sm);
+}
+.h3e-chat-who {
+    flex: 0 0 auto;
+    min-width: 42px;
+    color: var(--h3-faint);
+    font-size: var(--h3-fs-xs);
+    letter-spacing: var(--h3-track);
+    text-transform: uppercase;
+}
+.h3e-chat-msg.him .h3e-chat-who { color: var(--h3-accent); }
+.h3e-chat-text { min-width: 0; white-space: pre-wrap; }
+
+/* -- the draft cards ------------------------------------------------------ */
+
+.h3e-cardbox {
+    border: 1px solid var(--h3-border);
+    border-radius: var(--h3-radius-sm);
+    padding: var(--h3-gap-sm);
+    background: var(--h3-panel);
+    margin-bottom: var(--h3-gap-sm);
+}
+.h3e-cardbox-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--h3-gap-sm);
+    margin-bottom: 4px;
+}
+.h3e-cardbox-body { display: flex; flex-direction: column; gap: 3px; }
+.h3e-cardbox-row { display: flex; gap: var(--h3-gap-sm); font-size: var(--h3-fs-sm); }
+.h3e-cardbox-k {
+    flex: 0 0 auto;
+    min-width: 84px;
+    color: var(--h3-faint);
+    font-size: var(--h3-fs-xs);
+    letter-spacing: var(--h3-track);
+    text-transform: uppercase;
+    padding-top: 1px;
+}
+.h3e-cardbox-v { min-width: 0; white-space: pre-wrap; }
+
+/* A proposal is not a plan: accent, not the panel border, so it does not read
+ * as "this is going on your cards" the way the plan card does. An edit is
+ * amber because it names a small, named change rather than a whole film. */
+.h3e-cardbox-plan { border-left: 3px solid var(--h3-border); }
+.h3e-cardbox-proposal { border-left: 3px solid var(--h3-accent); }
+.h3e-cardbox-edit { border-left: 3px solid var(--h3-warn); }
+
+/* The word-level diff. Before struck and faint, after kept -- so the eye lands
+ * on what changed rather than reading two paragraphs and guessing. */
+.h3e-diff-before, .h3e-diff-after {
+    font-size: var(--h3-fs-sm);
+    white-space: pre-wrap;
+    padding-left: var(--h3-gap-sm);
+    border-left: 2px solid var(--h3-border-soft);
+}
+.h3e-diff-before {
+    color: var(--h3-faint);
+    text-decoration: line-through;
+}
+.h3e-diff-after { border-left-color: var(--h3-accent); }
+.h3e-diff-words {
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-muted);
+    font-family: ui-monospace, Consolas, monospace;
+}
  *
  * Empty is dashed, filled is solid, so the border alone says whether a slot
  * holds something -- readable at a glance across nine of them. `contain` and

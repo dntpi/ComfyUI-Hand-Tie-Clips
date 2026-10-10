@@ -51,7 +51,15 @@ export function createVideoSwap(node, { onWritten } = {}) {
     const wEnd = widgetByName(node, "reference_video_end_s");
     const wDesc = widgetByName(node, "reference_video_desc");
 
-    const cell = el("label", "h3e-media-cell");
+    /* D1h: a DIV, not a <label>. Same reason as media_strip.js's cell -- a label
+   * forwards every click on a descendant to the file input it wraps, so the
+   * picker was being triggered twice: once by its own click handler and once by
+   * the label, from anywhere in the cell.
+   *
+   * Here the cell also holds the description and size fields, so clicking near
+   * a text box opened a file browser. The Media tab had the same trap with a
+   * scrubber in it, which is how it was found. */
+    const cell = el("div", "h3e-media-cell");
     cell.appendChild(el("span", "h3e-media-label", "clip 1"));
     const pick = createPicker({
         kind: "video",

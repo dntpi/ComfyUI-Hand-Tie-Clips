@@ -209,7 +209,23 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
             return v === undefined ? true : Boolean(v);
         };
 
-        const cell = el("label", "h3e-media-cell");
+        /* D1h: a DIV, not a <label>.
+     *
+     * It was a label, and a label forwards every click on a descendant to the
+     * control it wraps -- there is a hidden <input type="file"> in here. The
+     * picker has its OWN click handler on the thumbnail (input.click(), line
+     * ~287), which is what should open the browser and all it ever needed.
+     *
+     * The label was therefore doing the same job twice, and the second time it
+     * covered the WHOLE row: dragging the scrubber, dragging the window grips,
+     * clicking the waveform -- any of them ended with a file dialog opening.
+     * The user found it immediately, and it is the reason the file browser
+     * "appeared" after scrubbing rather than after clicking the picture.
+     *
+     * A div has no activation behaviour, so only the thumbnail opens anything.
+     * The label was also doing no accessibility work: the control it labelled
+     * was `display: none`, so there was no labelable element to point at. */
+    const cell = el("div", "h3e-media-cell");
         const head = el("span", "h3e-media-head");
         const tri = el("span", "h3e-media-tri", "");
         head.appendChild(tri);

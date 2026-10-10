@@ -160,6 +160,26 @@ ck("the native media transport is hidden (it duplicated our waveform)",
    re.search(r"\.h3e-trim-media\s*\{[^}]*display:\s*none", css),
    "the browser's own play/clock/volume bar is the ugliest thing on the tab")
 
+print("\nD1h: a slot is not a <label>")
+# A <label> forwards every click on a descendant to the control it wraps. The
+# media cell held a hidden <input type="file">, so the whole row -- scrubber,
+# waveform, description -- ended up opening a file browser. The picker has its
+# OWN click handler, so the label was never needed; it was doing the same job
+# twice and the second one covered everything.
+#
+# This is structural and cheap to check, which matters: it is invisible to the
+# mount test (the stub has no label activation) and it is invisible to a person
+# until they drag a waveform and a file dialog appears.
+for _f, _label in (("js/editor/media_strip.js", 'el("label", "h3e-media-cell"'),
+                   ("js/editor/video_swap.js", 'el("label", "h3e-media-cell"')):
+   ck("{} does not make a slot cell a label".format(os.path.basename(_f)),
+      _label not in read(_f),
+      "a label wrapping a hidden file input makes the whole row a button")
+ck("the trim bar stops its own pointerdown",
+   re.search(r'addEventListener\("pointerdown".{0,400}?stopPropagation',
+             read("js/editor/trim_bar.js"), re.S) is not None,
+   "a scrub should end where it started, whatever else is listening")
+
 print()
 if FAIL:
     print("PREVIS WARN: %d FAILURE(S)\n  %s" % (len(FAIL), "\n  ".join(FAIL)))

@@ -348,6 +348,12 @@ export function createTrimBar({ kind = "audio", name, get, set, onChange,
     // Clicking the bar scrubs, so you can find the downbeat before deciding
     // where to put a grip.
     bar.addEventListener("pointerdown", (e) => {
+        // D1h: a scrub is not a click on the file. This bar lives inside the
+        // slot's row, next to a picker that opens a file browser -- and a
+        // pointerdown that reaches anything above it is a pointerdown the
+        // picker might treat as "choose this file". Stopping here means the
+        // gesture ends where it started, whatever else is listening.
+        e.stopPropagation();
         if (dragging || e.target !== bar && e.target !== wave) return;
         const t = seek(e.clientX);
         try { media.currentTime = t; } catch { /* not seekable yet */ }

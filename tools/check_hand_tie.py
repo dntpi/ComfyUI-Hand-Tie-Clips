@@ -416,8 +416,8 @@ ck("4 x 8 s: cuts at 170/340/510, the film still 702 frames",
    _cuts == [170, 340, 510] and _pos == HT.film_frames([192] * 4), (_cuts, _pos))
 
 print("\na hop's line sits between its windows (chain_00153: every dialogue error was at a join)")
-ck("8 s: 12 words fit between the head window and the dropped tail (6.08 s at 2.1/s)",
-   HT.line_budget(192) == 12, HT.line_budget(192))
+ck("8 s: 14 words fit between the head window and the dropped tail (6.08 s at 2.4/s)",
+   HT.line_budget(192) == 14, HT.line_budget(192))
 ck("10 s leaves more room, 5 s less", HT.line_budget(243) > HT.line_budget(192) > HT.line_budget(124))
 _b = ("@mina walks down the street, holding her phone out. (S1) says, <d>[English] What's up, "
       "everybody.</d> She grins. Traffic hum, footsteps.")
@@ -433,11 +433,27 @@ for label, beat in (("no line", "@mina walks. Traffic hum."),
     ck("left alone: " + label, HT.time_lines([{"beat": beat}])[0]["beat"] == beat)
 _vlog = {"beat": "@mina waits at a crosswalk. (S1) says, <d>[English] Quick question for you guys, what "
                  "should I eat next? Drop it in the comments, I'm serious.</d> Beeping."}
-ck("the vlog's 16-word line is linted at 8 s, a 9-word one is not",
+ck("the vlog's 16-word line is linted at 8 s, a 9-word one is not (cap 14)",
    len(HT.line_lints([_vlog], [192])) == 1
    and HT.line_lints([{"beat": "(S1) says, <d>[English] One two three four five six seven eight nine.</d>"}], [192]) == [])
-ck("run() stamps lines before splitting crossing lines, and lints after the sections are laid out",
-   "_ht.split_crossing(_ht.time_lines(shots))" in src and "_ht.line_lints(shots, lengths)" in src)
+ck("run() stamps lines (with the hop lengths) before splitting crossing lines, and lints after",
+   "_ht.split_crossing(_ht.time_lines(shots, hop_frames=_tl_frames))" in src
+   and "_ht.line_lints(shots, lengths)" in src)
+_c = HT.time_lines([{"beat": _b}], hop_frames=[192])[0]["beat"]
+ck("the sentence after the line is stamped where the line ends at 3 words/s (00155: mouthing after it)",
+   "everybody.</d> At 00:02.000 She grins." in _c, _c)
+_long = {"beat": "@mina walks. (S1) says, <d>[English] " + " ".join(["word"] * 30) + ".</d> She smiles. Hum."}
+_cl = HT.time_lines([_long], hop_frames=[192])[0]["beat"]
+ck("a long line's close is held 0.5 s before the dropped tail (6.58 s at 8 s)",
+   ".</d> At 00:06.600 She smiles." in _cl, _cl[-60:])
+ck("without hop lengths nothing after the line is stamped (the old call)",
+   HT.time_lines([{"beat": _b}])[0]["beat"].count("At ") == 2)
+ck("a line that ends the beat has nothing to stamp after it",
+   HT.time_lines([{"beat": "@mina waves. (S1) says, <d>[English] Bye.</d>"}], hop_frames=[192])[0]["beat"]
+   .count("At ") == 2)
+ck("run() re-renders a hand-tie hop that cuts, once, on a seed clear of every other",
+   "_hcuts = _ht.previs_cuts(imgs)" in src and "shot_seed + _ht.PREVIS_RETRY_STRIDE" in src
+   and "len(_c2) < len(_hcuts)" in src)
 
 print("\nrefusals")
 ck("overlap 22 + last_frame_guide off is fine", HT.settings_errors(22, "off") == [])

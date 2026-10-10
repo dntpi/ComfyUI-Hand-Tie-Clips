@@ -433,7 +433,14 @@ def crossing_lints(shots):
 # window's sound. Measured rate: 14-17 words in 7.0-7.8 s, about 2.1 a second.
 
 LINE_START_S = 1.0          # the head window is 0.917 s; the line starts after it
-LINE_WPS = 2.1              # chain_00153: H3's speaking rate in a hop
+# H3's speaking rate is not one number: chain_00153 spoke 14-17 words at about 2.1 a
+# second, chain_00155 spoke 9-10 at about 3, starting 1.2-1.7 s in. A 12-word cap off
+# the slow rate left 2.3-3.6 s of a vlogger's face with nothing said, and the model
+# filled it with mouthing. The cap sits between the two; the close is timed off the
+# fast one, so the closed-mouth sentence lands where a short line actually ends.
+LINE_WPS = 2.4              # words a second the cap assumes: 14 words at 8 s
+LINE_WPS_FAST = 3.0         # chain_00155: when the line is predicted to end
+CLOSE_MARGIN_S = 0.5        # the close lands at least this far before the dropped tail
 _TIMED = re.compile(r"\bAt \d\d:\d\d(?:\.\d+)?\b")
 
 
@@ -443,17 +450,27 @@ def line_budget(hop_frames, fps=FPS):
     return max(0, int(usable * LINE_WPS))
 
 
-def time_lines(shots, start_s=LINE_START_S):
+def _close_s(beat, hop_frames, fps=FPS, start_s=LINE_START_S):
+    """When the sentence after a hop's last line should start: the predicted end of
+    the line at LINE_WPS_FAST, never later than CLOSE_MARGIN_S before the tail."""
+    words = sum(len(_TAG.sub("", m).split()) for m in _D.findall(beat))
+    last = (int(hop_frames) - WINDOW) / float(fps) - CLOSE_MARGIN_S
+    return round(max(start_s + 0.5, min(start_s + words / LINE_WPS_FAST, last)), 1)
+
+
+def time_lines(shots, start_s=LINE_START_S, hop_frames=None, fps=FPS):
     """Shots whose first spoken line is placed after the head window.
 
     Official H3 syntax, `At MM:SS.mmm` inside the description: the sentence that
     carries the beat's first `<d>` gets `At 00:01.000`, and the beat's opening
-    gets `At 00:00.000` so the stamps read in order. A beat that already writes
-    its own times, a full H3 block, or a beat with no line is left as it is.
-    Returns copies.
+    gets `At 00:00.000` so the stamps read in order. With `hop_frames`, the
+    sentence after the last line is stamped too (`_close_s`): a closed-mouth
+    action with no time had nothing to hold it, and chain_00155 mouthed through
+    the 2-3.5 s after every line. A beat that already writes its own times, a
+    full H3 block, or a beat with no line is left as it is. Returns copies.
     """
     out = []
-    for sh in shots or []:
+    for k, sh in enumerate(shots or []):
         s = dict(sh or {})
         beat = str(s.get("beat") or "")
         at = beat.find("<d>")
@@ -469,6 +486,15 @@ def time_lines(shots, start_s=LINE_START_S):
         else:
             s["beat"] = ("At %s %s %s%s" % (_stamp(0.0), beat[:cut + 1].strip(), stamp,
                                             beat[cut + 2:].lstrip()))
+        if hop_frames is not None and k < len(hop_frames):
+            b = s["beat"]
+            end = b.rfind("</d>")
+            tail = b[end + 4:] if end >= 0 else ""
+            lead = len(tail) - len(tail.lstrip(" .,!?"))
+            if end >= 0 and tail[lead:].strip():
+                at = end + 4 + lead
+                s["beat"] = (b[:at].rstrip() + " At %s " % _stamp(_close_s(beat, hop_frames[k], fps, start_s))
+                             + b[at:])
         out.append(s)
     return out
 
@@ -482,7 +508,9 @@ def line_lints(shots, hop_frames, fps=FPS):
         if words > room:
             warn.append("hand-tie: shot %d speaks %d words; about %d fit between its windows "
                         "(%.1f s at %.1f words a second). The rest runs into the join, where "
-                        "the film drops it. Cut the line or give the shot a longer duration."
+                        "the film drops it. Cut the line or give the shot a longer duration. "
+                        "After the line, give the shot a closed-mouth action and a sound: a "
+                        "hop that runs out of words fills the rest with mouthing."
                         % (k + 1, words, room, room / LINE_WPS, LINE_WPS))
     return warn
 

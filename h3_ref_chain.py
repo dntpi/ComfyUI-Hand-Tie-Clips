@@ -3195,8 +3195,10 @@ class HandTieClips:
                 # continuation airlock and no `join` sentence.
                 # Each hop's own line is placed after its head window (time_lines),
                 # before a crossing line is split across the join (split_crossing).
+                _tl_frames = [align_frame_count(_duration_frames((s or {}).get("duration") or duration))
+                              for s in shots]
                 blocks = [_d.compile_shot(s, 0, establish)
-                          for s in _ht.split_crossing(_ht.time_lines(shots))]
+                          for s in _ht.split_crossing(_ht.time_lines(shots, hop_frames=_tl_frames))]
                 for _w in _ht.crossing_lints(shots):
                     print(f"[{TAG}] note: {_w}", flush=True)
             unique = len(shots)
@@ -5363,6 +5365,41 @@ class HandTieClips:
                 wav = audio["waveform"].contiguous().cpu()
                 sr = int(audio["sample_rate"])
                 audio = {"waveform": wav, "sample_rate": sr}
+                if ht and boost_model is None and not split_on and str(hop_refine) == "off":
+                    # chain_00155: hop 4 held its head window for 22 frames, then cut
+                    # to another shopfront the moment the guide ran out; its previs
+                    # was clean. The hop checks itself like the previs does and
+                    # renders once more on a seed clear of every other. The kept take is
+                    # cached under the hop's own key (its planned seed), so a hit serves it.
+                    _hcuts = _ht.previs_cuts(imgs)
+                    if _hcuts:
+                        _rs = (shot_seed + _ht.PREVIS_RETRY_STRIDE) & 0x7FFFFFFF
+                        print(f"[{TAG}] hand-tie hop {i + 1}: seed {shot_seed} cuts at "
+                              + ", ".join(f"f{c} ({c / FPS:.2f}s)" for c in _hcuts)
+                              + f"; rendering it again on seed {_rs}", flush=True)
+                        _n2 = _result(_core_call(RandomNoise, "the hop retake noise",
+                                                 noise_seed=_rs))[0]
+                        _s2 = _result(_core_call(
+                            SamplerCustomAdvanced, "the hop retake sampler",
+                            noise=_n2, guider=guider, sampler=sampler,
+                            sigmas=hop_sigmas, latent_image=latent))[0]
+                        _i2, _a2 = _decode_av(vae, audio_vae, _s2)
+                        _i2 = _i2.contiguous().cpu()
+                        _c2 = _ht.previs_cuts(_i2)
+                        if len(_c2) < len(_hcuts):
+                            sampled, imgs = _s2, _i2
+                            wav = _a2["waveform"].contiguous().cpu()
+                            sr = int(_a2["sample_rate"])
+                            audio = {"waveform": wav, "sample_rate": sr}
+                        if _c2:
+                            print(f"[{TAG}] WARNING: hand-tie hop {i + 1}: the retake cuts too, at "
+                                  + ", ".join(f"f{c}" for c in _c2) + "; keeping the take with "
+                                  "fewer cuts. A beat that moves to a new place asks for a cut.",
+                                  flush=True)
+                        else:
+                            print(f"[{TAG}] hand-tie hop {i + 1}: seed {_rs} holds one take",
+                                  flush=True)
+                        del _n2, _s2, _i2, _a2
                 if locked is not None:
                     # The pin of the NEXT hop must carry the take, not a
                     # decoded generate. Replace this hop's audio with the

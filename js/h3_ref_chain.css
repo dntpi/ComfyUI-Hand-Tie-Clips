@@ -772,7 +772,17 @@
 
 .h3e-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    /* D1d: was `minmax(104px, 1fr)`. A 104px track cannot hold a label like
+     * CONTROL AFTER GENERATE, so the long names wrapped to two lines and every
+     * field below them was pushed down by a different amount -- which is the
+     * "squished wordings" the user reported on the Media tab and the RUN dial
+     * grid. 150px is the width at which the longest label in the pack
+     * (control_after_generate, voice_every_hop, last_frame_guide) fits on one
+     * line at --h3-fs-xs.
+     *
+     * `auto-fit` not `auto-fill`: a filled track stretches, so a group with two
+     * dials gives each half the panel and the row stops lining up. */
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--h3-gap-sm);
     margin: var(--h3-gap-sm) 0;
 }
@@ -1310,13 +1320,42 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
 }
 
 /* -- media strip ---------------------------------------------------------- */
+
+/* D1d: ONE SLOT PER ROW.
+ *
+ * This was `repeat(auto-fill, minmax(132px, 1fr))`, which put three or four
+ * slots on a row and left each with a 132px column holding a label, a file
+ * picker, a trim window and a waveform. Every long label wrapped -- "REFERENCE
+ * CLIP 2 ·" / "UNUSED" on two lines -- and because a label wrapping pushes only
+ * ITS field down, the rows stopped lining up. That is the "squished wordings"
+ * the user reported.
+ *
+ * A media slot is not a dial. It is a filename, a trim window and a waveform,
+ * and all three need width, because that is its whole content. So the grid is
+ * gone: one slot per row, the label in a fixed column on the left, the body
+ * taking the rest. The prototype had it this way, and for the same reason.
+ *
+ * `auto-fill` and `auto-fit` both stay out of it. There is one thing per row
+ * here and there is never a reason to make it narrower. */
 .h3e-media-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-    gap: var(--h3-gap-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
     margin-top: 4px;
 }
-.h3e-media-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* Label column fixed so every slot's body starts at the same x -- which is what
+ * makes this read as a list of slots rather than a grid of unrelated widgets. */
+.h3e-media-cell {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    align-items: start;
+    gap: var(--h3-gap-sm);
+    min-width: 0;
+    padding: 3px 0;
+    border-top: 1px solid var(--h3-border-soft);
+}
+.h3e-media-cell:first-child { border-top: 0; }
 
 /* -- D7: an empty MEDIA slot folds to one dimmed line --------------------- */
 
@@ -1362,7 +1401,14 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
 .h3e-media-label-empty { color: var(--h3-faint); }
 .h3e-media-folded { min-height: 18px; }
 
-.h3e-media-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* The body occupies column 2 -- the cell is a grid, and the head is column 1. */
+.h3e-media-body {
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
 /* One line, always. These are grid siblings that flow from the top of their
  * cell, so a label that wraps to two lines pushes ITS drop zone down and only
  * its own -- the row stops lining up, which is how `master audio (lip-sync
@@ -1375,10 +1421,14 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
     font-weight: var(--h3-weight-label);
     letter-spacing: var(--h3-track);
     text-transform: uppercase;
-    color: var(--h3-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+color: var(--h3-muted);
+     /* D1d: allowed to WRAP now, because the label column is 150px rather than
+      * the 132px grid cell this was written for. `nowrap` here meant a label
+      * that did not fit was silently clipped -- and the ones that did not fit
+      * were exactly the long ones (REFERENCE CLIP 2, CONTROL AFTER GENERATE),
+      * which is the "squished wording" the user reported. Two clean lines beat
+      * one truncated one, and `line-height` keeps the second from crowding. */
+     line-height: 1.25;
 }
 /* Full width under the reference clip's trim bar: this is a sentence, and a
  * sentence squeezed into a 104px cell is unreadable for the same reason a

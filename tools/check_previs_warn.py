@@ -121,6 +121,25 @@ ck("the tab SCROLLER keeps its own [hidden] rule (D1c)",
    "setSurface() hides tabs.bodies -- that is .h3e-scroll -- and without this "
    "the attribute is inert, so RUN lays out UNDER the tab bodies")
 
+print("\nD1d: one item per row, and a label that is never clipped")
+# Both of these were found by the user in a screenshot, not by a check, and both
+# had the same cause: a grid track narrower than the longest label in the pack.
+ck("the MEDIA strip is one slot per row, not an auto-fill grid",
+   re.search(r"\.h3e-media-grid\s*\{[^}]*display:\s*flex", css)
+   and not re.search(r"\.h3e-media-grid\s*\{[^}]*auto-fill", css),
+   "auto-fill put 3-4 slots on a row and every long label wrapped")
+ck("the MEDIA label column is wide enough for the longest slot name",
+   re.search(r"\.h3e-media-cell\s*\{[^}]*grid-template-columns:\s*1[2-9]\d px", css)
+   or re.search(r"\.h3e-media-cell\s*\{[^}]*grid-template-columns:\s*1[2-9]\dpx", css)
+   or re.search(r"\.h3e-media-cell\s*\{[^}]*grid-template-columns:\s*[2-9]\d\dpx", css),
+   "a 132px label column clipped REFERENCE CLIP 2")
+ck("the MEDIA label is not nowrap+ellipsis",
+   not re.search(r"\.h3e-media-label\s*\{[^}]*text-overflow:\s*ellipsis", css),
+   "nowrap + ellipsis silently truncated the long labels")
+ck("the RUN dial grid tracks fit the longest label (control_after_generate)",
+   re.search(r"\.h3e-grid\s*\{[^}]*minmax\(1[3-9]\dpx", css),
+   "104px wrapped CONTROL AFTER GENERATE onto two lines and pushed its field down")
+
 print()
 if FAIL:
     print("PREVIS WARN: %d FAILURE(S)\n  %s" % (len(FAIL), "\n  ".join(FAIL)))

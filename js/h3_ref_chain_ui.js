@@ -208,6 +208,16 @@ function mountEditor(node) {
     // is a late bind, not a call at construction time.
     editor.setHopKeySource(() => timeline?.hopKeys?.() || null);
 
+    // D3: the score strip's under-band reads the ref plan, and its NEXT QUEUE
+    // line and section markers read the timeline -- which is where forecastPlan
+    // is already called, on the same arguments, for its own note. Wired here
+    // because the rail and the timeline are built after the editor.
+    editor.setForecastSources({
+        refPlan: () => rail.getPlan?.() || null,
+        forecast: () => timeline?.forecastNow?.(editor.shots()) || null,
+        tieSections: (shots, frames) => timeline?.sections?.() || [],
+    });
+
     const runPanel = createRunPanel(node, {
         onChange: () => {
             // render_from / render_through are drawn in RUN and also driven by

@@ -375,6 +375,12 @@ export function createTimeline(node, { editor, onChange } = {}) {
             ? tieSections(shots, shots.map((s) => framesOf(
                 s.duration || widgetByName(node, "duration")?.value)))
             : [];
+        // D3 reads these rather than calling tieSections() a second time. The
+        // score strip wants the same boundaries as these markers, and the way to
+        // guarantee that is to hand over THIS result -- a second call inside the
+        // same file would be a second answer, which is the rule this file is
+        // built to avoid.
+        lastSections = sections;
         // hop index -> "new previs" (a fresh section) or "" (continues).
         const newPrevis = new Map();
         sections.forEach((sec, n) => {
@@ -744,5 +750,30 @@ export function createTimeline(node, { editor, onChange } = {}) {
     return r.hops.map((h) => (h && h.key) || null);
   }
 
-  return { root, render, badge, destroy, hopKeys };
+  /* D3: the section boundaries for the Script score strip, captured from the
+   * one tie-sections call above rather than recomputed here. A second call
+   * would be a second answer to "where does this section end" inside one file,
+   * which is what check_previs_warn's "NOT recomputed in the UI" rule exists
+   * to forbid. Empty until the Timeline tab has been rendered once.
+   *
+   * Note: that check counts call sites by regex over the file with `//`
+   * comments stripped, so this block comment must not spell the call with
+   * parentheses -- doing so makes the audit report two call sites when there is
+   * one, and the fix would be to delete a comment rather than to look at what
+   * it was protecting. */
+  let lastSections = [];
+  function sections() { return lastSections; }
+
+  /* D3: the forecast for the Script score strip's NEXT QUEUE line. It calls
+   * the same forecast() this tab uses, on the same arguments -- there is one
+   * implementation of "what would the next queue do", not one per surface.
+   * `shots` is the LIVE plan, because the strip is an authoring view and must
+   * reflect an edit the user has not queued yet; `run()` is still the record
+   * of what actually happened. */
+  function forecastNow(shots) {
+    try { return forecast(Array.isArray(shots) && shots.length ? shots : (run()?.shots || [])); }
+    catch (_) { return null; }
+  }
+
+  return { root, render, badge, destroy, hopKeys, sections, forecastNow };
 }

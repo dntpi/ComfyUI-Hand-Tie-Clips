@@ -211,6 +211,141 @@
 }
 .h3e-empty-cta { display: block; margin: 8px auto 0; }
 
+/* -- D3: the score strip --------------------------------------------------- */
+
+/* The strip does NOT scroll: it is the fixed-width overview of every hop, and
+ * the filmstrip below it is what scrolls. Both are laid out from stripGeometry
+ * so the columns line up exactly. */
+.h3e-score {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--h3-border-soft);
+    border-radius: var(--h3-radius-sm);
+    background: var(--h3-sunken);
+    margin-bottom: var(--h3-gap-sm);
+}
+
+.h3e-score-inner {
+    display: flex;
+    align-items: flex-end;
+    height: 44px;
+    min-width: 100%;
+}
+
+.h3e-col {
+    position: relative;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    box-sizing: border-box;
+    border-left: 1px solid var(--h3-line);
+    cursor: pointer;
+}
+.h3e-col:first-child { border-left: 0; }
+.h3e-col:hover { background: var(--h3-accent-wash); }
+.h3e-col.h3e-col-on { background: color-mix(in srgb, var(--h3-accent) 9%, transparent); }
+
+/* Height is the duration. The bar sits on a baseline so a short hop reads as
+ * short rather than as floating. */
+.h3e-col-bar {
+    width: 72%;
+    min-height: 3px;
+    background: var(--h3-muted);
+    border-radius: 1px 1px 0 0;
+}
+
+/* Framing as fill, three steps of the accent. Ordered widest -> tightest, so
+ * the eye reads the bigger frame as the lighter block. There is no per-
+ * directive colour in the pack and this does not invent one. */
+.h3e-tone-0 { background: color-mix(in srgb, var(--h3-accent) 22%, var(--h3-muted)); }
+.h3e-tone-1 { background: color-mix(in srgb, var(--h3-accent) 42%, var(--h3-muted)); }
+.h3e-tone-2 { background: color-mix(in srgb, var(--h3-accent) 66%, var(--h3-muted)); }
+.h3e-tone-3 { background: var(--h3-accent); }
+
+/* A restart is a boundary between takes, so it is a full-height rule on the
+ * LEFT of the column it starts. */
+.h3e-col-restart::before {
+    content: "";
+    position: absolute;
+    left: -1px; top: 0; bottom: 0;
+    width: 2px;
+    background: var(--h3-warn);
+}
+
+/* A new previs section boundary (A9), moved from the timeline. Dimmer than a
+ * restart: it separates sections, it does not cut to a new location. */
+.h3e-col-newprevis::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 1px;
+    background: var(--h3-faint);
+    border-left: 1px dashed var(--h3-faint);
+    margin-left: -1px;
+}
+
+/* The under-band: one dot per reference plate riding this hop. */
+.h3e-col-under {
+    display: flex;
+    gap: 2px;
+    height: 6px;
+    align-items: center;
+    padding-top: 2px;
+}
+.h3e-col-plate {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--h3-faint);
+    display: inline-block;
+}
+/* One colour per rail row, so a given plate is recognisable on every hop it
+ * rides. The six class names are spelled out HERE and listed literally in
+ * plan_editor.js rather than assembled with a template, because a template
+ * `h3e-plate-${i % 6}` is invisible to check_ui's "no rule targets a class the
+ * JS never sets" audit -- which is a real loss, since that audit is what
+ * catches a stylesheet for a panel that was renamed. */
+.h3e-plate-0 { background: var(--h3-ok); }
+.h3e-plate-1 { background: var(--h3-warn); }
+.h3e-plate-2 { background: #7aa2f7; }
+.h3e-plate-3 { background: #bb9af7; }
+.h3e-plate-4 { background: #7dcfff; }
+.h3e-plate-5 { background: #9ece6a; }
+
+.h3e-col-no {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 9px;
+    color: var(--h3-faint);
+    line-height: 1.3;
+}
+
+/* A locked shot carries a dot rather than a colour change, because a colour
+ * change would read as "this hop re-renders" -- the forecast's job. */
+.h3e-col-lockdot {
+    position: absolute;
+    top: 2px; right: 2px;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--h3-warn);
+}
+
+/* What the NEXT QUEUE will re-render. A wash, not a border: it has to be
+ * readable on a 34px column without moving anything. */
+.h3e-col-render { background: color-mix(in srgb, var(--h3-error) 12%, transparent); }
+.h3e-col-render .h3e-col-bar { background: var(--h3-error); }
+
+.h3e-forecast {
+    font-size: var(--h3-fs-sm);
+    color: var(--h3-faint);
+    font-variant-numeric: tabular-nums;
+    padding: 1px 2px 4px;
+    min-height: 16px;
+    letter-spacing: 0.02em;
+}
+.h3e-forecast-live { color: var(--h3-error); }
+
 /* -- D2: the filmstrip, and the one card under it ------------------------- */
 
 /* The strip scrolls HORIZONTALLY and has a fixed height. That is the whole of

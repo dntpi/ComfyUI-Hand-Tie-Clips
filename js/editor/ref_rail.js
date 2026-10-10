@@ -761,5 +761,8 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
         }
     }
 
-    return { root, render };
+    /* D3: the score strip's under-band needs to know WHICH plate rides each hop,
+   and this module already holds `getPlan` -- the same reader the entry uses.
+   Exposed so the strip can ask without a second reader for ref_plan. */
+  return { root, render, getPlan };
 }

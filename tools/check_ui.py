@@ -291,6 +291,19 @@ def main():
     # the failure the user actually met -- "button is not defined", on every
     # workflow holding the node, after 39 green checks. Same Node requirement,
     # same loud skip.
+    # The shared column geometry (D3/D6). Pure arithmetic, so it runs without
+    # the DOM stub -- but it needs Node to be a module at all.
+    print("\nstrip geometry")
+    if not node_exe:
+        print("  skip the strip geometry: Node is not on PATH "
+              "(tools/strip_geometry_test.mjs)")
+    else:
+        geo = subprocess.run(
+            [node_exe, os.path.join(HERE, "tools", "strip_geometry_test.mjs")],
+            capture_output=True, text=True, timeout=60)
+        ck("columns never fall below a usable width, at any shot count",
+           geo.returncode == 0, geo.stdout[-400:])
+
     print("\nmount test")
     if not node_exe:
         print("  skip the mount test: Node is not on PATH (tools/mount_test.mjs)")

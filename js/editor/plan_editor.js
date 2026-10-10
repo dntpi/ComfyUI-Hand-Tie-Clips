@@ -14,9 +14,13 @@
  */
 
 import {
-    el, button, select, vocab, widgetByName, refreshVocab, onVocabRefresh,
-} from "./widget_utils.js";
+      el, button, select, vocab, widgetByName, refreshVocab, onVocabRefresh,
+      } from "./widget_utils.js";
 import { createTemplatePanel } from "./templates.js";
+import {
+      stripGeometry, scrollToColumn, columnAt, framingTone,
+} from "./strip_geometry.js";
+import { framesOf } from "./timeline_model.js";
 
 const MODE_PROP = "h3_editor_mode";        // "simple" | "shots"
 const FOLD_PROP = "h3_plan_folded";        // shot id -> collapsed
@@ -285,6 +289,23 @@ export function createPlanEditor(node, { onChange }) {
     // a TIMELINE click still lands the caret in that shot's beat.
     const strip = el("div", "h3e-filmstrip");
     const detail = el("div", "h3e-detail");
+
+    /* -- D3: the score strip ------------------------------------------------ */
+    //
+    // 44px, one column per shot, sitting directly ABOVE the filmstrip and on
+    // the same columns -- both read stripGeometry(), so they cannot drift.
+    // Duration is the column HEIGHT; the filmstrip's posters are its content.
+    //
+    // It is also the filmstrip's scrollbar: drag to scroll, click to select.
+    // That is not a gimmick to save 20px of chrome, it is the only view where
+    // all N hops are visible at once at a 19-hop plan, which is exactly the
+    // case where the filmstrip has scrolled and you have lost the shape.
+    const score = el("div", "h3e-score");
+    const scoreInner = el("div", "h3e-score-inner");
+    score.appendChild(scoreInner);
+    const forecast = el("div", "h3e-forecast");
+    root.appendChild(score);
+    root.appendChild(forecast);
     root.appendChild(strip);
     root.appendChild(detail);
     // The old stacked list stays in the DOM but is not drawn in Shots mode --
@@ -538,6 +559,16 @@ export function createPlanEditor(node, { onChange }) {
         const baseDur = durationWidget?.value;
         const ov = overs[overlapWidget?.value] ?? 0;
         const lengths = shots.map((s) => durs[s.duration || baseDur] ?? durs[baseDur] ?? 0);
+        // timing() reads its lengths from the vocab table, which is EMPTY until
+        // /vocab has answered -- so on a cold panel every shot measured 0 and
+        // the score strip drew six identical bars. Fall back to framesOf(), the
+        // same arithmetic the timeline uses, rather than treating "vocab not
+        // loaded yet" as "every shot is the same length". */
+        if (!lengths.some((n) => n > 0)) {
+            for (let i = 0; i < shots.length; i++) {
+                lengths[i] = framesOf(shots[i].duration || baseDur);
+            }
+        }
         // A restart is a chain START: it relays nothing, so nothing is trimmed
         // off it. Charging every hop after the first -- `(shots.length - 1)`,
         // which is what stood here -- reads SHORT by `overlap` per restart, and
@@ -897,7 +928,179 @@ export function createPlanEditor(node, { onChange }) {
         return card;
     }
 
-    /* -- D2: the filmstrip ----------------------------------------------------- */
+    /* -- D3: the score strip, and the NEXT QUEUE line -------------------------- */
+
+    const SCORE_H = 44;
+
+    /* Plate colours, by rail row. Spelled out so the stylesheet audit can see
+     * every name the JS actually sets -- see the note at the use site. */
+    const PLATE_CLASSES = [
+      "h3e-plate-0", "h3e-plate-1", "h3e-plate-2",
+      "h3e-plate-3", "h3e-plate-4", "h3e-plate-5",
+    ];
+
+    /* Zoom is view state: a re-render must not throw away the window the user
+     * panned to. Stored beside the selection, and only ever set by the zoom
+     * buttons or by autoZoomNarrow(). */
+    const ZOOM_PROP = "h3_score_zoom";
+    function zoom() {
+        const v = Number(node.properties?.[ZOOM_PROP]);
+        return Number.isFinite(v) && v >= 1 ? v : 1;
+    }
+    function setZoom(z) {
+        node.properties ??= {};
+        node.properties[ZOOM_PROP] = z;
+    }
+
+    /* The strip's own width, which is the NODE's width -- the strip is the
+     * viewport for the filmstrip, so it does not scroll with it. Read live
+     * because the user can resize the node; fall back to the design width. */
+    function stripWidth() {
+        const w = Number(node.size?.[0]) - 24;   // panel padding either side
+        return Number.isFinite(w) && w > 120 ? w : 536;
+    }
+
+    function renderScore() {
+        scoreInner.textContent = "";
+        forecast.textContent = "";
+        if (broken || !shots.length) return;
+
+        const geo = stripGeometry(shots.length, stripWidth(), zoom());
+        scoreInner.style.width = `${geo.width}px`;
+        if (geo.scroll > 0) strip.scrollLeft = Math.min(strip.scrollLeft || 0, geo.scroll);
+
+        const t = timing();
+        const frames = t.lengths;
+        const maxF = Math.max(1, ...frames);
+        // A9's section boundaries, MOVED here rather than recomputed: the same
+        // tieSections() the timeline and the A9 markers already use, so there
+        // is one answer to "where does this section end".
+        let ties = [];
+        try { ties = getTieSections?.(shots, frames) || []; } catch (_) { ties = []; }
+        const sectionStart = new Array(shots.length).fill(false);
+        ties.forEach((sec) => {
+            if (sec && sec.hops && sec.hops.length) sectionStart[sec.hops[0]] = true;
+        });
+
+        shots.forEach((s, i) => {
+            const shotNo = i + 1;
+            const col = el("div", "h3e-col"
+                + (i === selected() ? " h3e-col-on" : "")
+                + (s.locked ? " h3e-col-lock" : ""));
+
+            // Height IS the duration. Normalised against the longest shot in
+            // THIS plan, so a film of uniform 8s hops draws a flat strip and a
+            // film with one long take is visibly the odd one out.
+            const f = frames[i] || 0;
+            const frac = f ? Math.max(0.18, Math.min(1, f / maxF)) : 0.18;
+            const bar = el("div", "h3e-col-bar" + (framingTone(s) ? " " + framingTone(s) : ""));
+            bar.style.height = `${Math.round(frac * (SCORE_H - 10))}px`;
+            col.appendChild(bar);
+
+            // Restart: a full-height rule, because it is a boundary between
+            // takes rather than a transition inside one.
+            if (s.anchor === "restart") col.classList.add("h3e-col-restart");
+            if (sectionStart[i] && i > 0) col.classList.add("h3e-col-newprevis");
+
+            // The ref plate under the bar. One dot per plate that rides this
+            // hop, coloured by its rail index so a room is recognisable.
+            const plate = plateFor(shotNo);
+            const under = el("div", "h3e-col-under");
+            for (let k = 0; k < plate.count; k++) {
+                const d = el("span", "h3e-col-plate");
+                // The six colour class names are written out rather than
+                // templated from the index. A `h3e-plate-${i % 6}` is invisible
+                // to check_ui's "no stylesheet rule targets a class the JS
+                // never sets" audit, and that audit is the only thing standing
+                // between a renamed panel and six silently dead colour rules.
+                if (plate.index >= 0) d.classList.add(PLATE_CLASSES[plate.index % PLATE_CLASSES.length]);
+                d.title = `${plate.tag || "a reference"} rides hop ${shotNo}`;
+                under.appendChild(d);
+            }
+            col.appendChild(under);
+
+            col.appendChild(el("span", "h3e-col-no", String(shotNo)));
+
+            if (s.locked) {
+                const dot = el("span", "h3e-col-lockdot");
+                dot.title = "Locked: reuses its cached render";
+                col.appendChild(dot);
+            }
+
+            const bits = [];
+            if (f) bits.push(clock((i === 0 ? f : Math.max(0, f - t.ov)) / t.fps));
+            if (s.directives?.framing) bits.push(s.directives.framing);
+            if (plate.count) bits.push(plate.tag || `${plate.count} ref(s)`);
+            col.title = `Shot ${shotNo}` + (bits.length ? ` — ${bits.join(" · ")}` : "");
+            scoreInner.appendChild(col);
+        });
+
+        // Click to select, drag to scroll. The strip is the filmstrip's
+        // scrollbar, so a click that lands between columns must still scroll
+        // rather than doing nothing.
+        score.addEventListener("click", (e) => {
+            const idx = columnAt(geo, e.clientX ?? 0, 0);
+            if (idx >= 0) {
+                setSelected(idx);
+                renderCards();
+                scrollStripTo(idx, geo);
+            }
+        });
+        renderForecast(geo);
+    }
+
+    /* Bring column `i` into the filmstrip's view, reusing the strip geometry
+     * rather than measuring a poster. */
+    function scrollStripTo(i, geo) {
+        if (!geo || !geo.colW) return;
+        strip.scrollLeft = scrollToColumn(geo, i, strip.scrollLeft || 0, stripWidth());
+    }
+
+    /* ONE line, permanent, saying what the next queue would do.
+     *
+     * The wording is deliberately the run's, not the editor's: "re-renders",
+     * "cached", "locked" are the same three words the preview event and the
+     * timeline use, because a user comparing this line against the console is
+     * comparing the same claim in two places. */
+    function renderForecast(geo) {
+        let fc = null;
+        try { fc = getForecast?.() || null; } catch (_) { fc = null; }
+        // Three states, and the difference matters: no SOURCE (never rendered,
+        // or the timeline is not up) says nothing at all; a source that has run
+        // says what the queue would do, INCLUDING "nothing re-renders". Printing
+        // "nothing re-renders" when nothing was ever asked would be a lie the
+        // user acts on.
+        if (!fc || !Array.isArray(fc.state) || !shots.length) {
+            forecast.textContent = "";
+            forecast.title = "";
+            forecast.classList.remove("h3e-forecast-live");
+            return;
+        }
+        const n = shots.length;
+        const pad = (i) => String(i + 1).padStart(2, "0");
+
+        // Mark the strip first: which columns the forecast says will move.
+        const cols = scoreInner.children;
+        for (let i = 0; i < n && i < cols.length; i++) {
+            const st = fc.state[i];
+            const c = cols[i];
+            if (c) c.classList.toggle("h3e-col-render", st === "render" || st === "replay-miss");
+        }
+
+        const renders = fc.state.map((st, i) => (st === "render" ? i : null)).filter((i) => i !== null);
+        const keeps = fc.state.filter((st) => st === "keep" || st === "keeps").length;
+        const locked = fc.state.filter((st) => st === "locked").length;
+        const bits = [
+            renders.length ? `re-renders ${renders.map(pad).join(", ")}` : "re-renders nothing",
+            `${keeps} cached`,
+        ];
+        if (locked) bits.push(`${locked} locked`);
+        forecast.textContent = `NEXT QUEUE  ${bits.join(" · ")}`;
+        forecast.title = renders.length
+            ? `Queued now, these hops re-render: ${renders.map((i) => i + 1).join(", ")}.`
+            : "Queued now, every hop is served from the cache.";
+        forecast.classList.toggle("h3e-forecast-live", renders.length > 0);
+    }
 
     /* Where the thumbnails come from. The route serves a sprite for a hop the
      * last run rendered; anything else draws the slate alone. Never
@@ -925,6 +1128,41 @@ export function createPlanEditor(node, { onChange }) {
         if (!hopKey) return "";
         return `${SPRITE_ROUTE}?key=${encodeURIComponent(hopKey)}&n=24`;
     }
+
+    /* D3 needs two things this editor does not own: the ref plan (for the
+     * under-band that shows which location plate rides a hop) and the forecast
+     * (for the NEXT QUEUE line). Both are read through late-bound sources,
+     * wired by the host after construction -- the rail and the timeline are
+     * built after this editor, so a direct reference would be a cycle.
+     *
+     * A missing source is not a crash and not a lie: no ref plan means no
+     * under-band, and no forecast means the line says the forecast is
+     * unavailable rather than claiming nothing re-renders. */
+    let getRefPlan = null;
+    let getForecast = null;
+    let getTieSections = null;
+    function setForecastSources({ refPlan, forecast, tieSections: ties } = {}) {
+        if (refPlan !== undefined) getRefPlan = refPlan;
+        if (forecast !== undefined) getForecast = forecast;
+        if (ties !== undefined) getTieSections = ties;
+    }
+
+    function refPlanSafe() {
+        try { return getRefPlan?.() || null; } catch (_) { return null; }
+    }
+
+    /* Which @tag rides hop `hopNo`, and how many ride it. Under-band colour is
+     * by INDEX in the rail so a given plate is the same colour on every hop it
+     * rides -- the point of the band is "this room carries these shots", and a
+     * per-hop hash would make that unreadable. */
+    function plateFor(hopNo) {
+        const plan = refPlanSafe();
+        const refs = Array.isArray(plan?.refs) ? plan.refs : [];
+        const on = refs.filter((r) => Array.isArray(r?.shots) && r.shots.includes(hopNo));
+        return { count: on.length, tag: on[0]?.tag || null, index: on.length ? refs.indexOf(on[0]) : -1 };
+    }
+
+    /* -- D2: the filmstrip ----------------------------------------------------- */
 
     /* One mini poster: slate number, framing + duration, the beat's first
      * words, and the two controls that have to be reachable per shot without
@@ -1101,6 +1339,7 @@ export function createPlanEditor(node, { onChange }) {
         clampSelection();
         // D2: the strip and the one card under it, rather than every card.
         renderStrip();
+        renderScore();
         renderDetail();
 
         const t = timing();
@@ -1125,6 +1364,6 @@ export function createPlanEditor(node, { onChange }) {
     // the same functions the cards use -- no second copy of either rule.
 return { root, render: renderCards, reload, mode, timing,
                shots: () => shots, renderRange, toggleSolo, toggleLock,
-               appendShot, removeShot, cardFor, setHopKeySource,
-               selected, setSelected };
+               appendShot, removeShot, cardFor, setHopKeySource, setForecastSources,
+               selected, setSelected, zoom, setZoom, renderScore };
 }

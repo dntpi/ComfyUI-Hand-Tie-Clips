@@ -1307,6 +1307,52 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
     margin-top: 4px;
 }
 .h3e-media-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* -- D7: an empty MEDIA slot folds to one dimmed line --------------------- */
+
+/* Eleven of twelve slots are empty on a typical chain, and a grid of twelve
+ * full cells for eleven blanks tells the user there is more here than there is.
+ * An empty slot shows its label and "empty", and its body is display:none.
+ *
+ * The cell and its body are ALWAYS in the DOM -- a slot whose DOM is never
+ * created comes back as a raw LiteGraph widget under the panel, which is worse
+ * than the clutter this removes. Only `display` changes, and display:none is
+ * the safe direction: nothing can fail to reappear. */
+.h3e-media-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    cursor: pointer;
+}
+.h3e-media-cell.h3e-media-set .h3e-media-head { cursor: default; }
+
+.h3e-media-tri {
+    flex: 0 0 auto;
+    width: 9px;
+    font-size: 9px;
+    line-height: 1;
+    color: var(--h3-faint);
+}
+
+.h3e-media-state {
+    margin-left: auto;
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    white-space: nowrap;
+    letter-spacing: 0;
+    text-transform: none;
+    font-weight: 400;
+}
+
+/* Dimmed as a whole, because a folded slot is not "disabled" -- it is simply
+ * not in use, and it must not read as broken or unavailable. */
+.h3e-media-folded .h3e-media-label,
+.h3e-media-folded .h3e-media-state { color: var(--h3-faint); }
+.h3e-media-label-empty { color: var(--h3-faint); }
+.h3e-media-folded { min-height: 18px; }
+
+.h3e-media-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 /* One line, always. These are grid siblings that flow from the top of their
  * cell, so a label that wraps to two lines pushes ITS drop zone down and only
  * its own -- the row stops lining up, which is how `master audio (lip-sync

@@ -151,6 +151,10 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
     }
 
     const trimRows = [];
+    /* D7: one repaint per fold row. A pick, a clear and a workflow load all
+     * need the head's state and the body's visibility to agree with the widget,
+     * and they arrive by three different routes -- so they all funnel here. */
+    const foldRows = [];
 
     // The bars, the header and the empty-row labels, deliberately NOT the
     // pickers: this runs from inside a picker's own `set`, and re-entering
@@ -171,8 +175,45 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
             missing += 1;
             continue;
         }
+        /* D7: an EMPTY slot folds to one dimmed line.
+         *
+         * Eleven of the twelve media slots are empty on a typical chain, and a
+         * grid of twelve full cells for eleven blanks is the panel saying
+         * "there is more here" when there is not. So an unfilled slot shows
+         * `voice 2 · empty` and a disclosure, and expands on click.
+         *
+         * **The widget is never un-drawn.** run_panel.js's group header says
+         * why, and it is the whole constraint: a slot whose DOM is not created
+         * comes back as a RAW LiteGraph widget below the panel, which is worse
+         * than the clutter this removes. So the cell, its label and its picker
+         * are always built and always in the DOM -- folding hides the BODY and
+         * the cell stays a real element. What changes is `display`, which is
+         * the safe direction: nothing can fail to reappear.
+         *
+         * The fold state is view state in node.properties, so it survives a
+         * re-render and a workflow reload, exactly like the plan editor's shot
+         * folds. */
+        const foldKey = `h3_media_fold_${name}`;
+        const isSet = () => String(w.value || "").trim() !== "";
+        // A slot that holds a file starts OPEN. Folding something the user
+        // just picked would hide their own choice behind a click.
+        const isFolded = () => {
+            if (isSet()) return false;
+            const v = node.properties?.[foldKey];
+            return v === undefined ? true : Boolean(v);
+        };
+
         const cell = el("label", "h3e-media-cell");
-        cell.appendChild(el("span", "h3e-media-label", label));
+        const head = el("span", "h3e-media-head");
+        const tri = el("span", "h3e-media-tri", "");
+        head.appendChild(tri);
+        const labelEl = el("span", "h3e-media-label", label);
+        head.appendChild(labelEl);
+        const stateTag = el("span", "h3e-media-state");
+        head.appendChild(stateTag);
+        cell.appendChild(head);
+
+        const body = el("span", "h3e-media-body");
         // Looked up before the picker so a pick can zero the window. The bar
         // is built later; the widgets are the store either way.
         const tspec = trimSpec(trim);
@@ -208,8 +249,47 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
             title: tip,
         });
         cell.title = tip;
-        cell.appendChild(pick.root);
+        body.appendChild(pick.root);
         grid.appendChild(cell);
+        // The body is appended here, after everything that fills it. Built at
+        // the END rather than inserted at the top so the fold head is already
+        // the cell's first child.
+        cell.appendChild(body);
+
+        /* The fold. A <details> would do this in one element, but the cell is a
+         * <label> wrapping a file input, and nesting a <summary> there puts a
+         * click target inside a label -- clicking the disclosure would also
+         * activate the input. So it is a span with a click handler, and the
+         * triangle is a text character rather than a ::marker. */
+        const setFold = () => {
+            const folded = isFolded();
+            cell.classList.toggle("h3e-media-folded", folded);
+            body.style.display = folded ? "none" : "";
+            tri.textContent = folded ? "▸" : "▾";
+            stateTag.textContent = isSet() ? "" : (folded ? "empty ▸" : "empty");
+            cell.classList.toggle("h3e-media-set", isSet());
+            labelEl.classList.toggle("h3e-media-label-empty", !isSet());
+        };
+        head.addEventListener("click", (e) => {
+            // The head is inside a <label>; without this a click on the label
+            // text opens the file dialog as well as the fold.
+            e.preventDefault();
+            e.stopPropagation();
+            if (isSet()) return;         // a filled slot stays open
+            node.properties ??= {};
+            node.properties[foldKey] = !isFolded();
+            setFold();
+        });
+        // A pick fills the slot, which must open it -- otherwise the user picks
+        // a file and the slot stays folded, hiding what they just chose.
+        foldRows.push(() => {
+            if (isSet() && isFolded()) node.properties[foldKey] = false;
+            setFold();
+        });
+        setFold();
+        cell.title = isSet()
+            ? `${label}: set. Click the picker below to change it.`
+            : `${label}: empty. ${tip}`;
         pickers.push(pick);
 
         // The bar goes in its own full-width row under the grid, not inside a
@@ -326,6 +406,7 @@ export function createMediaStrip(node, { onChange, chainSeconds } = {}) {
 
     function render() {
         syncCount();
+        for (const fn of foldRows) fn();
         for (const fn of trimRows) fn();
         for (const p of pickers) p.render();
         for (const b of bars) b.render();

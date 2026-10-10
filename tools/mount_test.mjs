@@ -733,5 +733,136 @@ console.log("\nmount: D6 hop bar");
      node.widgets.find((w) => w.name === "shot_plan").value === planBefore);
 }
 
+/* -- D7: MEDIA folds empty slots, and never un-draws one ------------------ */
+
+console.log("\nmount: D7 media fold");
+
+{
+  // No media set at all: every slot should start folded.
+  const node = withWidgets(makeNode(), {
+    shot_plan: planJSON(6), ref_plan: REF_PLAN,
+  });
+  // BEFORE the mount: media_strip.js reads its slots once, at construction, and
+  // SKIPS any name it cannot find -- deliberately, so it survives an older
+  // Python side. A stub node missing those names therefore mounts fewer cells
+  // and every count assertion passes against a partial panel, which is how the
+  // first version of this block reported "4 cells" and "everything is fine".
+  // The full list, from SLOTS.
+  for (const name of [
+    "start_image_file",
+    "reference_video_file", "reference_video_2_file", "reference_video_3_file",
+    "reference_video_desc", "reference_video_size",
+    "voice_file", "voice_2_file", "voice_3_file",
+    "soundtrack_file", "master_audio_file", "master_audio_start_s",
+  ]) {
+    if (!node.widgets.find((w) => w.name === name)) {
+      node.widgets.push({ name, type: "custom", value: "" });
+    }
+  }
+  // One media slot SET, so the fold has both states to show.
+  node.widgets.find((w) => w.name === "start_image_file").value = "h3_refs/kitchen.png";
+  mount(node);
+  const root = node.domWidgets[0];
+
+  const find = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+
+  // Every name media_strip.js's SLOTS table looks up. The strip SKIPS a name it
+  // cannot find -- deliberately, so it survives an older Python side -- which
+  // means a stub node missing some of them silently mounts fewer cells and every
+  // count assertion passes against a partial panel. The full list, from SLOTS.
+  for (const name of [
+    "start_image_file",
+    "reference_video_file", "reference_video_2_file", "reference_video_3_file",
+    "reference_video_desc", "reference_video_size",
+    "voice_file", "voice_2_file", "voice_3_file",
+    "soundtrack_file", "master_audio_file", "master_audio_start_s",
+  ]) {
+    if (!node.widgets.find((w) => w.name === name)) {
+      node.widgets.push({ name, type: "custom", value: "" });
+    }
+  }
+  // One media slot SET, so the fold has both states to show.
+  node.widgets.find((w) => w.name === "start_image_file").value = "h3_refs/kitchen.png";
+
+  // Scoped to the MEDIA strip. An unscoped walk finds video_swap.js's own
+  // `h3e-media-cell` on another tab -- the class is shared, and counting across
+  // tab bodies reports 10 for a 9-slot strip.
+  const mediaRoot = find("h3e-media")[0];
+  const findMedia = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    if (mediaRoot) walk(mediaRoot);
+    return out;
+  };
+
+  const cells = findMedia("h3e-media-cell");
+  ck("media cells exist", cells.length > 0, `${cells.length} cells`);
+  ck("nine media cells -- every declared slot", cells.length === 9, `got ${cells.length}`);
+  ck("every media cell has a fold head", cells.length > 0
+     && cells.every((c) => c.children.some((k) => k.classList?.contains("h3e-media-head"))));
+  ck("every media cell has a body in the DOM -- the widget is never un-drawn",
+     cells.length > 0
+     && cells.every((c) => c.children.some((k) => k.classList?.contains("h3e-media-body"))),
+     "a cell is missing its body -- that is the raw-widget failure mode");
+
+  // The FIRST cell holds a file, so it must be OPEN; the other eight are empty
+  // and must be folded. This is the whole point: a filled slot is never folded
+  // behind a click, or the user hides their own choice.
+  const folded = cells.filter((c) => c.classList.contains("h3e-media-folded"));
+  const open = cells.filter((c) => !c.classList.contains("h3e-media-folded"));
+  ck("the one filled slot is open", open.length === 1,
+     `${open.length} open of ${cells.length}`);
+  ck("all eight empty slots are folded", folded.length === 8,
+     `${folded.length} folded of ${cells.length}`);
+  ck("a folded body is hidden with display, not removed",
+     folded.every((c) => {
+       const b = c.children.find((k) => k.classList?.contains("h3e-media-body"));
+       return b && b.style.display === "none";
+     }), "a body is display:'' -- it would show through a fold");
+
+  // And it is still in the tree, so it cannot come back as a raw widget.
+  ck("folded bodies are still children of their cell",
+     folded.every((c) => c.children.some((k) => k.classList?.contains("h3e-media-body"))));
+
+  // Clicking an EMPTY head opens it, and only changes display.
+  const emptyCell = folded[0];
+  const head = emptyCell.children.find((k) => k.classList?.contains("h3e-media-head"));
+  const body = emptyCell.children.find((k) => k.classList?.contains("h3e-media-body"));
+  head.fire("click", {});
+  ck("clicking a folded head opens it",
+     !emptyCell.classList.contains("h3e-media-folded"), "still folded after the click");
+  ck("and its body becomes visible", body.style.display !== "none",
+     `display "${body.style.display}"`);
+  ck("the body was never detached", body.parentNode === emptyCell);
+
+  // And closing it again does not detach either.
+  head.fire("click", {});
+  ck("clicking again folds it back",
+     emptyCell.classList.contains("h3e-media-folded"));
+  ck("still attached after folding",
+     emptyCell.children.some((k) => k.classList?.contains("h3e-media-body")));
+
+  // A FILLED slot refuses to fold -- the click is a no-op, by design.
+  const setCell = open[0];
+  const setHead = setCell.children.find((k) => k.classList?.contains("h3e-media-head"));
+  setHead.fire("click", {});
+  ck("a filled slot cannot be folded shut",
+     !setCell.classList.contains("h3e-media-folded"),
+     "the user hid their own pick behind a click");
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

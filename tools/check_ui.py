@@ -286,6 +286,21 @@ def main():
         ck("every exported name a file calls is imported there",
            imp.returncode == 0, imp.stdout[-400:])
 
+    # The mount test: run the node's real creation path against a DOM stub. This
+    # is the only check here that can see a ReferenceError at RUNTIME, which is
+    # the failure the user actually met -- "button is not defined", on every
+    # workflow holding the node, after 39 green checks. Same Node requirement,
+    # same loud skip.
+    print("\nmount test")
+    if not node_exe:
+        print("  skip the mount test: Node is not on PATH (tools/mount_test.mjs)")
+    else:
+        mnt = subprocess.run(
+            [node_exe, "--import", loader, os.path.join(HERE, "tools", "mount_test.mjs")],
+            capture_output=True, text=True, timeout=120)
+        ck("the node's creation path runs clean (6 and 19 shots, both modes)",
+           mnt.returncode == 0, mnt.stdout[-600:])
+
     print()
     if FAIL:
         print(f"UI CHECK: {len(FAIL)} FAILURE(S)")

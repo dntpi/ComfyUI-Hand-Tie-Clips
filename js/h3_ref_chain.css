@@ -242,6 +242,54 @@
 }
 .h3e-batch-sel { max-width: 110px; }
 
+/* -- D6: the REFS hop bar -------------------------------------------------- */
+
+/* One continuous track per reference row, on the score strip's geometry. It
+ * replaces 133 numbered chips at a 19-hop plan -- four wrapped lines per row,
+ * where selecting hop 13 meant counting. Column-for-column it lines up with
+ * the score strip and the filmstrip, so the same x is the same hop in all
+ * three. */
+.h3e-hopbar {
+    display: flex;
+    align-items: center;
+    gap: var(--h3-gap-sm);
+    margin-top: 4px;
+    min-width: 0;
+}
+
+.h3e-hopbar-track {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--h3-border-soft);
+    border-radius: var(--h3-radius-sm);
+    background: var(--h3-sunken);
+    cursor: pointer;
+    user-select: none;
+}
+
+.h3e-hopcell {
+    flex: 0 0 auto;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-left: 1px solid var(--h3-line);
+    background: transparent;
+}
+.h3e-hopcell:first-child { border-left: 0; }
+.h3e-hopcell-on { background: color-mix(in srgb, var(--h3-accent) 62%, var(--h3-sunken)); }
+
+.h3e-hopcell-no {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 9px;
+    line-height: 1;
+    color: var(--h3-faint);
+}
+.h3e-hopcell-on .h3e-hopcell-no { color: var(--h3-on-accent); }
+
 /* -- D5: the Simple-mode block view --------------------------------------- */
 
 /* One row per `---` block. A ruler, not a report: it sits above the textarea
@@ -891,26 +939,11 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
  * A waveform squeezed into one grid cell is a smear. */
 .h3e-ref .h3e-ref-trim { grid-column: 1 / -1; padding: 2px 0 0 26px; min-width: 0; }
 
-/* Per-hop schedule chips. */
-.h3e-chips { display: flex; flex-wrap: wrap; gap: 3px; grid-column: 1 / -1; padding: 2px 0 0 26px; }
-.h3e-chip {
-    font-size: var(--h3-fs-xs);
-    line-height: 1;
-    padding: 3px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--h3-border-soft);
-    background: var(--h3-sunken);
-    color: var(--h3-faint);
-    cursor: pointer;
-    user-select: none;
-    transition: background-color .12s ease, color .12s ease, border-color .12s ease;
-}
-.h3e-chip:hover { border-color: var(--h3-accent); color: var(--h3-text); }
-.h3e-chip.h3e-chip-on {
-    background: color-mix(in srgb, var(--h3-accent) 30%, var(--h3-sunken));
-    color: var(--h3-text);
-    border-color: color-mix(in srgb, var(--h3-accent) 55%, transparent);
-}
+/* The per-hop schedule label. The CHIPS it used to sit beside are gone -- D6
+ * replaced them with `.h3e-hopbar`, one column per hop on the score strip's
+ * geometry -- so only the label rule survives here. The chip rules were removed
+ * rather than left behind: check_ui's "no stylesheet rule targets a class the
+ * JS never sets" audit caught them, which is exactly what it is for. */
 .h3e-chips-label { font-size: var(--h3-fs-xs); color: var(--h3-faint); align-self: center; margin-right: 2px; letter-spacing: .06em; }
 
 .h3e-subject {
@@ -1084,12 +1117,6 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
 .h3e-inactive .h3e-ord {
     background: var(--h3-sunken);
     color: var(--h3-faint);
-}
-.h3e-chip.h3e-chip-on {
-    background: var(--h3-accent);
-    color: var(--h3-on-accent);
-    border-color: var(--h3-accent);
-    font-weight: 700;
 }
 
 /* Grouping by a left rule and a wash rather than an outlined box. */

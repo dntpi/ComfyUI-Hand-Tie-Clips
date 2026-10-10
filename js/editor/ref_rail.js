@@ -22,6 +22,22 @@ import { api } from "../../../scripts/api.js";
 import { el, button, select, vocab, onVocabRefresh } from "./widget_utils.js";
 import { createPicker } from "./media_picker.js";
 import { createTrimBar } from "./trim_bar.js";
+import { stripGeometry, columnAt } from "./strip_geometry.js";
+
+/* The width the hop bar lays out on, derived the SAME way the Script score
+ * strip derives its own (plan_editor.js `stripWidth()`), because the two have
+ * to line up column-for-column and `node.size` is the only thing both modules
+ * can read -- the panel has no shared layout context, and measuring the DOM is
+ * not available before first paint.
+ *
+ * If the two ever diverge, the symptom is subtle and worth naming: the hop bar's
+ * cells stop lining up with the strip's columns, and a click that looks like it
+ * selected hop 3 selects hop 5. The geometry module is the single place the
+ * column width is decided; this is only the viewport it is decided over. */
+function hopBarWidth(node) {
+  const w = Number(node?.size?.[0]) - 24;
+  return Number.isFinite(w) && w > 120 ? w : 536;
+}
 
 const MAX_SLOTS = 9;
 
@@ -675,38 +691,99 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
                 render();
             }, "h3e-btn h3e-x"));
 
-            /* Which hops this photograph rides. An empty schedule means hop 1
-             * only on a `next` chain -- that is the pin-only recipe
-             * chain_00037/00038 were rendered with, and until now it could
-             * only be set by hand in the JSON. */
-            const hops = Math.max(1, Number(hopCount?.() || 1));
-            const chips = el("div", "h3e-chips");
-            chips.appendChild(el("span", "h3e-chips-label", "rides hops"));
-            for (let h = 1; h <= hops; h += 1) {
-                const on = Array.isArray(r.shots) && r.shots.includes(h);
-                const chip = el("span", "h3e-chip" + (on ? " h3e-chip-on" : ""), String(h));
-                chip.title = on
-                    ? `This photograph is sent to the encoder on hop ${h}. Click to remove it.`
-                    : `Click to also send this photograph on hop ${h}. `
-                      + "Leave every hop off to let the motion pin carry wardrobe and room.";
-                chip.addEventListener("click", () => {
-                    const cur = Array.isArray(r.shots) ? r.shots.slice() : [];
-                    const at = cur.indexOf(h);
-                    if (at >= 0) cur.splice(at, 1); else cur.push(h);
-                    cur.sort((a, b) => a - b);
-                    r.shots = cur.length ? cur : null;
-                    commit();
-                    render();
-                });
-                chips.appendChild(chip);
-            }
+/* Which hops this photograph rides. An empty schedule means hop 1
+         * only on a `next` chain -- that is the pin-only recipe
+         * chain_00037/00038 were rendered with, and until now it could
+         * only be set by hand in the JSON.
+         *
+         * D6: this was one numbered chip per hop per row -- 133 of them at a
+         * 19-hop plan, wrapping to four lines, where selecting hop 13 meant
+         * counting. It is now a continuous BAR on the score strip's geometry, so
+         * it lines up column-for-column with the strip above and with the
+         * filmstrip: the same x is the same hop in all three, and a click reads
+         * as "this column", not "the thirteenth chip".
+         *
+         * Writes are unchanged: `r.shots` in ref_plan, via the same commit().
+         * The brief asks for drag-to-set ranges, and that is what the bar does
+         * -- press picks the anchor, drag extends, release commits ONE write for
+         * the whole run, not one per column. */
+      const hops = Math.max(1, Number(hopCount?.() || 1));
+      const hopbar = el("div", "h3e-hopbar");
+      hopbar.appendChild(el("span", "h3e-chips-label", "rides hops"));
+      const bar = el("div", "h3e-hopbar-track");
+      bar.title = "Click a hop to toggle it. Drag across hops to set a range. "
+        + "Leave every hop off to let the motion pin carry wardrobe and room.";
+      const geo = stripGeometry(hops, hopBarWidth(node), 1, { autoZoom: false });
+
+      const isOn = (h) => Array.isArray(r.shots) && r.shots.includes(h);
+      // One writer for the whole bar. Called per column during a drag with
+      // `preview`, and once at the end with `preview` false -- so a drag across
+      // 12 hops is ONE undo step and ONE ref_plan write, not twelve.
+      const writeHops = (hopList, preview) => {
+        const cur = hopList.slice().sort((a, b) => a - b);
+        r.shots = cur.length ? cur : null;
+        if (preview) { paintBar(); return; }
+        commit();
+        render();
+      };
+      const paintBar = () => {
+        bar.textContent = "";
+        for (let h = 1; h <= hops; h += 1) {
+          const cell = el("span", "h3e-hopcell" + (isOn(h) ? " h3e-hopcell-on" : ""));
+          cell.style.width = `${geo.colW}px`;
+          cell.dataset.hop = String(h);
+          cell.appendChild(el("span", "h3e-hopcell-no", String(h)));
+          bar.appendChild(cell);
+        }
+      };
+      paintBar();
+
+      // Toggle from the CURRENT state, ignoring what is in between: a drag is
+      // "set these hops ON", not "flip every hop I passed over", so dragging
+      // back over a hop you already had leaves it on.
+      let dragFrom = null;
+      const cellsAt = (x) => {
+        const i = columnAt(geo, x, 0);
+        return i < 0 ? -1 : i + 1;
+      };
+      bar.addEventListener("pointerdown", (e) => {
+        const h = cellsAt(e.clientX ?? 0);
+        if (h < 1) return;
+        dragFrom = h;
+        bar.setPointerCapture?.(e.pointerId);
+        // The first cell FLIPS (that is a click, and a click must toggle). The
+        // rest of the drag only ever adds.
+        const cur = Array.isArray(r.shots) ? r.shots.slice() : [];
+        const at = cur.indexOf(h);
+        if (at >= 0) cur.splice(at, 1); else cur.push(h);
+        writeHops(cur, true);
+      });
+      bar.addEventListener("pointermove", (e) => {
+        if (dragFrom == null) return;
+        const h = cellsAt(e.clientX ?? 0);
+        if (h < 1) return;
+        const lo = Math.min(dragFrom, h);
+        const hi = Math.max(dragFrom, h);
+        const cur = Array.isArray(r.shots) ? r.shots.slice() : [];
+        for (let k = lo; k <= hi; k++) if (!cur.includes(k)) cur.push(k);
+        writeHops(cur, true);
+      });
+      const endDrag = (e) => {
+        if (dragFrom == null) return;
+        try { bar.releasePointerCapture?.(e.pointerId); } catch (_) { /* not captured */ }
+        dragFrom = null;
+        writeHops(Array.isArray(r.shots) ? r.shots : [], false);
+      };
+      bar.addEventListener("pointerup", endDrag);
+      bar.addEventListener("pointercancel", endDrag);
+      hopbar.appendChild(bar);
             if (!Array.isArray(r.shots) || !r.shots.length) {
                 const note = el("span", "h3e-chips-label", "— unscheduled: hop 1 only");
                 note.title = "With no hops selected this still stays off hop 2+ of a `next` chain, "
                     + "so the motion pin carries continuity instead of the photograph.";
-                chips.appendChild(note);
+                hopbar.appendChild(note);
             }
-            row.appendChild(chips);
+            row.appendChild(hopbar);
 
             /* The voice's trim, under the row, for whichever recording will
              * actually ride: the row's own, or the RefMod's. Core encodes a

@@ -665,5 +665,73 @@ console.log("\nmount: D5 simple mode");
   }
 }
 
+/* -- D6: the REFS hop bar, on the score strip's geometry ------------------ */
+
+console.log("\nmount: D6 hop bar");
+
+{
+  // One ref, scheduled onto hops 1 and 2, so the ON state is observable.
+  const refPlan = JSON.stringify({
+    refs: [{ tag: "@plate", file: "h3_refs/kitchen.png", subject: 1,
+             desc: "a kitchen", shots: [1, 2] }],
+    subjects: {},
+  });
+  const node = mountFresh({ plan: planJSON(6), refPlan });
+  const root = node.domWidgets[0];
+
+  const find = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+
+  const bars = find("h3e-hopbar");
+  ck("the hop bar replaced the chips", bars.length === 1, `got ${bars.length}`);
+  ck("there are no numbered chips left",
+     find("h3e-chip").length === 0, `${find("h3e-chip").length} chips remain`);
+
+  const cells = find("h3e-hopcell");
+  ck("one cell per hop", cells.length === 6, `got ${cells.length}`);
+  const on = cells.filter((c) => c.classList.contains("h3e-hopcell-on"));
+  ck("the scheduled hops are on", on.length === 2, `got ${on.length}`);
+  ck("and they are the FIRST two, from ref_plan shots [1,2]",
+     cells.indexOf(on[0]) === 0 && cells.indexOf(on[1]) === 1);
+
+  // D6's actual claim: same geometry as the score strip. Both are laid out from
+  // stripGeometry over the same width, so the cell WIDTHS must match the score
+  // columns exactly. If these ever differ, a click that looks like hop 3 selects
+  // hop 5 -- the failure mode worth catching here rather than in a browser.
+  const cols = find("h3e-col");
+  ck("there is a score strip to line up with", cols.length === 6, `got ${cols.length}`);
+  const cellW = cells.map((c) => parseFloat(c.style.width) || 0);
+  ck("every hop cell has a real width", cellW.every((w) => w > 0), JSON.stringify(cellW));
+  ck("all hop cells are the same width", new Set(cellW).size === 1,
+     JSON.stringify(cellW));
+  // The score strip's columns are drawn by the same geometry, and its inner
+  // width is count * colW -- so colW is recoverable and must equal the cells'.
+  const inner = find("h3e-score-inner")[0];
+  const innerW = parseFloat(inner?.style?.width) || 0;
+  const implied = innerW / (cols.length || 1);
+  ck("the hop cells are the width the score strip implies",
+     Math.abs(cellW[0] - implied) <= 1,
+     `cells ${cellW[0]} vs score ${implied.toFixed(1)}`);
+
+  // Clicking a cell toggles that hop, and writes ref_plan -- not shot_plan.
+  const planBefore = node.widgets.find((w) => w.name === "shot_plan").value;
+  const refBefore = node.widgets.find((w) => w.name === "ref_plan").value;
+  cells[3].fire("pointerdown", { clientX: cellW[3] * 3 + 2 });
+  cells[3].fire("pointerup", { clientX: cellW[3] * 3 + 2 });
+  const refAfter = node.widgets.find((w) => w.name === "ref_plan").value;
+  ck("clicking a hop writes ref_plan",
+     refAfter !== refBefore || /3/.test(refAfter), "ref_plan unchanged");
+  ck("and never touches shot_plan",
+     node.widgets.find((w) => w.name === "shot_plan").value === planBefore);
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

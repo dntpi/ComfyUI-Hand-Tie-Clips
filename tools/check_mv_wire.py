@@ -328,12 +328,26 @@ ui = io.open(os.path.join(ROOT, "js", "h3_ref_chain_ui.js"), encoding="utf-8").r
 ck("solve is whitelisted beside the others",
    re.search(r'not in \("ask", "solve", "propose", "develop", "edit", "song"\)',
              routes) is not None)
-_solve = routes[routes.index('if stage == "solve"'):]
-_solve = _solve[:_solve.index('elif stage == "song"')]
+# find, not index: a moved branch must FAIL a named check below, not crash
+# the checker before it gets there.
+_solve = routes[max(0, routes.find('if stage == "solve"')):]
+_solve = _solve[:_solve.find("                else:")] if "                else:" in _solve else _solve
 ck("the solve branch never calls a model",
    "complete_fn" not in _solve and "write_plan" not in _solve,
    "-- it is arithmetic; a model call here would make it neither "
    "deterministic nor free")
+# Found live (2026-10-11): Song and Lay out sat behind "no model is selected"
+# and the writer's VRAM guard, so a song could not be measured while the
+# writer server was in a state the guard refused -- for two stages that never
+# call a model.
+_handler = routes[routes.index("async def _plan(request):"):]
+_handler = _handler[:_handler.index("\n    @instance.routes")]
+_early = _handler.find('if stage in ("song", "solve"):')
+ck("Song and Lay out run before any writer setup",
+   0 < _early < _handler.find("conn = _llm.load_conn()")
+   and _early < _handler.find("free_for_render()")
+   and _early < _handler.find("from . import llm as _llm"),
+   "-- a model-free stage behind the model check fails for no reason")
 ck("it runs the solver in an executor",
    "run_in_executor" in _solve and "_mv.solve(" in _solve)
 ck("it refuses with no song and with no bars",
@@ -393,10 +407,10 @@ print("\nreview fixes (2026-10-11)")
 ck("Lay out resolves the song under h3_refs before song_map opens it",
    re.search(r'_mvsong_path = _media\.resolve\(_mvsong, kinds=\{"audio", "video"\}\)',
              routes) is not None
-   and "_songmap.song_map(\n                        _mvsong_path" in routes)
+   and re.search(r"_songmap\.song_map\(\s*_mvsong_path", routes) is not None)
 ck("...and Song does too",
    re.search(r'_song_path = _media\.resolve\(_song, kinds=\{"audio", "video"\}\)', routes)
-   is not None and "_songmap.song_map(\n                        _song_path" in routes)
+   is not None and re.search(r"_songmap\.song_map\(\s*_song_path", routes) is not None)
 ck("the layout carries the NAME the widget holds, not the resolved path",
    '"song_file": _mvsong,' in routes and '"song_file": _mvsong_path' not in routes)
 # A draft remembered without `extra` comes back after a reload and Accepts a

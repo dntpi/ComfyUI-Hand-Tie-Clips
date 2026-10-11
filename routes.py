@@ -762,6 +762,110 @@ def register():
         # absent is fine: `build_user_turn` adds nothing and the lint no-ops.
         duration = str(body.get("duration") or "").strip()
 
+        # SONG and SOLVE make no model call, so they run BEFORE anything about
+        # the writer: no "no model is selected", no VRAM guard (which refused
+        # a song measurement whenever the writer server could not be stopped).
+        # A song is measured with no LLM configured at all.
+        if stage in ("song", "solve"):
+            import asyncio
+            try:
+                if stage == "solve":
+                    # No model call anywhere in here. `solve()` is arithmetic over
+                    # a bar grid, so this stage is deterministic and a checker can
+                    # assert its exact output -- which is why it is a stage of its
+                    # own rather than a side effect of `song`.
+                    from . import mv_solver as _mv
+                    from . import songmap as _songmap
+                    _mvsong = str(body.get("song_file") or "").strip()
+                    if not _mvsong:
+                        return web.json_response(
+                            {"ok": False,
+                             "error": "no song file -- pick one in MEDIA, or set "
+                                      "a master_audio_file, then press Lay out."})
+                    if not mv_sections:
+                        return web.json_response(
+                            {"ok": False,
+                             "error": "no bars to cut on -- confirm at least one "
+                                      "section on the SONG card first."})
+                    # The widget holds a name under h3_refs, as run() reads it
+                    # (`media.load_audio`). song_map opens what it is given, so the
+                    # bare name failed from ComfyUI's working directory.
+                    _mvsong_path = _media.resolve(_mvsong, kinds={"audio", "video"})
+                    if not _mvsong_path:
+                        return web.json_response(
+                            {"ok": False,
+                             "error": f"{_mvsong} is not in h3_refs -- pick the song "
+                                      "in MEDIA so the node and the layout read the "
+                                      "same file."})
+                    _mvsecs = list(mv_sections)
+                    _mvlisten = bool(body.get("listen"))
+
+                    def _lay_out():
+                        # song_map has its own cache, so a second Lay out on the
+                        # same song is arithmetic over a warm map.
+                        _map = _songmap.song_map(
+                            _mvsong_path, listen=_mvlisten,
+                            status=lambda m: print(f"[{TAG}] {m}", flush=True),
+                            allow_download=False)
+                        return _mv.solve(_map, _mvsecs)
+
+                    _out = await asyncio.get_running_loop().run_in_executor(
+                        None, _lay_out)
+                    # Only what the card shows and Write beats needs. A solver hop
+                    # also carries frames, film/song spans, sung flags and lyric
+                    # lines; the lyric lines are a listening-path artefact and have
+                    # no business riding a plan request.
+                    _hops = [{
+                        "kind": _h.get("kind"),
+                        "duration": _h.get("duration"),
+                        "frames": _h.get("frames"),
+                        "section": _h.get("section"),
+                        "section_kind": _h.get("section_kind"),
+                    } for _h in (_out.get("hops") or [])]
+                    out = {"ok": True,
+                           "skeleton": {
+                               "hops": _hops,
+                               "master_audio_start_s": _out.get("master_audio_start_s"),
+                               "worst_cut_f": _out.get("worst_cut_f"),
+                               "end_s": _out.get("end_s"),
+                               "total_frames": _out.get("total_frames"),
+                               "labels": _out.get("labels"),
+                               "sections": _mvsecs,
+                               # The NAME, as the widget holds it: Accept compares
+                               # this with master_audio_file and writes it there.
+                               "song_file": _mvsong,
+                           }}
+                else:
+                    # MV mode's entry point. Measures a song and returns it; writes
+                    # nothing. `listen` is off by default and stays off unless the
+                    # user asks, because it downloads a stem -- 4/9 sections become
+                    # 2/9 WITH listening, which is a real but small improvement for
+                    # a fetch, so it is the user's call rather than a default.
+                    from . import songmap as _songmap
+                    _song = str(body.get("song_file") or "").strip()
+                    if not _song:
+                        return web.json_response(
+                            {"ok": False,
+                             "error": "no song file -- pick one in MEDIA, or set a "
+                                      "master_audio_file, then ask for the song "
+                                      "again."})
+                    _song_path = _media.resolve(_song, kinds={"audio", "video"})
+                    if not _song_path:
+                        return web.json_response(
+                            {"ok": False,
+                             "error": f"{_song} is not in h3_refs -- pick the song "
+                                      "in MEDIA."})
+                    out = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: _songmap.song_map(
+                            _song_path, listen=bool(body.get("listen")),
+                            status=lambda m: print(f"[{TAG}] {m}", flush=True),
+                            allow_download=False))
+                    out = {"ok": True, "song": _songmap_summary(out)}
+            except Exception as exc:
+                print(f"[{TAG}] plan route ({stage}) failed: {exc!r}", flush=True)
+                return web.json_response({"ok": False, "error": str(exc)})
+            return web.json_response(out)
+
         try:
             from . import llm as _llm
             from . import planner as _planner
@@ -871,98 +975,6 @@ def register():
                     proposal=proposal, shot_text=cur_shots,
                     ref_text=cur_refs, images=images,
                     duration=duration, pin_mech=pin_mech)
-            elif stage == "solve":
-                # No model call anywhere in here. `solve()` is arithmetic over
-                # a bar grid, so this stage is deterministic and a checker can
-                # assert its exact output -- which is why it is a stage of its
-                # own rather than a side effect of `song`.
-                from . import mv_solver as _mv
-                from . import songmap as _songmap
-                _mvsong = str(body.get("song_file") or "").strip()
-                if not _mvsong:
-                    return web.json_response(
-                        {"ok": False,
-                         "error": "no song file -- pick one in MEDIA, or set "
-                                  "a master_audio_file, then press Lay out."})
-                if not mv_sections:
-                    return web.json_response(
-                        {"ok": False,
-                         "error": "no bars to cut on -- confirm at least one "
-                                  "section on the SONG card first."})
-                # The widget holds a name under h3_refs, as run() reads it
-                # (`media.load_audio`). song_map opens what it is given, so the
-                # bare name failed from ComfyUI's working directory.
-                _mvsong_path = _media.resolve(_mvsong, kinds={"audio", "video"})
-                if not _mvsong_path:
-                    return web.json_response(
-                        {"ok": False,
-                         "error": f"{_mvsong} is not in h3_refs -- pick the song "
-                                  "in MEDIA so the node and the layout read the "
-                                  "same file."})
-                _mvsecs = list(mv_sections)
-                _mvlisten = bool(body.get("listen"))
-
-                def _lay_out():
-                    # song_map has its own cache, so a second Lay out on the
-                    # same song is arithmetic over a warm map.
-                    _map = _songmap.song_map(
-                        _mvsong_path, listen=_mvlisten,
-                        status=lambda m: print(f"[{TAG}] {m}", flush=True),
-                        allow_download=False)
-                    return _mv.solve(_map, _mvsecs)
-
-                _out = await asyncio.get_running_loop().run_in_executor(
-                    None, _lay_out)
-                # Only what the card shows and Write beats needs. A solver hop
-                # also carries frames, film/song spans, sung flags and lyric
-                # lines; the lyric lines are a listening-path artefact and have
-                # no business riding a plan request.
-                _hops = [{
-                    "kind": _h.get("kind"),
-                    "duration": _h.get("duration"),
-                    "frames": _h.get("frames"),
-                    "section": _h.get("section"),
-                    "section_kind": _h.get("section_kind"),
-                } for _h in (_out.get("hops") or [])]
-                out = {"ok": True,
-                       "skeleton": {
-                           "hops": _hops,
-                           "master_audio_start_s": _out.get("master_audio_start_s"),
-                           "worst_cut_f": _out.get("worst_cut_f"),
-                           "end_s": _out.get("end_s"),
-                           "total_frames": _out.get("total_frames"),
-                           "labels": _out.get("labels"),
-                           "sections": _mvsecs,
-                           # The NAME, as the widget holds it: Accept compares
-                           # this with master_audio_file and writes it there.
-                           "song_file": _mvsong,
-                       }}
-            elif stage == "song":
-                # MV mode's entry point. Measures a song and returns it; writes
-                # nothing. `listen` is off by default and stays off unless the
-                # user asks, because it downloads a stem -- 4/9 sections become
-                # 2/9 WITH listening, which is a real but small improvement for
-                # a fetch, so it is the user's call rather than a default.
-                from . import songmap as _songmap
-                _song = str(body.get("song_file") or "").strip()
-                if not _song:
-                    return web.json_response(
-                        {"ok": False,
-                         "error": "no song file -- pick one in MEDIA, or set a "
-                                  "master_audio_file, then ask for the song "
-                                  "again."})
-                _song_path = _media.resolve(_song, kinds={"audio", "video"})
-                if not _song_path:
-                    return web.json_response(
-                        {"ok": False,
-                         "error": f"{_song} is not in h3_refs -- pick the song "
-                                  "in MEDIA."})
-                out = await asyncio.get_running_loop().run_in_executor(
-                    None, lambda: _songmap.song_map(
-                        _song_path, listen=bool(body.get("listen")),
-                        status=lambda m: print(f"[{TAG}] {m}", flush=True),
-                        allow_download=False))
-                out = {"ok": True, "song": _songmap_summary(out)}
             elif stage == "propose":
                 out = await _planner.write_propose(
                     brief, complete_fn=complete_fn, hops=hops, files=files,

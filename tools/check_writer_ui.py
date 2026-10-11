@@ -525,9 +525,9 @@ check("the route accepts an `ask` stage",
 # Not the whole tuple: pinning it meant adding `solve` broke a check about
 # `ask`, which is the brittleness this pack keeps paying for. What matters is
 # that every stage the PANEL sends is accepted by the ROUTE.
-check("...and dispatches it before the other three",
-      py.index('if stage == "ask"') < py.index('elif stage == "song"')
-      if 'if stage == "ask"' in py and 'elif stage == "song"' in py else False)
+check("...and dispatches it first among the model stages",
+      py.index('if stage == "ask"') < py.index('elif stage == "propose"')
+      if 'if stage == "ask"' in py and 'elif stage == "propose"' in py else False)
 
 # The panel and the route must agree, in BOTH directions. A stage the panel
 # sends that the route rejects is the D1j bug (`chat`); a stage the route
@@ -541,6 +541,11 @@ _ACCEPTED = set(re.findall(r'"(\w+)"', _TUP))
 # so an unknown-looking stage lands on it. Looking only for explicit branches
 # reports it as unhandled, which is the check being wrong.
 _EXPLICIT = set(re.findall(r'stage == "(\w+)"', py))
+# Song and solve are dispatched together, ahead of the writer (no model call):
+# `if stage in ("song", "solve"):` with solve explicit and song its else.
+_EARLY = re.search(r'if stage in \(([^)]*)\):', py)
+if _EARLY:
+    _EXPLICIT |= set(re.findall(r'"(\w+)"', _EARLY.group(1)))
 _HANDLED = _EXPLICIT | ({"develop"} if re.search(r"else:\s*\n\s*out = await "
                                                          r"_planner\.write_plan\(", py)
                         else set())

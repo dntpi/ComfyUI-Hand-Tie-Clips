@@ -221,9 +221,14 @@ def _server_args(name, model_file=None):
 
     - no `--webui`: the node is the interface, and a second one on the same
       port is a thing that fails in a way nobody can see.
-    - no `--spec`/`--draft-tokens`: speculative decoding changes the output
-      distribution, and a plan writer that is not reproducing its own decisions
-      is a bad way to find out that.
+
+    `--spec mtp --draft-tokens 3 --lm-head-draft` is what nInfer's own
+    qwen3_8_27b_nvfp4 launcher ships, and it is where nInfer's speed is: the
+    model's MTP head drafts tokens and the full model verifies them. It was left
+    out here on the belief that speculation changes the output distribution; a
+    verified draft does not (and at temperature > 0 the writer was never
+    reproducible anyway). Without it this pack measured 17-26 tok/s decode on a
+    5090 (server.err, 2026-10-11).
 
     `--no-thinking` because the models this pack is tested against reason
     before they answer, and a repair loop that spends its budget on a page of
@@ -235,7 +240,8 @@ def _server_args(name, model_file=None):
                                                DEFAULT_MODEL_FILE))
         port = (BACKENDS["ninfer"]["default_base"].rsplit(":", 1)[-1])
         return [model, "--host", "127.0.0.1", "--port", port,
-                "--max-context", "150000", "--vision", "--no-thinking"]
+                "--max-context", "150000", "--vision", "--no-thinking",
+                "--spec", "mtp", "--draft-tokens", "3", "--lm-head-draft"]
     return []
 
 

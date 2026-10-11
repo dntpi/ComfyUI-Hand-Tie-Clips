@@ -992,7 +992,13 @@ def register():
                 out = await _planner.write_plan(
                     brief, hops, complete_fn=complete_fn, files=files,
                     pinned=pinned, images=images, duration=duration,
-                    thread=thread, proposal=proposal, pin_mech=pin_mech)
+                    thread=thread, proposal=proposal, pin_mech=pin_mech,
+                    # The MV layout, when Write beats came off a Layout card.
+                    # Built and never passed on, it was ignored: the panel's
+                    # hop count, the writer's own lengths, dialogue over the
+                    # song (user, 2026-10-11: 60 s track, 50 s plan).
+                    skeleton=(body.get("skeleton")
+                              if isinstance(body.get("skeleton"), dict) else None))
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:

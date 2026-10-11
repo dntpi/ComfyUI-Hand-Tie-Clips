@@ -404,6 +404,12 @@ ck("the draft shows the offset before Accept",
 print("\nreview fixes (2026-10-11)")
 # song_map opens what it is handed; the widget holds a name under h3_refs, so
 # the bare name failed from ComfyUI's working directory on Song AND Lay out.
+# Found by the user (2026-10-11): every check above called write_plan()
+# directly, and the ROUTE never passed the skeleton on -- the layout was
+# ignored on every real Write beats.
+ck("the route hands the layout to write_plan",
+   "skeleton=" in routes[routes.find("_planner.write_plan("):][:900],
+   "-- a layout the route drops is a layout nothing obeys")
 ck("Lay out resolves the song under h3_refs before song_map opens it",
    re.search(r'_mvsong_path = _media\.resolve\(_mvsong, kinds=\{"audio", "video"\}\)',
              routes) is not None

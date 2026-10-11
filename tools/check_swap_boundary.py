@@ -95,8 +95,9 @@ def main():
     async def fake_with_register(messages, schema=None):
         return json.dumps({
             "shot_plan": {"shots": [{
-                "beat": ("The subject stands in the room looking like @her_face and "
-                         "turns. The face of @her_face is the subject's own."),
+                "beat": ("<Subject 1> is the person in <Video 1>, and the face of "
+                         "<Subject 1> comes from <Picture 1>. The subject stands in the "
+                         "room looking like @her_face and turns."),
                 "directives": {"camera": "hold", "framing": "medium",
                                "tail": "settle"},
                 "refs": ["her_face"],
@@ -175,18 +176,24 @@ def main():
            "@mia" in P.build_swap_user_turn("", "mia", "8 s", mode=m))
     hs = P.build_swap_user_turn("", "mia", "8 s", mode="head_swap")
     ck("head_swap keeps the body with the clip",
-       "stay exactly as the clip has them" in hs)
+       "<Video 1>'s own" in hs, hs)
     # The citation discipline, which is the difference between a swap that
     # renders and one that does not. A single subordinate mention loses to the
     # clip: many frames of conditioning against one photograph, added rather
-    # than weighed. Every swapping mode names the tag twice and leads with the
-    # pack's own idiom.
+    # than weighed.
+    #
+    # Two handles now, not one handle twice: `<Subject 1>` carries the
+    # definition and `@mia` is the secondary cite that stays because "name the
+    # identity once loses" is a MEASURED result on this node. Same total
+    # mentions as before, two different mechanisms.
     for m in ("replace_person", "head_swap", "face_only"):
         turn = P.build_swap_user_turn("", "mia", "8 s", mode=m)
-        ck("%s leads with the looking-like idiom" % m,
-           "looking like @mia" in turn, m)
-        ck("%s names the identity twice" % m, turn.count("@mia") >= 2,
-           "%d mentions" % turn.count("@mia"))
+        ck("%s defines the subject from both sources" % m,
+           "<Subject 1> is the person in <Video 1>" in turn
+           and "come from <Picture 1>" in turn, m)
+        ck("%s assigns the clip its job" % m,
+           "<Video 1>" in turn and ("movement" in turn or "Motion" in turn), m)
+        ck("%s still cites the identity tag" % m, "@mia" in turn, m)
     ck("an unknown mode falls back rather than raising",
        P.normalise_swap_mode("banana") == P.DEFAULT_SWAP_MODE)
     ck("only keep_person waives the identity",
@@ -234,8 +241,10 @@ def main():
     def reply_citing(refs):
         async def fake(messages, schema=None):
             return json.dumps({"shot_plan": {"shots": [{
-                "beat": ("Someone looking like @her_face stands in @kitchen "
-                         "wearing @jacket, looking like @her_face, and turns."),
+                "beat": ("<Subject 1> is the person in <Video 1>, and the face of "
+                         "<Subject 1> comes from <Picture 1>. Someone looking like "
+                         "@her_face stands in @kitchen wearing @jacket, looking like "
+                         "@her_face, and turns."),
                 "directives": {"camera": "hold", "framing": "medium",
                                "tail": "settle"},
                 "refs": refs,

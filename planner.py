@@ -2219,36 +2219,63 @@ NO_IDENTITY_MODES = ("keep_person",)
 BG_MODES = ("clip", "picture", "free")
 DEFAULT_BG_MODE = "clip"
 
-# Each rule names the tag TWICE, and the first is always the pack's own idiom:
-# "<subject> ..., looking like @tag". That is not style. A beat citing the
-# identity once, in a subordinate clause, loses to the reference clip: the clip
-# is many frames of conditioning and the still is one picture, sampling is
-# additive at cfg 1.0, and nothing weighs them against each other. The run that
-# worked said "looking like @ref_1" AND then restated face, hair and skin tone
-# as a second sentence; the run that did not said "the person with the head of
-# @ref_1" once and rendered the clip's own person.
+# The mode rule is a SUBJECT DEFINITION, in the official H3 full-reference form.
+#
+# It used to be four paragraphs of instruction telling the model how to phrase
+# the swap. That was wrong in three ways, all of them found by reading the
+# official guide (`MiniMax-AI/MiniMax-H3`, skills/h3-prompt-writing/references/
+# ref-en.txt) rather than by testing:
+#
+# 1. It told the model the clip's frames have NO label: "do not invent a tag
+#    for them". The official guide says the opposite, in as many words --
+#    "If a person, object, scene, action, or effect from a reference video is
+#    reused as visible content, it still belongs under <Subject N>. <Video N>
+#    identifies the asset or structural source and does not replace subject
+#    labels." The clip's person is CONTENT, so it gets `<Subject 1>`.
+#
+# 2. It never gave `<Video 1>` a job. Only the photograph was assigned
+#    anything. ComfyUI's own H3 docs: "Assign each reference a job... Explicit
+#    assignments tend to work much better." The community guides put it as the
+#    first thing that goes wrong: not telling the model what the source video
+#    is for.
+#
+# 3. `replace_person` asked for "the person in the clip IS the identity
+#    photograph" -- preserve and replace on the same property in one sentence,
+#    which is the second item on the community guides' list of what not to do.
+#    Splitting it into APPEARANCE (from the picture) and MOTION (from the
+#    video) is the official fix, and the official guide already contains the
+#    whole swap in one sentence: "is the woman whose appearance comes from
+#    <Picture 1> and whose walking motion comes from <Video 1>".
+#
+# So each mode is now ONE line that defines the subject and splits the two
+# sources. Shorter than what it replaces, and it cannot drift, because there
+# is far less of it.
+#
+# The `@ident` citation stays in the beat as well, because "name the identity
+# twice" is a MEASURED result on this node -- one mention loses to the clip.
+# `<Subject 1>` is the primary handle; `@ident` remains as the secondary cite
+# so an experiment that does not land costs a flag rather than a rewrite.
 _MODE_RULE = {
     "replace_person":
-        "Say the subject is looking like @{ident}, then state in a second "
-        "sentence that the face, build, hairstyle and wardrobe of @{ident} "
-        "are the subject's own.",
+        "<Subject 1> is the person in <Video 1>. The face, build, hairstyle "
+        "and wardrobe of <Subject 1> come from <Picture 1>. <Subject 1> keeps "
+        "the movement, the camera path and the shot timing of <Video 1>.",
     "head_swap":
-        "Say the subject is looking like @{ident}, then state in a second "
-        "sentence that the face, hair and skin tone of @{ident} sit on the "
-        "clip's own body -- build, posture, hands, and every garment and worn "
-        "accessory stay exactly as the clip has them, and the neck and jaw "
-        "meet that body. The photograph contributes the head alone; from the "
-        "collar down the body is the clip's.",
+        "<Subject 1> is the person in <Video 1>. The face, hair and skin tone "
+        "of <Subject 1> come from <Picture 1>. The build, posture, hands, and "
+        "every garment and worn accessory of <Subject 1> are <Video 1>'s own, "
+        "and the neck and jaw meet <Video 1>'s collar. <Subject 1> keeps the "
+        "movement, the camera path and the shot timing of <Video 1>.",
     "face_only":
-        "Say the subject is looking like @{ident}, then state in a second "
-        "sentence that only the facial features of @{ident} are the subject's "
-        "own -- "
-        "hair, ears, expression range, build and every garment stay exactly "
-        "as the clip has them.",
+        "<Subject 1> is the person in <Video 1>. The facial features of "
+        "<Subject 1> come from <Picture 1>. The hair, ears, expression range, "
+        "build and every garment of <Subject 1> are <Video 1>'s own. "
+        "<Subject 1> keeps the movement, the camera path and the shot timing "
+        "of <Video 1>.",
     "keep_person":
-        "Nobody is swapped. The person shown in the clip is kept as they are, "
-        "and the clip is a scene and motion plate. Do not cite an identity "
-        "tag for a face.",
+        "<Subject 1> is the person in <Video 1>, kept as they are. <Video 1> "
+        "supplies the movement, the camera path, the shot timing and the "
+        "setting. Nobody is swapped.",
 }
 
 
@@ -2377,6 +2404,17 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
         errors.append(_clean(exc))
 
     beat = shots[0].get("beat") or ""
+    # TWO handles, not one handle twice.
+    #
+    # The measured result on this node was that naming the identity ONCE loses
+    # to the reference clip: the clip is many frames of conditioning against one
+    # picture, sampling is additive at cfg 1.0, and nothing weighs them. That
+    # still holds, so the insurance is kept -- but the primary handle is now
+    # `<Subject 1>`, the official label for visible content taken from a
+    # reference video, and `@ident` is the secondary cite. Same count as the
+    # old "name it twice", two different mechanisms instead of one repeated,
+    # so an experiment that does not land costs a flag rather than a rewrite.
+    subjects = len(re.findall(r"<Subject\s*1\s*>", beat, re.I))
     cites = len(re.findall(r"@" + re.escape(ident) + r"\b", beat)) if ident else 0
     if ident and not cites:
         errors.append(
@@ -2384,14 +2422,21 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
             "swapped in, and a generate that does not name it will keep "
             "the person from the clip."
         )
-    elif ident and cites < 2:
-        # The instruct's load-bearing rule, and until now checked as "once":
-        # one mention loses to the clip, which is many frames of conditioning
-        # against one picture (observed: the clip's own person, unchanged).
+    if ident and not subjects:
         errors.append(
-            f"the beat names @{ident} once. Name it twice: first \"looking like "
-            f"@{ident}\" on the subject, then a sentence saying what of @{ident} "
-            "is the subject's own and what stays with the clip.")
+            "the beat must define <Subject 1> as the person in <Video 1> and "
+            "say which of their appearance comes from <Picture 1> and which "
+            "of their movement comes from <Video 1>. The clip's person is "
+            "content, and content gets a label: <Video 1> names the asset, not "
+            "the person standing in it."
+        )
+    # No "two <Subject 1> is still one handle" rule. It was written, and it
+    # was unreachable in the way it was meant to be: the missing-cite case is
+    # already an error above, so all this could add was the same instruction a
+    # second time in different words. Repeating <Subject 1> is what the
+    # official example does ("is the woman whose appearance comes from
+    # <Picture 1> and whose walking motion comes from <Video 1>"), so counting
+    # it would have punished the shape the guide asks for.
 
     if allowed is not None:
         # keep_person: the shot rides exactly these plates, so any other tag in

@@ -1500,9 +1500,16 @@ def main():
     print("write_swap_plan -- one hop, no register")
     async def swap_ok(messages, schema=None):
         return json.dumps({"shot_plan": {"shots": [{
-            "beat": ("The subject stands looking like @her_face and turns toward "
-                     "the light. The face and hair of @her_face are the "
-                     "subject's own."),
+            # D1q: the shape the instruct now asks for. This fixture was in the
+            # pre-D1q form, so validate_swap raised "define <Subject 1>", the
+            # plan went round the repair loop and came back ok=False -- the
+            # checker failing on its own fixture, which is how the seven
+            # failures in check_swap_boundary started. One file's stale fixture
+            # is easy to fix; finding the SECOND one needs the suite.
+            "beat": ("<Subject 1> is the person in <Video 1>, and the face of "
+                     "<Subject 1> comes from <Picture 1>. The subject stands "
+                     "looking like @her_face and turns toward the light. The "
+                     "face and hair of @her_face are the subject's own."),
             "directives": {"tail": "settle"},
             "refs": ["her_face"],
         }]}})

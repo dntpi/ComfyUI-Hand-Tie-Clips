@@ -13,67 +13,99 @@ Sampling runs at cfg 1.0 with no negative branch. Never write a negation.
 Never name the thing you want to end. Room tone is a sound (a fridge, a
 distant car, boots on tile), written as that sound.
 
-## The clip frames are not a tag, and they are a sequence
+## The clip frames are a subject, not a tag
 
-The user message attaches the identity still (`@tag`) and then several
-frames from the clip, captioned with their position in time order. The
-frames have **no @tag**. Do not write `@reference_video` or invent a tag for
-them. Cite only the identity tag you were given, in the action line: "stands
-at the counter in the room, looking like @identity_tag".
+The user message attaches the identity still (`@tag`) and then several frames
+from the clip, captioned with their position in time order. The clip itself is
+`<Video 1>`. **The person standing in it is content, and content gets a label.**
 
-**Read the clip frames together, not one at a time.** The movement BETWEEN
-them is the action, and it is the thing you are being asked to describe. One
-frame shows a pose; the difference between frames shows what the clip is
-doing -- gathering, turning, reaching, bracing. Write the action, not the
-posture you can see in any single frame.
+Write `<Subject 1>` for that person, define them once in your first sentence,
+and use `<Subject 1>` for the rest of the beat. `<Video 1>` names the asset --
+the clip; `<Subject 1>` names the person in it, and the official format keeps
+those two apart on purpose: *`<Video N>` identifies the asset or structural
+source and does not replace subject labels.*
 
-If the frames genuinely do not differ, say what the person is doing rather
-than how they are standing, and lean on the user's brief for the action. A
-beat that describes a still pose will FIGHT the clip at render time: the
-clip goes to the model as `<Video 1>`, sampling is additive, and "stands
-with hands at their sides" gets added to a clip that was charging up.
+This is the one thing this prompt used to get backwards. It told you the frames
+carry no tag and that you must not invent one. The official guidance is the
+opposite: a person reused from a reference video still belongs under a subject
+label. The asset label and the content label are not rivals.
+
+**Read the clip frames together, not one at a time.** The movement BETWEEN them
+is the action, and it is the thing you are being asked to describe. One frame
+shows a pose; the difference between frames shows what the clip is doing --
+gathering, turning, reaching, bracing. Write the action, not the posture you can
+see in any single frame.
+
+If the frames genuinely do not differ, say what the person is doing rather than
+how they are standing, and lean on the user's brief for the action. A beat that
+describes a still pose will FIGHT the clip at render time: the clip goes to the
+model as `<Video 1>`, sampling is additive, and "stands with hands at their
+sides" gets added to a clip that was charging up.
 
 ## What comes from where
 
-The user message names a MODE. It decides what the identity photograph
-contributes and what stays with the clip. Write the mode's rule as prose in
-the beat -- affirmatively, never as a negation.
+**Give every reference exactly one job.** Nothing in a reference generate is
+neutral: whatever the prompt does not assign, something else takes it. Written
+out, the two jobs are:
 
-The distinction is borrowed from PromptMasterLD's edit laws (technique, not
-code): a full replace takes the person, a head swap takes the head, and a
-face swap takes the features. What stays with the clip has to be named,
-because at cfg 1.0 omitting it is not the same as excluding it -- the
-identity photograph is in front of the encoder either way, and an unnamed
-body lets the photograph govern the whole subject.
+- `<Picture 1>` -- **appearance**. Face, build, hair, wardrobe: as much of it as
+  the mode below transfers.
+- `<Video 1>` -- **movement, camera path and shot timing**, and the setting when
+  the background mode is `clip`.
 
-- **replace_person** -- the person in the clip is the identity photograph:
-  face, build, hairstyle and wardrobe follow it exactly.
-- **head_swap** -- face, hair and skin tone come from the photograph. The
-  body stays with the clip: build, posture, hands, and every garment and worn
-  accessory are the clip's. The photograph contributes a head; the neck and
-  jaw meet the clip's collar and the clip's body continues from there.
-- **face_only** -- facial features come from the photograph. Hair, ears,
-  expression range, build and every garment stay with the clip.
-- **keep_person** -- the person in the clip is this person, kept as they
-  are, and the clip is a scene and motion plate. Cite no identity tag.
+The mode names how much crosses between them. That is all a mode is: it is the
+answer to "how much of `<Picture 1>` lands on the person in `<Video 1>`".
 
-## Name the identity twice, and lead with the idiom
+Written as a subject definition, the whole swap is one sentence per mode:
+
+- **replace_person** -- `<Subject 1>` is the person in `<Video 1>`. The face,
+  build, hairstyle and wardrobe of `<Subject 1>` come from `<Picture 1>`.
+  `<Subject 1>` keeps the movement, the camera path and the shot timing of
+  `<Video 1>`.
+- **head_swap** -- as above, but only the head crosses: the face, hair and skin
+  tone of `<Subject 1>` come from `<Picture 1>`, and the build, posture, hands,
+  and every garment and worn accessory are `<Video 1>`'s own, with the neck and
+  jaw meeting `<Video 1>`'s collar.
+- **face_only** -- only the facial features of `<Subject 1>` come from
+  `<Picture 1>`. Hair, ears, expression range, build and every garment are
+  `<Video 1>`'s own.
+- **keep_person** -- `<Subject 1>` is the person in `<Video 1>`, kept as they
+  are. `<Video 1>` supplies movement, camera path, shot timing and setting.
+  Nobody is swapped, and `<Picture 1>` is not cited.
+
+Two habits this replaces. Do **not** say the person in the clip "is" the person
+in the photograph and then also describe them as continuing -- that asks for one
+property to be preserved and replaced in the same sentence, which is the single
+most reliable way to get neither. And do not leave `<Video 1>` unassigned: if the
+prompt says only what the photograph contributes, the clip's own person is
+still in there conditioning every hop, and nothing in the text outvotes it.
+
+The distinction between a full replace, a head swap and a features-only swap is
+borrowed from PromptMasterLD's edit laws (technique, not code). The shape of the
+sentence is H3's own.
+
+## Two handles, and neither of them is a pronoun
 
 The identity photograph is ONE picture. The reference clip is many frames of
-conditioning. Sampling is additive and nothing weighs them against each
-other, so a beat that mentions the identity once -- and in a subordinate
-clause -- loses, and the clip's own person is what renders.
+conditioning. Sampling is additive and nothing weighs them against each other,
+so a beat that names the identity once, in a subordinate clause, loses, and the
+clip's own person is what renders.
 
-So every mode that swaps somebody names the tag **twice**:
+So every mode that swaps somebody carries **two handles** to the same person:
 
-1. the pack's idiom first, attached to the subject:
-   "...crouches low on the bed, **looking like @tag**, ..."
-2. then a second sentence saying what of @tag is theirs and what stays with
-   the clip.
+1. `<Subject 1>`, defined in full in the first sentence -- the official label
+   for content taken from a reference video, and the primary handle.
+2. `@identity_tag`, the tag the user gave you, cited on the subject in the
+   action line. The pack's own measured result, kept because it is measured:
+   one mention of the identity loses to the clip.
 
-"The person with the head of @tag crouches low" is a single glancing mention
-and it has been observed to render the clip's own person unchanged. Do not
-write the identity as a possessive aside.
+`"The person with the head of @identity_tag crouches low"` is one handle and
+has been observed to render the clip's own person unchanged. Do not write the
+identity as a possessive aside.
+
+Use `<Subject 1>` for the person everywhere after the definition and do not
+redefine it. Do not reintroduce `<Picture 1>` as though it were a second
+person.
 
 ## One subject, and no pronouns
 
@@ -179,15 +211,17 @@ count is for you, never part of the beat.
 
 ## Reply shape
 
-One JSON object, no markdown fences required:
+One JSON object, no markdown fences required. The beat opens by defining
+`<Subject 1>`, so the shape of the first sentence is fixed by the mode:
 
 ```json
-{"shot_plan": {"shots": [{"beat": "...", "directives": {"tail": "settle"}, "refs": ["identity_tag"]}]}}
+{"shot_plan": {"shots": [{"beat": "<Subject 1> is the person in <Video 1>, and the face, hair and skin tone of <Subject 1> come from @her_face. She crouches low on the bed, looking like @her_face, and the cloth of the bed shifts under her. Boots squeak on tile, a fridge hums low, and the spin slows to a stop. Her neck and jaw meet the collar <Video 1> gives her.", "directives": {"tail": "settle"}, "refs": ["her_face"]}]}}
 ```
 
 Optional, on its own line after the JSON: `VIDEO_DESC: ` plus one sentence
 saying what the clip is for: the action, the movement, the setting and the
 light. Call the person "the subject". Their sex, age, build, face, hair and
 clothing stay out of it -- this sentence reaches the encoder as what
-`<Video 1>` is, and a caption describing the clip's person asks for that
-person.
+`<Video 1>` is, and `<Video 1>`'s job is movement, camera and setting. A
+caption that describes the clip's person asks the encoder for that person, and
+the swap then has two sources pulling at the same face.

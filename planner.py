@@ -2459,6 +2459,109 @@ _DESCRIBE_SYSTEM = (
 )
 
 
+# The ASK stage. The one stage whose output is prose with nothing to validate.
+#
+# Every other stage has a job with a checkable answer: beats run through
+# `validate()`, edits produce diffs, a proposal produces six named fields. This
+# one has no right answer, so the prompt has to carry what validation carries
+# elsewhere -- tell the model plainly that it is talking and not writing, and
+# keep it from producing a plan nobody asked for.
+#
+# That second rule is the one worth being strict about. Without it a chatty
+# model asked "what is this about?" tends to helpfully emit a shot plan, and
+# the panel cannot tell the difference -- it would arrive as prose the user
+# reads, and the silence where a card should be would be invisible.
+#
+# Length is a design constraint, not a politeness. This backend decodes at
+# roughly 15 tok/s, so a 2,000-word answer is four minutes of waiting. The cap
+# is in the prompt AND enforced on the way out, because a prompt a model
+# ignores is a suggestion.
+#
+# This is written from scratch for this pack. H3 Studio's chat was read for
+# design only -- its licence forbids putting its prose or code in this repo --
+# so the shape below (a conversation stage, a reply that is prose rather than a
+# plan) is a functional idea, not borrowed text.
+_ASK_SYSTEM = (
+    "You are the writer on this shot-planning node, talking to the person "
+    "who owns the film. You can see the conversation so far, and the "
+    "proposal and plan as they stand.\n\n"
+    "This turn is a CONVERSATION, not a commission. Answer the question that "
+    "was asked.\n\n"
+    "- Do not write a shot plan, a beat, a ref register, or any structured "
+    "output. Not even as an example. If the person wants the beats, they "
+    "press Write beats, and you will do exactly that then.\n"
+    "- Do not use JSON, fenced blocks, @tags or field names.\n"
+    "- Be brief. Two to four sentences is right. No preamble, no summary of "
+    "what you are about to say, no closing offer of further help.\n"
+    "- If the question is under-specified, answer what you can and name the "
+    "one thing you would need. Do not guess silently and do not ask a wall "
+    "of questions back.\n"
+    "- Plainly say when something is not knowable from what you have. The "
+    "plan and the references are below when they exist; there is no other "
+    "source."
+)
+
+
+async def write_ask(brief, *, complete_fn, thread=None, proposal=None,
+                    shot_text=None, ref_text=None, images=None,
+                    duration="", pin_mech="", max_chars=1800):
+    """Stage 0: talk. No schema, no validate, no repair loop.
+
+    Returns {ok, text, warnings}. `text` is prose and is shown as a chat turn
+    by the panel, which already renders any reply without a shot_plan or a
+    card. Nothing here can change the plan: the only way a conversation alters
+    a plan is the person accepting a draft card, and this stage never produces
+    one.
+
+    `proposal` / `shot_text` / `ref_text` are resent every turn, for the reason
+    `build_thread` gives -- the plan can be accepted, reverted or hand-edited
+    between two turns of talking, so anything the next answer must know has to
+    arrive in the turn rather than being left in a trimmed thread.
+    """
+    question = str(brief or "").strip()
+    if not question:
+        return {"ok": False, "text": "", "error": "nothing to ask",
+                "warnings": []}
+
+    framing = ["You are answering a question about this film."]
+    if duration:
+        framing.append(f"Every hop will be {duration}.")
+    if pin_mech == "hand_tie":
+        try:
+            framing.append("The chain will be hand-tied, so continuity between "
+                           "hops is carried by shared reference windows rather "
+                           "than by a single running generate.")
+        except Exception:
+            pass
+    framing.append("Answer now, in prose. Do not produce a plan.")
+
+    messages = build_thread(
+        _ASK_SYSTEM, thread, proposal=proposal, shot_text=shot_text,
+        ref_text=ref_text, instruction="\n".join(framing) + "\n\n" + question,
+        images=images)
+
+    reply = await complete_fn(messages, schema=None)
+    text = str(reply or "").strip()
+    if not text:
+        # Same three failure shapes `_content` reports elsewhere, collapsed to
+        # one sentence: the person asked a question and got nothing, and "the
+        # model returned nothing" does not tell them whether to press again.
+        return {"ok": False, "text": "", "attempts": 1, "errors": [],
+                "warnings": ["the writer returned nothing. Press Ask again."]}
+
+    warnings = []
+    if len(text) > max_chars:
+        # Trimmed, not refused. A conversational turn has nothing to validate,
+        # so a long answer is slow rather than wrong -- but it is still four
+        # minutes of scrolling, and the model ignoring a length instruction
+        # should not be silently obeyed.
+        text = text[:max_chars].rsplit(" ", 1)[0] + "..."
+        warnings.append(f"the answer ran long and was cut at {max_chars} "
+                        "characters. Ask more narrowly for the rest.")
+    return {"ok": True, "text": text, "attempts": 1, "errors": [],
+            "warnings": warnings}
+
+
 async def describe_frame(*, complete_fn, frame_data_url=None, frames=None):
     """One-call caption. No repair loop, no shot_plan, no ref_plan.
 

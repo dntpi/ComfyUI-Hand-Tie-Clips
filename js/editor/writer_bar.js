@@ -108,11 +108,49 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         if (e.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         e.stopPropagation();
-        sendCanned(null, chat.value);
+        sendCanned(composerStage(), chat.value);
     });
     chatRow.appendChild(chat);
     chatRow.appendChild(button("Send", "Send this to the writer",
-        () => sendCanned(null, chat.value)));
+        () => sendCanned(composerStage(), chat.value)));
+
+    /* -- what Enter in the composer DOES ---------------------------------- */
+    //
+    // Free text went to `develop`, which is the route's else-branch and writes
+    // a plan. So typing "test" produced a ten-beat film: correct, and not what
+    // anyone typing one word into a chat box meant. There was no way to ASK a
+    // question at all -- every turn was a commission.
+    //
+    // Two chips rather than a guess. A heuristic would be wrong in the
+    // expensive direction: a misrouted turn costs a full generate on a 27B
+    // that decodes at ~15 tok/s, and this pack's standing lesson is that you
+    // cannot subtract a mistake with cfg 1.0. The chips also make the cost
+    // legible before it is paid, which a heuristic never does.
+    //
+    // `develop` stays the default. Someone who types a sentence into this box
+    // has almost always typed a brief, and silently changing what free text
+    // MEANS would be the same surprise in the other direction.
+    let composerStageId = "develop";
+    const chipRow = el("div", "h3e-writer-row h3e-stage-chips");
+    const chips = {};
+    function composerStage() { return composerStageId; }
+    for (const [id, label, tip] of [
+        ["ask", "Ask", "Talk to the writer. It answers in prose and writes "
+            + "nothing — the plan only changes when you accept a draft."],
+        ["develop", "Write beats", "Treat this as a brief and write the beats. "
+            + "A draft card appears; nothing reaches the plan until Accept."],
+    ]) {
+        const b = button(label, tip, () => {
+            composerStageId = id;
+            for (const [k, c] of Object.entries(chips)) c.classList.toggle("on", k === id);
+            chat.focus();
+        });
+        chips[id] = b;
+        chipRow.appendChild(b);
+    }
+    chips.develop.classList.add("on");
+    body.appendChild(chipRow);
+
     body.appendChild(chatRow);
 
     // ---- the thread, in node.properties so it survives a pane switch -----

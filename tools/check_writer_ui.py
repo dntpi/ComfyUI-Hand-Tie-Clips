@@ -20,6 +20,8 @@ ROOT = os.path.dirname(HERE)
 JS = os.path.join(ROOT, "js", "editor", "writer_bar.js")
 PY = os.path.join(ROOT, "routes.py")
 LLM = os.path.join(ROOT, "llm.py")
+# D1n. The ASK stage lives in the planner, so its contract is checked there.
+PLANNER = os.path.join(ROOT, "planner.py")
 # D1l. The composer's size and the thread's growth are both CSS, so the
 # checks for them cannot read the JS.
 CSS = os.path.join(ROOT, "js", "h3_ref_chain.css")
@@ -35,6 +37,7 @@ def src(path):
 js = src(JS)
 py = src(PY)
 llm = src(LLM)
+planner = src(PLANNER)
 css = src(CSS)
 # Structural CSS checks read `css_code`, never `css`. A rule's own comment is
 # allowed to NAME the value it replaced -- that is the most useful comment
@@ -439,8 +442,10 @@ check("Send sits beside the last line, not the middle",
 _kd = js[js.index('el("textarea", "h3e-writer-chat")'):]
 _kd = _kd[:_kd.index("chatRow.appendChild")]
 check("Enter still sends",
-      "e.key !== \"Enter\"" in _kd and "sendCanned(null, chat.value)" in _kd,
-      "-- the box has always sent on Enter")
+      "e.key !== \"Enter\"" in _kd
+      and "sendCanned(composerStage(), chat.value)" in _kd,
+      "-- the box has always sent on Enter, and D1n changed WHICH stage it "
+      "sends, not whether it sends")
 check("Shift+Enter is a newline, not a turn",
       re.search(r"e\.key\s*!==\s*\"Enter\"\s*\|\|\s*e\.shiftKey", _kd) is not None,
       "-- without the modifier test the textarea posts an empty turn per line")
@@ -469,6 +474,71 @@ check("the body is what lets it grow",
       "-- flex:1 on a child of a static parent buys nothing")
 check("a short pane keeps a readable thread rather than crushing it",
       re.search(r"\.h3e-chat\s*\{[^}]*min-height:\s*200px", css_code) is not None)
+
+# --- 12. D1n: ASK -- a conversation that cannot commit to a plan ------------
+# Free text went to `develop`, the route's else-branch, which writes a plan.
+# Typing "test" produced a ten-beat film: correct behaviour, and not what
+# anyone typing one word into a chat box meant. There was no way to ASK.
+check("the route accepts an `ask` stage",
+      re.search(r'not in \("ask", "propose", "develop", "edit", "song"\)', py)
+      is not None,
+      "-- without it the panel posts a stage the route rejects, which is "
+      "exactly the D1j failure")
+check("...and dispatches it before the other three",
+      py.index('if stage == "ask"') < py.index('elif stage == "song"')
+      if 'if stage == "ask"' in py and 'elif stage == "song"' in py else False)
+check("the composer offers the choice rather than guessing",
+      re.search(r'const chipRow = el\("div", "h3e-writer-row h3e-stage-chips"\)',
+                js) is not None,
+      "-- a heuristic is wrong in the expensive direction: a misrouted turn "
+      "costs a full generate at ~15 tok/s")
+check("Enter sends whatever the chip says",
+      "sendCanned(composerStage(), chat.value)" in js
+      and js.count("sendCanned(composerStage(), chat.value)") == 2,
+      "-- both the keydown and the Send button, or one of them keeps writing "
+      "a plan behind the chips' back")
+check("NO composer path still defaults to a plan",
+      "sendCanned(null, chat.value)" not in js,
+      "-- the D1j bug in a new place: a stage the route has to reinterpret")
+check("`develop` stays the default, not `ask`",
+      re.search(r'let composerStageId = "develop"', js) is not None,
+      "-- someone typing a sentence has almost always typed a brief; "
+      "silently changing what free text MEANS is the same surprise")
+
+# The stage is the one thing that must not fall through to a plan.
+_send = js[js.index("async function sendCanned"):]
+_send = _send[:_send.index("\n    }") if "\n    }" in _send else 4000]
+check("the stage is passed through, never defaulted away",
+      "stage: stage || " in _send,
+      "-- an empty stage must not silently become a plan")
+
+# --- 12b. the ASK stage itself
+check("planner exposes write_ask",
+      re.search(r"async def write_ask\(", planner) is not None)
+check("it asks for no schema, so no JSON can come back",
+      re.search(r"def write_ask\(.*?complete_fn\(messages, schema=None\)", planner,
+                re.S) is not None,
+      "-- a conversational turn has nothing to validate")
+_ASK = planner[planner.index("async def write_ask("):
+               planner.index("async def describe_frame(")]
+check("it never runs the repair loop",
+      "validate(" not in _ASK
+      and not re.search(r"schema\s*=\s*(?!None)\w", _ASK),
+      "-- there is no right answer to converge on, and a non-None schema here "
+      "would be a structure this stage is defined not to produce")
+check("it resends the proposal and the plan every turn",
+      re.search(r"def write_ask\(.*?shot_text=shot_text", planner, re.S) is not None
+      and "ref_text=ref_text" in planner,
+      "-- the plan can be accepted or reverted between two turns of talking")
+check("it returns prose, and no plan key at all",
+      re.search(r'return \{"ok": True, "text": text', planner) is not None
+      and '"shot_plan"' not in planner[planner.index("async def write_ask("):
+                                      planner.index("async def describe_frame(")],
+      "-- a stage that can return a plan is a stage that can surprise")
+check("and a long answer is cut, with a warning",
+      "max_chars" in planner and "was cut at" in planner,
+      "-- at 15 tok/s a 2,000-word reply is four minutes of scrolling, and a "
+      "length instruction the model ignores is only a suggestion")
 
 print()
 if fails:

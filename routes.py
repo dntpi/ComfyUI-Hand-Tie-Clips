@@ -719,10 +719,11 @@ def register():
         # second route is a second place for the "no model selected" answer and
         # the unload policy to drift apart.
         stage = str(body.get("stage") or "develop").strip().lower()
-        if stage not in ("propose", "develop", "edit", "song"):
+        if stage not in ("ask", "propose", "develop", "edit", "song"):
             return web.json_response(
                 {"ok": False,
-                 "error": f"unknown stage {stage!r}: propose, develop, edit, song"},
+                 "error": f"unknown stage {stage!r}: "
+                          f"ask, propose, develop, edit, song"},
                 status=400)
         # The conversation. Bounded server-side as well as in the panel: a
         # hand-rolled client that posts a thousand turns gets the last twelve,
@@ -849,7 +850,16 @@ def register():
                 raise
 
         try:
-            if stage == "song":
+            # ASK comes first: it is the only stage with no special setup at
+            # all, so placing it last would bury it under three branches of
+            # ceremony it does not need.
+            if stage == "ask":
+                out = await _planner.write_ask(
+                    brief, complete_fn=complete_fn, thread=thread,
+                    proposal=proposal, shot_text=cur_shots,
+                    ref_text=cur_refs, images=images,
+                    duration=duration, pin_mech=pin_mech)
+            elif stage == "song":
                 # MV mode's entry point. Measures a song and returns it; writes
                 # nothing. `listen` is off by default and stays off unless the
                 # user asks, because it downloads a stem -- 4/9 sections become

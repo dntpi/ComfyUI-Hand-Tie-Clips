@@ -1895,6 +1895,20 @@ video.h3e-trim-media {
 .h3e-writer-composer { align-items: flex-end; }
 .h3e-writer-chat { flex: 1 1 auto; min-width: 0; }
 
+/* What the composer will do. Built on `.on`, which the rest of the panel
+ * already uses for "this is the chosen one", so the chip reads the same as
+ * every other selected control. */
+.h3e-stage-chips {
+    gap: 4px;
+    align-items: center;
+}
+.h3e-stage-chips button { font-size: var(--h3-fs-xs); padding: 2px 8px; }
+.h3e-stage-chips button.on {
+    border-color: var(--h3-accent);
+    background: color-mix(in srgb, var(--h3-accent) 22%, var(--h3-panel));
+    color: var(--h3-text);
+}
+
 .h3e-writer-row {
     display: flex;
     align-items: center;

@@ -619,6 +619,35 @@ check("and a long answer is cut, with a warning",
       "-- at 15 tok/s a 2,000-word reply is four minutes of scrolling, and a "
       "length instruction the model ignores is only a suggestion")
 
+# --- nInfer's Test (user, 2026-10-11: "the test never turns green") ---
+# nInfer reports no load state, so every model's `loaded` is None and
+# `any(...)` read that as "nothing loaded": the red "wait for nInfer" on
+# every Test, which this file's own section 6b-ii calls a shipped mistake.
+print("\nTest on a server that cannot report load state")
+import ast as _ast
+_llm_tree = _ast.parse(llm)
+_fn = next(n for n in _llm_tree.body
+           if isinstance(n, _ast.FunctionDef) and n.name == "any_loaded")
+_ns = {}
+exec(_ast.get_source_segment(llm, _fn), _ns)
+check("the route reports the tri-state, not any() over Nones",
+      '"any_loaded": _llm.any_loaded(found)' in py)
+check("all states unknown (nInfer) is UNKNOWN, not 'nothing loaded'",
+      _ns["any_loaded"]([{"loaded": None}, {"loaded": None}]) is None,
+      repr(_ns["any_loaded"]([{"loaded": None}])))
+check("one loaded is loaded; all reported unloaded is unloaded",
+      _ns["any_loaded"]([{"loaded": False}, {"loaded": True}]) is True
+      and _ns["any_loaded"]([{"loaded": False}]) is False)
+check("Test turns green when the server answers and nothing says unloaded",
+      re.search(r'testBtn\.classList\.toggle\("h3e-test-ok",\s*'
+                r'Boolean\(conn\.online\) && conn\.any_loaded !== false\)', js)
+      is not None and re.search(r"\.h3e-btn\.h3e-test-ok\s*\{[^}]*--h3-ok",
+                                css_code) is not None,
+      "-- Start promises it; nothing turned it green before")
+check("an unknown load state gets its own message, not the red one",
+      "does not report load state" in js
+      and "conn.any_loaded === false" in js)
+
 print()
 if fails:
     print("WRITER UI: %d check(s) failed." % len(fails))

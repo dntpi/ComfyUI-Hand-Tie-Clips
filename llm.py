@@ -381,10 +381,26 @@ def start_process(model_file=None, name=None, already_checked=False):
         print(f"[{TAG}] started {backend_spec(n)['label']}: {os.path.basename(exe)}",
               flush=True)
         return True, (f"Starting {backend_spec(n)['label']}. A 27B takes about "
-                      f"30 s to load; the panel's Test turns green when it is "
-                      f"ready.")
+                      f"30 s to load; press Test -- it turns green once the "
+                      f"server answers.")
     except Exception as exc:
         return False, f"could not start it: {exc}"
+
+
+def any_loaded(models):
+    """True / False only when the server SAYS; None when it cannot tell.
+
+    nInfer reports no load state, so every `loaded` is None, and `any()` over
+    them read as "nothing loaded": a red "wait for nInfer" on every Test,
+    forever, on a server that was serving. None is unknown, and the panel says
+    so rather than guessing either way.
+    """
+    states = [m.get("loaded") for m in models or ()]
+    if any(s is True for s in states):
+        return True
+    if all(s is None for s in states):
+        return None
+    return False
 
 
 def stop_process(name=None):

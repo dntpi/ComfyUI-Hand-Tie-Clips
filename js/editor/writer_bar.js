@@ -815,6 +815,12 @@ if (!list.length) {
 
         badge.textContent = conn.online
             ? (conn.model || "no model") : "offline";
+        // Green when the server answers and nothing says its model is
+        // unloaded -- the promise Start makes ("Test turns green"), which
+        // nothing kept before. `any_loaded` is null on a server with no state
+        // route (nInfer): answering is all it can tell us, so that is green.
+        testBtn.classList.toggle("h3e-test-ok",
+            Boolean(conn.online) && conn.any_loaded !== false);
         if (announce) {
             const loaded = list.filter((m) => m.loaded === true).length;
             // Name the backend that is actually selected. This said "LM
@@ -833,8 +839,12 @@ if (!list.length) {
                     ? `Server is up, but none of its ${list.length} model(s) `
                       + `are loaded. Wait for ${what} to finish loading the `
                       + `model, or load one in LM Studio.`
-                    : `Server is up — ${loaded} of ${list.length} model(s) `
-                      + `loaded (●).`,
+                    : conn.any_loaded == null
+                        ? `${what} is answering with ${conn.model || "a model"}. `
+                          + `It does not report load state, so a first Write `
+                          + `may wait while the model finishes loading.`
+                        : `Server is up — ${loaded} of ${list.length} model(s) `
+                          + `loaded (●).`,
                 conn.online && conn.any_loaded !== false ? "hint" : "error");
         }
     }

@@ -631,7 +631,7 @@ def register():
                 # picking an unloaded model is picking a 400.
                 "models": found,
                 "online": bool(found),
-                "any_loaded": any(m.get("loaded") for m in found),
+                "any_loaded": _llm.any_loaded(found),
             })
         except Exception as exc:
             print(f"[{TAG}] llm route failed: {exc!r}", flush=True)

@@ -2316,3 +2316,9 @@ video.h3e-trim-media {
 .h3e-root .h3e-tl-remove:hover, .h3e-root .h3e-tl-remove.h3e-tl-armed {
     border-color: var(--h3-error); color: var(--h3-error);
 }
+
+/* Test, once the writer answers (Start promises it turns green). */
+.h3e-btn.h3e-test-ok {
+    border-color: var(--h3-ok);
+    color: var(--h3-ok);
+}

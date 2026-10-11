@@ -4204,9 +4204,11 @@ class HandTieClips:
                 pblock = pblock.rstrip() + " " + _suf
 
             _sh = shots[i] or {}
-            _p_seed0 = ((int(_sh["seed"]) if _sh.get("seed") is not None
-                        else ((int(seed) + i) if seed_per_shot else int(seed)))
-                       + _ht.PREVIS_SEED_OFFSET)
+            # The run seed, never the shot's own: a shot's `seed` is how one hop
+            # is retaken, and reading it here re-rolled the previs, so every hop
+            # of the section, with it (00164: hop 1 could not be retaken alone).
+            _p_seed0 = (((int(seed) + i) if seed_per_shot else int(seed))
+                        + _ht.PREVIS_SEED_OFFSET)
             _p_steps = int(_sh.get("steps") or steps)
             _p_len = int(_lay["previs"])
             # The previs is the one thing every hop follows, so it is checked

@@ -122,6 +122,19 @@ ck("hand-tie: a change stays in its own section (stops at the restart)",
    fc.state.join() === "keeps,keeps,render,render", fc.state.join());
 fc = forecastPlan({ shots: base, rec, now, tie: true });
 ck("hand-tie: nothing edited, nothing re-renders", fc.state.every((s) => s === "keeps"), fc.state.join());
+// A shot's own seed is that hop's alone: the previs reads the run seed (00164).
+const reseed = base.map((s, i) => (i === 0 ? { ...s, seed: 99 } : s));
+fc = forecastPlan({ shots: reseed, rec, now: snapOf(reseed), tie: true });
+ck("hand-tie: a new seed on shot 1 retakes hop 1 alone",
+   fc.state.join() === "render,keeps,keeps,keeps" && fc.cause[0] === "seed changed",
+   fc.state.join() + " " + fc.cause[0]);
+const reseedB = reseed.map((s, i) => (i === 0 ? { ...s, beat: "a2" } : s));
+fc = forecastPlan({ shots: reseedB, rec, now: snapOf(reseedB), tie: true });
+ck("hand-tie: a seed AND a beat edit still moves the section",
+   fc.state.every((s) => s === "render"), fc.state.join());
+fc = forecastPlan({ shots: base, rec, now, seedCtl: "randomize", tie: true });
+ck("hand-tie: a moving run seed moves the previs, even where every shot has its own",
+   fc.state.every((s) => s === "render"), fc.state.join());
 
 ck("framesOf matches DURATION_FRAMES (8 s 192, 5 s 124, 15 s 362, 30 s 719)",
    [framesOf("8 s"), framesOf("5 s"), framesOf("15 s"), framesOf("30 s")].join() === "192,124,362,719");
@@ -157,5 +170,16 @@ fc = forecastPlan({ shots: twelveL, rec: recT, now: snapOf(twelveL), tie: true,
 ck("hand-tie: an edit in section 2 leaves section 1 cached",
    fc.state.join() === "keeps,keeps,keeps,keeps,keeps,keeps,render,render,render,render,render,render",
    fc.state.join());
+const tenS = twelve.slice(0, 10);
+const recTen = recOf(tenS, snapOf(tenS));
+const tenMid = tenS.map((s, i) => (i === 2 ? { ...s, seed: 7 } : s));
+fc = forecastPlan({ shots: tenMid, rec: recTen, now: snapOf(tenMid), tie: true, frames: tenS.map(() => 192) });
+ck("hand-tie: retaking a hop inside a section moves only that hop",
+   fc.state.join() === "keeps,keeps,render,keeps,keeps,keeps,keeps,keeps,keeps,keeps", fc.state.join());
+const tenEnd = tenS.map((s, i) => (i === 4 ? { ...s, seed: 7 } : s));
+fc = forecastPlan({ shots: tenEnd, rec: recTen, now: snapOf(tenEnd), tie: true, frames: tenS.map(() => 192) });
+ck("hand-tie: retaking a section's last hop moves the chained section pinned on it",
+   fc.state.join() === "keeps,keeps,keeps,keeps,render,render,render,render,render,render"
+   && String(fc.cause[5]).includes("the section before it moved"), fc.state.join() + " " + fc.cause[5]);
 
 process.exit(failed ? 1 : 0);

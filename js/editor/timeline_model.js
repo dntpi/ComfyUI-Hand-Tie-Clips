@@ -18,7 +18,9 @@
  * appended shot -- re-renders the whole section. A CHAINED section (anchor=
  * extend, or a run too long for one previs) is pinned on the frames of the hop
  * before it, so a section that moves moves the chained one after it; a restart
- * stops it. `tieSections` mirrors hand_tie.sections().
+ * stops it. `tieSections` mirrors hand_tie.sections(). The one exception is a
+ * shot's own `seed`: the previs reads the run seed, so a seed-only edit retakes
+ * that hop alone -- and, at a section's end, the chained section pinned on it.
  *
  * Anything this cannot see -- a LoRA swapped on the MODEL wire, a reference
  * file replaced on disk under the same name -- the run itself will catch.
@@ -98,6 +100,15 @@ export function shotSig(shot) {
     return JSON.stringify(rest);
 }
 
+/* The snapshot signature `was` and the shot now differ only in `seed`. */
+function seedOnly(was, shot) {
+    const then = parseJson(was);
+    if (!then) return false;
+    const { seed: a, ...restThen } = then;
+    const { seed: b, ...restNow } = parseJson(shotSig(shot)) || {};
+    return JSON.stringify(restThen) === JSON.stringify(restNow);
+}
+
 export function parseJson(text) {
     try {
         const v = JSON.parse(String(text || "").trim() || "null");
@@ -126,8 +137,17 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
     const n = shots.length;
     const isStart = (i) => i === 0 || shots[i]?.anchor === "restart";
     const why = new Map();   // hop index -> reason it moves on its own
-    const note = (i, text) => { if (!why.has(i)) why.set(i, text); };
+    const alone = new Set(); // hand-tie: hops whose only reason is their own seed
+    const note = (i, text, own = false) => {
+        if (own) {
+            if (!why.has(i)) { why.set(i, text); alone.add(i); }
+            return;
+        }
+        if (alone.delete(i)) why.delete(i);
+        if (!why.has(i)) why.set(i, text);
+    };
 
+    let seedMoves = false;
     if (!rec) {
         for (let i = 0; i < n; i++) note(i, "never rendered");
     } else {
@@ -140,7 +160,7 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
                 else chainWide ??= name;
             }
         }
-        const seedMoves = seedCtl !== "fixed" || Boolean(snap && now && snap.seed !== now.seed);
+        seedMoves = seedCtl !== "fixed" || Boolean(snap && now && snap.seed !== now.seed);
         const changedRefs = snap && now
             ? Object.keys({ ...snap.refs, ...now.refs })
                 .filter((t) => snap.refs?.[t] !== now.refs?.[t])
@@ -168,7 +188,10 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
             if (continueWide && !isStart(i)) { note(i, `${continueWide} changed`); continue; }
             if (!snap) continue;
             if (snap.ids?.[i] !== id) { note(i, "shots reordered"); continue; }
-            if (snap.shots?.[id] !== shotSig(s)) { note(i, `shot ${i + 1} edited`); continue; }
+            if (snap.shots?.[id] !== shotSig(s)) {
+                if (!(tie && seedOnly(snap.shots?.[id], s))) { note(i, `shot ${i + 1} edited`); continue; }
+                note(i, "seed changed", true);
+            }
             if (seedMoves && (s.seed == null || s.seed === "")) {
                 note(i, seedCtl !== "fixed"
                     ? `seed is set to ${seedCtl} each queue`
@@ -190,13 +213,15 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         // chained section follows the one before it (it is pinned on its frames).
         let prevMoved = false;
         for (const sec of tieSections(shots, frames)) {
-            let hit = sec.hops.find((k) => why.has(k));
+            let hit = sec.hops.find((k) => why.has(k) && !alone.has(k));
             let cause = hit !== undefined ? why.get(hit) : null;
+            // The previs seed is the run seed, even where every shot has its own.
+            if (cause === null && seedMoves) cause = "the run seed changed";
             if (cause === null && sec.chained && prevMoved) cause = "the section before it moved";
             if (cause !== null) {
                 for (const k of sec.hops) note(k, `the section's previs changes (${cause})`);
             }
-            prevMoved = cause !== null;
+            prevMoved = cause !== null || alone.has(sec.hops[sec.hops.length - 1]);
         }
     }
 
@@ -214,7 +239,8 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         } else if (why.has(i)) {
             m = true;
             c = why.get(i);
-        } else if (i > 0 && moved[i - 1] && !isStart(i)) {
+        } else if (!tie && i > 0 && moved[i - 1] && !isStart(i)) {
+            // (Hand-tie hops do not chain: the sections above already ran it on.)
             m = true;
             c = cause[i - 1];
         }

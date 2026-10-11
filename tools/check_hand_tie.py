@@ -497,6 +497,9 @@ ck("eating without a line, or a line that only TALKS about food, is not",
 ck("run() re-renders a hand-tie hop that cuts, once, on a seed clear of every other",
    "_hcuts = _ht.previs_cuts(imgs)" in src and "shot_seed + _ht.PREVIS_RETRY_STRIDE" in src
    and "len(_c2) < len(_hcuts)" in src)
+ck("the previs seed is the run seed, never a shot's own (00164: hop 1 could not be retaken alone)",
+   "_p_seed0 = (((int(seed) + i) if seed_per_shot else int(seed))" in src
+   and '_p_seed0 = ((int(_sh["seed"])' not in src)
 
 print("\nrefusals")
 ck("overlap 22 + last_frame_guide off is fine", HT.settings_errors(22, "off") == [])

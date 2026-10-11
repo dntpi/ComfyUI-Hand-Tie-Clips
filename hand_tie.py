@@ -65,7 +65,7 @@ SPEECH_WPS = 2.5            # words a second, as planner.SPEECH_WPS
 LEAD_MAX_S = 1.0            # a line starts at most this far ahead of its window
 SPLIT_WPS = 3.5             # H3's speaking rate in a previs: chain_00140 said 7 words between
                             # the line's start and the end of window B, 1.9 s
-PREVIS_SEED_OFFSET = 7919    # previs seed = the section's first hop seed + this
+PREVIS_SEED_OFFSET = 7919    # previs seed = the RUN seed at the section start + this (never a shot seed)
 
 # Whether a moment carries its beat's sound sentence as well as its picture.
 #

@@ -1644,8 +1644,13 @@ video.h3e-trim-media {
 /* A pane fills the scroller instead of sitting in a column of siblings.
  * The `[hidden]` rule is NOT redundant: `display` here beats the attribute's
  * user-agent default, and without it every pane would show at once. */
+/* Grows, never shrinks. `1 1 auto` + `min-height: 0` let a pane shrink to the
+ * scroller's height whatever it held, so a tall one (WRITE with a Layout card,
+ * 2026-10-11) painted past its own background and border, and the scroller
+ * scrolled content that looked cut off. A pane shorter than the scroller still
+ * fills it; a taller one is its own height and the scroller scrolls it. */
 .h3e-pane {
-    flex: 1 1 auto;
+    flex: 1 0 auto;
     min-height: 0;
 }
 .h3e-pane[hidden] { display: none !important; }

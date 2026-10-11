@@ -511,8 +511,16 @@ check("the invariant is stated for every sibling, not just the draft",
       re.search(r"\.h3e-writer-body\s*>\s*\.h3e-writer-draft[^{]*\{[^}]*"
                 r"flex:\s*0 0 auto", css_code) is not None,
       "-- patching one box leaves the next tall sibling to fail the same way")
+# --- 11c. one level up, found by the user on the Layout card (2026-10-11) ---
+# Every child of the WRITE pane kept its height, but the PANE itself was
+# `flex: 1 1 auto; min-height: 0` in the scroller, so it shrank to the
+# scroller's height and its content painted below its own background.
+check("a tab pane grows to fill the scroller but never shrinks below its content",
+      re.search(r"\.h3e-pane\s*\{[^}]*flex:\s*1 0 auto", css_code) is not None,
+      "-- a shrinkable pane draws a tall tab (a Layout card) past its own "
+      "background")
 check("and the thread is still the only thing that shrinks",
-      re.search(r"\.h3e-chat\s*\{[^}]*flex:\s*1 1 auto", css_code) is not None)
+   re.search(r"\.h3e-chat\s*\{[^}]*flex:\s*1 1 auto", css_code) is not None)
 
 # --- 12. D1n: ASK -- a conversation that cannot commit to a plan ------------
 # Free text went to `develop`, the route's else-branch, which writes a plan.

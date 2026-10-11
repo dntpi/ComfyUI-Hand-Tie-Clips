@@ -475,6 +475,23 @@ check("the body is what lets it grow",
 check("a short pane keeps a readable thread rather than crushing it",
       re.search(r"\.h3e-chat\s*\{[^}]*min-height:\s*200px", css_code) is not None)
 
+# --- 11b. D1l regression, found by LOOKING at it: the draft box overflowed ---
+# Making the body a flex column gave every child `flex: 0 1 auto`. When a draft
+# appeared next to a thread holding `flex: 1`, the draft -- which wraps a 46vh
+# scrolling list -- was squeezed smaller than its own content, and having no
+# `overflow` of its own it painted outside its own border.
+check("the draft box cannot be shrunk below its content",
+      re.search(r"\.h3e-writer-draft\s*\{[^}]*flex:\s*0 0 auto", css_code)
+      is not None,
+      "-- a squeezed box with no overflow draws its content on the panel "
+      "behind it, which is what the overlap was")
+check("the invariant is stated for every sibling, not just the draft",
+      re.search(r"\.h3e-writer-body\s*>\s*\.h3e-writer-draft[^{]*\{[^}]*"
+                r"flex:\s*0 0 auto", css_code) is not None,
+      "-- patching one box leaves the next tall sibling to fail the same way")
+check("and the thread is still the only thing that shrinks",
+      re.search(r"\.h3e-chat\s*\{[^}]*flex:\s*1 1 auto", css_code) is not None)
+
 # --- 12. D1n: ASK -- a conversation that cannot commit to a plan ------------
 # Free text went to `develop`, the route's else-branch, which writes a plan.
 # Typing "test" produced a ten-beat film: correct behaviour, and not what

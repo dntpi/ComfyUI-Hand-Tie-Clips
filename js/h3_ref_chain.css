@@ -1889,6 +1889,17 @@ video.h3e-trim-media {
     min-height: 0;
 }
 
+/* The invariant, stated once: in this column ONLY the thread shrinks, because
+   it has an explicit floor and scrolls internally. Everything else keeps its
+   natural height and the pane's own scroller takes the overflow -- which is
+   where it was before the body became a flex column at all.
+
+   Without this, every sibling inherited `flex: 0 1 auto` and a box containing
+   a tall scrolling list got squeezed smaller than its own content. */
+.h3e-writer-body > .h3e-writer-row,
+.h3e-writer-body > .h3e-writer-draft,
+.h3e-writer-body > .h3e-cardbox { flex: 0 0 auto; }
+
 /* The composer. `flex-end` rather than the row's default `center`, so Send
  * sits beside the LAST line of a three-line box instead of floating in the
  * middle of it. */
@@ -1948,6 +1959,14 @@ video.h3e-trim-media {
 .h3e-writer-conn > summary:hover { color: var(--h3-muted); }
 
 .h3e-writer-draft {
+    /* D1l regression, fixed here. Making .h3e-writer-body a flex column gave
+     * every child a default `flex: 0 1 auto`, so when a draft appeared beside
+     * a thread holding `flex: 1`, the draft -- which has a 46vh scrolling list
+     * inside it -- was squeezed smaller than its own content. With no
+     * `overflow` on this box the content spilled out past the border and drew
+     * on the panel behind it. Shrinking it was never wanted: the pane's own
+     * scroller takes the overflow instead, which is where it already was. */
+    flex: 0 0 auto;
     border: 1px solid var(--h3-line);
     border-radius: var(--h3-radius-sm);
     padding: 6px 8px;

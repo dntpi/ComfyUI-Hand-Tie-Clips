@@ -713,13 +713,22 @@ if (!list.length) {
             ? (conn.model || "no model") : "offline";
         if (announce) {
             const loaded = list.filter((m) => m.loaded === true).length;
+            // Name the backend that is actually selected. This said "LM
+            // Studio's Developer tab" for everyone, which is advice for a
+            // server this panel does not even start -- nInfer is launched by
+            // the Start button right here, and a person following the sentence
+            // would go looking for a Developer tab that does not exist.
+            const what = conn.backend_label
+                || (conn.backend === "ninfer" ? "nInfer" : "LM Studio");
+            const how = conn.backend === "ninfer"
+                ? `Press Start writer below.`
+                : `Start it in LM Studio's Developer tab.`;
             say(!conn.online
-                ? `No server at ${conn.server_url}. Start it in LM Studio’s `
-                  + `Developer tab, or write the JSON by hand.`
+                ? `No server at ${conn.server_url}. ${how}`
                 : conn.any_loaded === false
                     ? `Server is up, but none of its ${list.length} model(s) `
-                      + `are loaded. Load one in LM Studio, or turn on `
-                      + `Just-In-Time model loading.`
+                      + `are loaded. Wait for ${what} to finish loading the `
+                      + `model, or load one in LM Studio.`
                     : `Server is up — ${loaded} of ${list.length} model(s) `
                       + `loaded (●).`,
                 conn.online && conn.any_loaded !== false ? "hint" : "error");
@@ -822,8 +831,13 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
     }
 
     // The one call every stage button and every free-text line goes through.
-    // `stage` is null for free text -- the model decides what was asked for,
-    // and the route answers with whichever card it produced.
+    // Free text goes to `develop`, which is the route's own else-branch and the
+    // stage that writes beats. It used to send "chat", on the theory that the
+    // model would work out what was asked for -- but there has never been a
+    // `chat` stage, so every plain sentence died on
+    // `unknown stage 'chat': propose, develop, edit, song` before reaching the
+    // model at all. Typing "a dynamic fight scene" is the most ordinary thing
+    // this box is for, and it was the one input that could not be sent.
     async function sendCanned(stage, text) {
         if (busy) return;
         const msg = String(text || "").trim();
@@ -837,7 +851,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    stage: stage || "chat",
+                    stage: stage || "develop",
                     brief: msg,
                     // The song comes off the node, not from a field the user
                     // has to fill again here: MEDIA owns the soundtrack, and a

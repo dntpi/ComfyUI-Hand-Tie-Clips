@@ -262,6 +262,66 @@ if _llm is not None:
         _llm.CONN.update(_saved_conn)
 
 print()
+# --- 9. D1j: three defects found by pressing the buttons -------------------
+# All three were reported from one sitting at the panel, and all three were
+# invisible to the suite: one only fires when a plan is sent seconds after
+# Start, one only on free text, and one only on a backend that is not
+# LM Studio.
+
+# 9a. Free text sent a stage the route rejects. `sendCanned(null, ...)` posted
+# stage:"chat", there has never been a `chat` stage, and the route whitelists
+# propose/develop/edit/song -- so every ordinary typed sentence came back
+# "unknown stage 'chat'" without reaching the model.
+check("free text does not post a stage the route rejects",
+      re.search(r"stage:\s*stage\s*\|\|\s*[\"']develop[\"']", js) is not None
+      and not re.search(r"stage:\s*stage\s*\|\|\s*[\"']chat[\"']", js),
+      "-- a typed sentence is the most ordinary input there is")
+check("and the route's whitelist matches what the panel sends",
+      all(s in py for s in ('"propose"', '"develop"', '"edit"', '"song"')))
+
+# 9b. The blocking duplicate-27B guard ran from inside the event loop.
+# start_process_async probed correctly, then delegated to start_process, which
+# probed AGAIN through server_running -> asyncio.run() -> RuntimeError, and the
+# coroutine was never awaited. The guard answered "not running" while doing
+# nothing at all, which is the worst state for the one check that stops a
+# second 27B -- and it printed a RuntimeWarning on every Start click.
+check("the Start route does not fall through to a second blocking probe",
+      re.search(r"start_process\([^)]*already_checked\s*=\s*True", llm) is not None,
+      "-- asyncio.run() inside a running loop raises, and the guard silently "
+      "answers 'not running' instead of guarding anything")
+check("start_process can still guard itself when called directly",
+      re.search(r"if not already_checked and server_running\(n\)", llm) is not None,
+      "-- a checker or a button calls it without the flag")
+
+# 9c. The console said the opposite of what was happening. With nothing
+# listening, `model list from ... failed` printed twice per page load in the
+# same red as a fault, directly above `started nInfer`. And when a connection
+# was cut mid-request the panel showed the raw
+# "[WinError 64] The specified network name is no longer available".
+check("a refused model list is not reported as a failure",
+      "no server listening at" in llm,
+      "-- before Start nothing is listening, and that is the normal state")
+check("and it is said once per address, not once per poll",
+      "_MODEL_LIST_NOTE" in llm)
+check("a dropped connection becomes a sentence a person can act on",
+      re.search(r"closed the connection before it answered", llm) is not None,
+      "-- WinError 64 is the socket layer talking to itself")
+check("WinError 64 is classified as a dropped connection",
+      "64" in llm.split("_RESET_ERRNOS")[1][:80],
+      "-- it is the exact error the panel showed")
+check("an ordinary error is NOT called a dropped connection",
+      re.search(r"if _dropped_connection\(exc\):", llm) is not None
+      and re.search(r"_dropped_connection.*\n.*?raise LLMError\(f\"request failed",
+                    llm, re.S) is not None,
+      "-- a JSON parse error is not a severed socket")
+
+# 9d. The offline copy told nInfer users to open an LM Studio tab.
+check("the offline message names the panel's own Start button for nInfer",
+      re.search(r"Press Start writer", js) is not None,
+      "-- nInfer has no Developer tab; the sentence sends people looking for "
+      "a window that does not exist")
+
+print()
 if fails:
     print("WRITER UI: %d check(s) failed." % len(fails))
     sys.exit(1)

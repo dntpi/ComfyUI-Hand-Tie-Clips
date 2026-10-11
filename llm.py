@@ -310,24 +310,38 @@ async def start_process_async(model_file=None, name=None):
     n = backend_name(name or CONN.get("backend"))
     if await server_running_async(n):
         return True, f"{backend_spec(n)['label']} is already running."
-    return start_process(model_file=model_file, name=n)
+    return start_process(model_file=model_file, name=n, already_checked=True)
 
 
-def start_process(model_file=None, name=None):
+def start_process(model_file=None, name=None, already_checked=False):
     """Start the writer server for this backend. Returns (ok, message).
 
     Explicit only: called from the panel's button and from the route that
     button posts to. Nothing queues a render, and nothing saves a setting, and
     a request for a plan does not -- a plan request with the server down says
     so and names the button, because silently spending 30 s loading a 27B in
-    response to a mis-click is its own kind of cost.
+    response to a mis-click is its own own kind of cost.
+
+    `already_checked=True` means the caller has just awaited the liveness probe
+    and knows the answer. Without it the guard below runs -- and the guard is
+    BLOCKING, so calling this from an aiohttp handler put a socket timeout on
+    the event loop. That is what produced
+
+        RuntimeWarning: coroutine 'server_running_async' was never awaited
+
+    on every Start click: `asyncio.run()` raised RuntimeError because a loop was
+    already running, the coroutine it was handed was never awaited, and the
+    guard silently answered "not running". The answer happened to be right,
+    because the async wrapper had already asked and found the same thing, but
+    the guard was doing nothing at all -- which is the worst state for the one
+    check that stops a second 27B.
 
     Never raises. It is called from a route handler and from a button.
     """
     import os
     import subprocess
     n = backend_name(name or CONN.get("backend"))
-    if server_running(n):
+    if not already_checked and server_running(n):
         return True, f"{backend_spec(n)['label']} is already running."
     exe = _server_exe(n)
     if not exe:
@@ -763,6 +777,57 @@ class LLMError(RuntimeError):
     status line."""
 
 
+def _start_hint():
+    """Where to press, for the backend that is actually selected.
+
+    "Developer tab -> Start Server" is an instruction about a window this panel
+    does not own and nInfer does not have. For nInfer the only Start button that
+    works is in this panel, so saying anything else sends the person to look for
+    a tab that does not exist.
+    """
+    n = backend_name(CONN.get("backend"))
+    if n == "ninfer":
+        return "Press Start writer in this panel."
+    return "Start it in LM Studio's Developer tab."
+
+
+# Windows socket errors that all mean the same thing to the person at the
+# keyboard: the connection was cut rather than refused. 64 and 10054 are
+# WSAENETDOWN / "connection reset by peer"; 10053 is WSAECONNABORTED. On a
+# local server the usual cause is not a network at all -- the backend accepted
+# the socket and dropped it while a 27B was still being loaded, which is
+# exactly what happens when a plan is sent seconds after Start.
+_RESET_ERRNOS = frozenset({64, 10053, 10054, 1041})
+
+# Last thing the model-list fetch said, so the panel polling a server that is
+# not started does not fill the console with the same sentence on every tick.
+_MODEL_LIST_NOTE = {"key": None}
+
+
+def _dropped_connection(exc):
+    """A readable sentence for a severed connection, or None."""
+    if isinstance(exc, (ConnectionResetError, ConnectionAbortedError,
+                        BrokenPipeError)):
+        return True
+    win = getattr(exc, "winerror", None)
+    if win is None:
+        win = getattr(getattr(exc, "os_error", None), "winerror", None)
+    if win in _RESET_ERRNOS:
+        return True
+    # aiohttp wraps the real error one or two layers down.
+    for name in ("__cause__", "__context__"):
+        inner = getattr(exc, name, None)
+        if inner is not None and inner is not exc:
+            if isinstance(inner, (ConnectionResetError, ConnectionAbortedError,
+                                  BrokenPipeError)):
+                return True
+            if getattr(inner, "winerror", None) in _RESET_ERRNOS:
+                return True
+            if _dropped_connection(inner):
+                return True
+    return False
+
+
 def normalise_base(url):
     """Store the server root, never the `/v1` suffix.
 
@@ -817,8 +882,18 @@ async def _post(session, url, body, timeout):
     except aiohttp.ClientConnectorError as exc:
         raise LLMError(
             f"no server at {url.rsplit('/v1', 1)[0]} -- is {active_label()}'s server "
-            f"started? (Developer tab -> Start Server)") from exc
+            f"started? {_start_hint()}") from exc
     except Exception as exc:  # timeout, DNS, reset connection
+        # `request failed: [WinError 64] The specified network name is no longer
+        # available` is what the panel showed for a plain send-while-loading.
+        # Every word of it is the socket layer talking to itself; none of it
+        # tells the person that the fix is to wait for the model.
+        if _dropped_connection(exc):
+            raise LLMError(
+                f"{active_label()} closed the connection before it answered. "
+                f"If it was just started, it is probably still loading the "
+                f"model -- wait until the status line says a model is loaded, "
+                f"then send again. ({exc})") from exc
         raise LLMError(f"request failed: {exc}") from exc
 
 
@@ -879,7 +954,24 @@ async def models(base_url):
             if not data:
                 return []
     except Exception as exc:
-        print(f"[{TAG}] model list from {base} failed: {exc}", flush=True)
+        # Nothing listening is the normal state of this pack before Start, and
+        # the panel calls this route on mount. It printed
+        #
+        #   [HandTieClips] model list from http://127.0.0.1:8080 failed:
+        #   Cannot connect to host ... The remote computer refused the connection
+        #
+        # twice per page load, in the same red as a real fault, immediately
+        # above `started nInfer` -- so the one line that said the server had
+        # come up was sandwiched between two lines saying it had not. The
+        # refusal is expected, the panel already answers it with `online: false`
+        # and "Press Start writer below", and it is said once per address
+        # rather than on every poll.
+        refused = isinstance(exc, aiohttp.ClientConnectorError) or "refused" in str(exc).lower()
+        note = f"no server listening at {base}" if refused else f"model list from {base} failed: {exc}"
+        key = (base, bool(refused))
+        if _MODEL_LIST_NOTE.get("key") != key:
+            _MODEL_LIST_NOTE["key"] = key
+            print(f"[{TAG}] {note}", flush=True)
         return []
 
     seen = []

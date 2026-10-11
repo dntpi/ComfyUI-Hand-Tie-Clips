@@ -321,6 +321,60 @@ check("the offline message names the panel's own Start button for nInfer",
       "-- nInfer has no Developer tab; the sentence sends people looking for "
       "a window that does not exist")
 
+# --- 10. D1k: a rejected schema is remembered, not re-learned every time -----
+# On nInfer the propose burned 568 s and then said so:
+#   [INFO] Prompt executed in 568.09 seconds
+#   [HandTieClips] server rejected structured output; retrying without it
+# The repair loop dropped response_format and re-posted the SAME prompt, so
+# the cost was the failed attempt plus the real one -- and it would repeat on
+# every single generate, because nothing remembered.
+check("the body skips response_format on a server that refused it",
+      re.search(r"if schema is not None and structured_supported\(\):", llm) is not None,
+      "-- every generate pays a full wasted generation to relearn this")
+check("the refusal is recorded, keyed by ADDRESS not by backend name",
+      "_NO_STRUCTURED" in llm and "_active_base()" in llm,
+      "-- two servers of the same kind can differ; backend_name would poison "
+      "both from one 4xx")
+check("an unknown server still gets the schema",
+      re.search(r"return _active_base\(\) not in _NO_STRUCTURED", llm) is not None,
+      "-- assuming the worst costs the retry we already had")
+check("the log says the offer is withdrawn",
+      "Not offering it to this" in llm and "server again until ComfyUI restarts" in llm,
+      "-- a silent behaviour change looks like the panel misreading")
+
+# And it must only be believed when the server NAMED the schema. A 404, a 401
+# or a 400 for an unloaded model all land on the same branch, and any of them
+# would permanently disable a capability the server does have.
+# And it must only be believed when the server NAMED the schema. A 404, a 401
+# or a 400 for an unloaded model all land on the same branch, and any of them
+# would permanently disable a capability the server does have.
+#
+# This has to be checked STRUCTURALLY. Checking that `blames_schema =` exists
+# passes when the line is there and nothing reads it -- which is exactly what
+# the negative test found when `if blames_schema:` was replaced by `if True:`.
+_BS = llm.find("blames_schema = any(")
+_GUARD = llm.find("if blames_schema:")
+_RECORD = llm.find("_NO_STRUCTURED.add(")
+# Search for the retry AFTER the guard. A whole-file find() finds an earlier
+# `schema=None` elsewhere in the module and compares a false pair.
+_RETRY = llm.find("schema=None", _GUARD) if _GUARD > 0 else -1
+check("a 4xx alone is not enough to remember it",
+      _BS > 0 and _GUARD > _BS and _RECORD > _GUARD,
+      "-- 'HTTP 4' also covers a wrong path, a refused key, and a model that "
+      "is not loaded; any of those would downgrade every later generate")
+check("...and the remembering actually sits INSIDE that guard",
+      _GUARD > 0 and _RECORD > _GUARD and llm[_GUARD:_RECORD].count("\n") <= 8,
+      "-- an assignment nobody branches on is a comment")
+for _w in ("response_format", "json_schema", "unsupported"):
+    check("...and it listens for %r" % _w, ('"%s"' % _w) in llm)
+check("...but still retries without the schema when it is something else",
+      _RETRY > _RECORD > 0,
+      "-- the retry must still happen; only the REMEMBERING is conditional")
+check("the key is the address, not the backend name",
+      re.search(r"_NO_STRUCTURED\.add\(_active_base\(\)\)", llm) is not None
+      and re.search(r"_NO_STRUCTURED\.add\((?:\"ninfer\"|'ninfer')\)", llm) is None,
+      "-- one 4xx on one port would downgrade a second server on another")
+
 print()
 if fails:
     print("WRITER UI: %d check(s) failed." % len(fails))

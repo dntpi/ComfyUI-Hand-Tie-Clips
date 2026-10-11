@@ -828,6 +828,41 @@ def _dropped_connection(exc):
     return False
 
 
+# Servers that have already refused `response_format`, keyed by address.
+#
+# This is not a per-model or per-version setting, it is a property of whatever
+# is listening on that port, and it was costing a whole generation to discover
+# every time. The repair loop dropped the schema and re-posted the identical
+# prompt, so the cost of one propose on a backend without structured output
+# was the failed attempt PLUS the real one:
+#
+#   [INFO] Prompt executed in 568.09 seconds
+#   [HandTieClips] server rejected structured output; retrying without it
+#
+# Nine and a half minutes thrown away to learn something that was still true
+# on the next click. The finding is remembered for the session instead, so
+# only the first generate pays it.
+_NO_STRUCTURED = set()
+
+
+def structured_supported():
+    """Whether this address has accepted `response_format` before.
+
+    Unknown addresses are assumed to support it, because that is the common
+    case and guessing wrong in this direction only costs the same one retry we
+    already had.
+    """
+    return _active_base() not in _NO_STRUCTURED
+
+
+def _active_base():
+    n = backend_name(CONN.get("backend"))
+    base = normalise_base(
+        (CONN.get("servers") or {}).get(n, {}).get("server_url")
+        or backend_spec(n)["default_base"])
+    return base
+
+
 def normalise_base(url):
     """Store the server root, never the `/v1` suffix.
 
@@ -1001,7 +1036,7 @@ def _chat_body(model, messages, *, schema, temperature, max_tokens):
     # unloaded a 26B model ~30s after the prompt finished, while its panel still
     # reported the writer warm. Lifetime is this pack's to manage, on the
     # explicit unload below.
-    if schema is not None:
+    if schema is not None and structured_supported():
         body["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": "hand_tie_clips_plan", "strict": True,
@@ -1241,8 +1276,24 @@ async def complete(base_url, model, messages, *, schema=None,
                     raise
 
             if schema is not None and "HTTP 4" in note:
-                print(f"[{TAG}] server rejected structured output; retrying "
-                      f"without it", flush=True)
+                # Only remember it when the server actually named the thing it
+                # did not like. "HTTP 4" on its own is not enough: a 404 for a
+                # wrong path, a 401, or a 400 for a model that is not loaded all
+                # land here, and any of those would permanently disable a
+                # capability the server does have. Getting that wrong costs
+                # every generate from then on a weaker JSON contract.
+                blames_schema = any(k in note.lower() for k in (
+                    "response_format", "json_schema", "schema",
+                    "unsupported", "not supported", "unrecognized",
+                    "extra inputs", "not permitted", "unknown field"))
+                if blames_schema:
+                    # Remember it BEFORE retrying. The retry is the expensive
+                    # half and it will be identical next time; the whole point
+                    # is that the second click starts without the schema.
+                    _NO_STRUCTURED.add(_active_base())
+                    print(f"[{TAG}] server rejected structured output; "
+                          f"retrying without it. Not offering it to this "
+                          f"server again until ComfyUI restarts.", flush=True)
                 data = await _post(
                     session, url,
                     _chat_body(model, messages, schema=None,

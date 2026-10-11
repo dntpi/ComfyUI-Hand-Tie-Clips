@@ -883,5 +883,85 @@ console.log("\nmount: every tab renders");
   }
 }
 
+/* -- D1i: clearing a slot clears the dropdown too -------------------------- */
+
+console.log("\nmount: D1i clear repaints the dropdown");
+
+{
+  // A filled FIRST FRAME slot, so there is a name to lose. The media widget
+  // names have to exist BEFORE the mount: media_strip reads its slot table once
+  // at construction and skips any name it cannot find.
+  const node = withWidgets(makeNode(), {
+    shot_plan: planJSON(3), ref_plan: REF_PLAN, chains: 3,
+  });
+  for (const name of [
+    "start_image_file", "reference_video_file", "voice_file", "voice_2_file",
+    "voice_3_file", "soundtrack_file", "master_audio_file",
+  ]) {
+    if (!node.widgets.find((w) => w.name === name)) {
+      node.widgets.push({ name, type: "custom", value: "" });
+    }
+  }
+  node.widgets.find((w) => w.name === "start_image_file").value = "photo.png";
+  mount(node);
+  const root = node.domWidgets[0];
+
+  const findAll = (cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+
+  const sel = findAll("h3e-pickfile")[0];
+  ck("the picker dropdown exists", !!sel);
+  // With no /files response the list is empty, but paintList still runs on the
+  // fallback path and must land on "— none —" once the widget is empty.
+  //
+  // The FIRST pickfile and the FIRST thumb-x belong to the FIRST slot
+  // (start_image_file), which is the one holding a name here. Scoping matters:
+  // an unscoped query can pair a dropdown from one slot with a clear button
+  // from another, which is how this test passed while asserting nothing.
+  // Find the slot that holds the file, by walking for the clear button itself.
+  // NOT by textContent (a cell's text lives in child spans and a parent's
+  // textContent does not aggregate -- the D4 batch-bar trap) and NOT by a fixed
+  // nesting depth (the thumb, the picker and the button are at different depths
+  // depending on which fields a slot has).
+  const cell = findAll("h3e-media-cell").find((c) => {
+    let hit = false;
+    const w = (e) => { if (!e) return; if (e.classList?.contains("h3e-thumb-x")) hit = true; (e.children || []).forEach(w); };
+    w(c);
+    return hit;
+  });
+  ck("the slot holding the file is found", !!cell,
+     `${findAll("h3e-media-cell").length} cells, none with a clear button`);
+  const x = cell
+    ? (function () {
+        let found = null;
+        const w = (e) => { if (!e) return; if (e.classList?.contains("h3e-thumb-x")) found = e; (e.children || []).forEach(w); };
+        w(cell);
+        return found;
+      })()
+    : null;
+  ck("a filled slot offers a clear button", !!x);
+
+  if (sel && x) {
+    x.fire("click", {});
+    ck("clearing empties the widget",
+       node.widgets.find((w) => w.name === "start_image_file").value === "",
+       `value is ${JSON.stringify(node.widgets.find((w) => w.name === "start_image_file").value)}`);
+    // The dropdown must not still be offering the old name.
+    const opts = sel.children.map((o) => o.value);
+    ck("and the dropdown no longer offers the cleared name",
+       !opts.includes("photo.png"), JSON.stringify(opts));
+    ck("and it sits on the blank option",
+       sel.value === "", `value is ${JSON.stringify(sel.value)}`);
+  }
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

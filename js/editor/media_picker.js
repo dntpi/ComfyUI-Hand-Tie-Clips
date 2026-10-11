@@ -220,6 +220,12 @@ export function createPicker({ kind = "image", get, set, onChange, title } = {})
                 e.stopPropagation();
                 set("");
                 paint();
+                // D1i: repaint the DROPDOWN too. Clearing only repainted the
+                // thumbnail, so the row said `empty` on the left and still
+                // listed the old filename on the right -- and the next Save
+                // wrote that filename back into shot_plan, which is the exact
+                // thing the user had just undone.
+                paintList(_files || []);
                 onChange?.();
             }, "h3e-btn h3e-thumb-x");
             thumb.appendChild(x);
@@ -244,6 +250,12 @@ export function createPicker({ kind = "image", get, set, onChange, title } = {})
         }
         // A name that is no longer on disk still has to be selectable, or
         // switching away from it would look like the value was never set.
+        //
+        // ONLY when the widget still holds it. When the widget is EMPTY the
+        // slot is cleared, and re-adding the old name put "Screenshot…png" in
+        // a dropdown whose thumbnail said `empty` -- the panel contradicting
+        // itself on the same row, and clicking Save would write the filename
+        // back into shot_plan that the user had just cleared.
         if (name && !found) {
             const o = el("option", null, `${name} (missing)`);
             o.value = name;
@@ -270,6 +282,14 @@ export function createPicker({ kind = "image", get, set, onChange, title } = {})
         try {
             const got = await upload(list.slice(0, 1));
             if (got.length) {
+                // D1i: the server dedups by content, so the name it hands back
+                // can differ from the file that was dropped -- that file is
+                // already in the folder under another name. Say so, or the slot
+                // looks like it silently substituted a different picture.
+                if (got[0].deduped) {
+                    console.info(`[HandTieClips] ${list[0] && list[0].name} is `
+                        + `already in the folder as ${got[0].name}; using that one.`);
+                }
                 set(got[0].name);
                 onChange?.();
             }

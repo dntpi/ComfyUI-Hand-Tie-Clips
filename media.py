@@ -683,6 +683,80 @@ def unique_path(directory, filename):
     return path
 
 
+def _hash_of(path, _cache=None):
+    """sha256 of a file, or "" if it cannot be read. -> hex str.
+
+    Streamed in chunks because these are 22 GB video files and a full read would
+    be a second copy in memory -- which is the exact thing the upload route
+    spends 22 GB avoiding.
+    """
+    import hashlib  # noqa: PLC0415
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def find_by_hash(directory, hexed, _cache=None):
+    """The name of an existing file in `directory` with this sha256, or None.
+
+    This is what stops the folder filling with copies of files already in it.
+    `unique_path` only ever appended a suffix, so the same picture dropped
+    twice became `photo.png` and `photo_1.png` -- and again on the third drop.
+
+    The cache is keyed by (name, size, mtime) rather than by name alone,
+    because a file the author replaced under the same name must not be reported
+    as the old one. A miss costs a hash; there are never many files here, so a
+    full scan is cheaper than maintaining an index that can go stale.
+    """
+    if not hexed:
+        return None
+    cache = _HASH_CACHE if _cache is None else _cache
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if name.startswith(".upload_") or name.endswith(".part"):
+            continue          # an upload in flight is not a candidate
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if not os.path.isfile(path):
+            continue
+        key = (name, st.st_size, int(st.st_mtime_ns))
+        digest = cache.get(key)
+        if digest is None:
+            digest = _hash_of(path)
+            cache[key] = digest
+        if digest == hexed:
+            return name
+    return None
+
+
+def claim_for_hash(directory, filename, hexed):
+    """The path a NEW (non-duplicate) file should take.
+
+    Prefer the name as asked for, so an upload lands where the user would
+    expect it rather than always under a suffix. On collision -- the same name
+    already held by a DIFFERENT file -- fall back to the suffixing search,
+    because overwriting would change what an existing plan renders from.
+    """
+    name = os.path.basename(str(filename or "").strip()) or "upload"
+    path = os.path.join(directory, name)
+    if not os.path.exists(path):
+        return path
+    other = _hash_of(path)
+    if other and hexed and other == hexed:
+        return path          # same bytes; the caller's dedup check caught it
+    return unique_path(directory, name)
+
+
+_HASH_CACHE = {}
+
+
 def shrink_image(path):
     """Re-encode an oversized still in place. -> (final_path, w, h).
 

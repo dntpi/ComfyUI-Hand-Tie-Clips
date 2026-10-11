@@ -20,6 +20,9 @@ ROOT = os.path.dirname(HERE)
 JS = os.path.join(ROOT, "js", "editor", "writer_bar.js")
 PY = os.path.join(ROOT, "routes.py")
 LLM = os.path.join(ROOT, "llm.py")
+# D1l. The composer's size and the thread's growth are both CSS, so the
+# checks for them cannot read the JS.
+CSS = os.path.join(ROOT, "js", "h3_ref_chain.css")
 
 fails = []
 
@@ -32,6 +35,13 @@ def src(path):
 js = src(JS)
 py = src(PY)
 llm = src(LLM)
+css = src(CSS)
+# Structural CSS checks read `css_code`, never `css`. A rule's own comment is
+# allowed to NAME the value it replaced -- that is the most useful comment
+# there is -- and a check that greps the raw file cannot tell a declaration
+# from a sentence about one. The first version of the D1l floor check failed
+# on its own comment saying "was max-height: 260px".
+css_code = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
 
 
 def check(name, cond, why=""):
@@ -374,6 +384,59 @@ check("the key is the address, not the backend name",
       re.search(r"_NO_STRUCTURED\.add\(_active_base\(\)\)", llm) is not None
       and re.search(r"_NO_STRUCTURED\.add\((?:\"ninfer\"|'ninfer')\)", llm) is None,
       "-- one 4xx on one port would downgrade a second server on another")
+
+# --- 11. D1l: the composer takes a paragraph, the reply takes the pane ------
+# Two boxes, opposite ends, and both were too small. The composer was a
+# single-line <input>, which cannot hold a paragraph of brief or a piece of
+# dialogue, and the thread was capped at max-height: 260px -- four scrolls to
+# read a reply, on a tab whose whole purpose is the reply.
+check("the composer is a textarea, not a one-line input",
+      re.search(r'el\("textarea",\s*"h3e-writer-chat"\)', js) is not None
+      and 'el("input", "h3e-writer-chat")' not in js,
+      "-- a one-liner truncates a pasted brief with no way to see what is there")
+check("and it has room to type into",
+      re.search(r"\.h3e-writer-chat\s*\{[^}]*flex:\s*1 1 auto", css_code) is not None
+      and re.search(r"\.h3e-writer-chat\s*\{[^}]*min-width:\s*0", css_code) is not None)
+check("Send sits beside the last line, not the middle",
+      re.search(r"\.h3e-writer-composer\s*\{\s*align-items:\s*flex-end", css)
+      is not None,
+      "-- a 3-line box with a vertically centred button reads as misaligned")
+
+# Enter must still send -- this box has always done that, and changing it
+# would be a surprise. Shift+Enter is the newline.
+_kd = js[js.index('el("textarea", "h3e-writer-chat")'):]
+_kd = _kd[:_kd.index("chatRow.appendChild")]
+check("Enter still sends",
+      "e.key !== \"Enter\"" in _kd and "sendCanned(null, chat.value)" in _kd,
+      "-- the box has always sent on Enter")
+check("Shift+Enter is a newline, not a turn",
+      re.search(r"e\.key\s*!==\s*\"Enter\"\s*\|\|\s*e\.shiftKey", _kd) is not None,
+      "-- without the modifier test the textarea posts an empty turn per line")
+check("the newline is not swallowed either",
+      "e.preventDefault()" in _kd,
+      "-- a bare `return` above it would still let Enter submit the form")
+# IME: on a Japanese or Chinese keyboard Enter COMMITS the candidate. Without
+# this, composing a sentence ate the character and posted a blank turn -- and
+# the character is lost, not just unsent.
+check("Enter does not fire while an IME candidate is being composed",
+      "e.isComposing" in _kd and "229" in _kd,
+      "-- a CJK keyboard loses the composed character and sends an empty turn")
+
+# The thread grows into the pane instead of being capped.
+_cs = css_code[css_code.index(".h3e-chat {"):]
+_cs = _cs[:_cs.index("}")]
+check("the thread has a floor, not a ceiling",
+      re.search(r"min-height:\s*\d+px", _cs) is not None
+      and "max-height" not in _cs,
+      "-- max-height: 260px was a number nobody had measured against a reply")
+check("and it is the thing that grows",
+      re.search(r"flex:\s*1 1 auto", _cs) is not None)
+check("the body is what lets it grow",
+      re.search(r"\.h3e-writer-body\s*\{[^}]*display:\s*flex", css_code) is not None
+      and re.search(r"\.h3e-writer-body\s*\{[^}]*flex:\s*1 1 auto", css_code) is not None,
+      "-- flex:1 on a child of a static parent buys nothing")
+check("a short pane keeps a readable thread rather than crushing it",
+      re.search(r"\.h3e-chat\s*\{[^}]*min-height:\s*200px", css_code) is not None)
 
 print()
 if fails:

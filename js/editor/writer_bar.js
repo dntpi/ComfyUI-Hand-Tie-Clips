@@ -83,15 +83,29 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
         () => sendCanned("song", "measure this song")));
     body.appendChild(stageRow);
 
-    const chatRow = el("div", "h3e-writer-row");
-    const chat = el("input", "h3e-writer-chat");
-    chat.type = "text";
+    // The composer is a TEXTAREA, not an input. A single-line box cannot hold a
+    // paragraph of brief, a piece of dialogue, or anything pasted -- and a
+    // paste into a one-liner is either truncated or scrolls off with no way
+    // to see what is there. Enter still sends, because that is what this box
+    // has always done and changing it would be a surprise; Shift+Enter is the
+    // newline, which is the convention every other chat box uses and the only
+    // reason to make this a textarea at all.
+    const chatRow = el("div", "h3e-writer-row h3e-writer-composer");
+    const chat = el("textarea", "h3e-writer-chat");
+    chat.rows = 3;
+    chat.spellcheck = true;
     chat.placeholder = "talk to the writer — an idea, a change, a line of "
-        + "dialogue… (Enter sends)";
+        + "dialogue… (Enter sends, Shift+Enter a new line)";
     chat.title = "Free text. The model sees this conversation, the proposal "
         + "you accepted and the plan as it stands.";
     chat.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter") return;
+        // Enter sends, Shift+Enter breaks the line. Without the modifier test
+        // this box is a one-line input with extra steps, and every newline
+        // would post a turn the user did not mean to send.
+        if (e.key !== "Enter" || e.shiftKey) return;
+        // IME: a Japanese or Chinese keyboard's Enter COMMITS the candidate.
+        // Sending there ate the composed character and posted an empty turn.
+        if (e.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         e.stopPropagation();
         sendCanned(null, chat.value);

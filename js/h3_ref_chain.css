@@ -1026,7 +1026,13 @@ details.h3e-run-group[open] > .h3e-run-label::before { transform: rotate(90deg);
     display: flex;
     flex-direction: column;
     gap: var(--h3-gap-sm);
-    max-height: 260px;
+    /* D1l: was `max-height: 260px`, a fixed number I had never measured
+       against a reply. It grows into the pane now, with a floor rather than a
+       ceiling -- in a short pane the min-height keeps it readable and the
+       pane's own scroller takes over. A ceiling means the window never grows;
+       a floor means it never vanishes. */
+    flex: 1 1 auto;
+    min-height: 200px;
     overflow-y: auto;
     padding: var(--h3-gap-sm);
     border: 1px solid var(--h3-border-soft);
@@ -1872,7 +1878,22 @@ video.h3e-trim-media {
 .h3e-writer[open] > summary::after { content: "▾"; }
 .h3e-writer > summary:hover .h3e-title { color: var(--h3-text); }
 
-.h3e-writer-body { padding-top: var(--h3-gap); }
+.h3e-writer-body {
+    padding-top: var(--h3-gap);
+    /* D1l: so the thread can TAKE the pane instead of being capped at 260px.
+       The reply is the thing this tab exists for, and after D1k it can be a
+       nine-minute one. A 260px window is four scrolls to read it. */
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* The composer. `flex-end` rather than the row's default `center`, so Send
+ * sits beside the LAST line of a three-line box instead of floating in the
+ * middle of it. */
+.h3e-writer-composer { align-items: flex-end; }
+.h3e-writer-chat { flex: 1 1 auto; min-width: 0; }
 
 .h3e-writer-row {
     display: flex;

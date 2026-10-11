@@ -1500,7 +1500,9 @@ def main():
     print("write_swap_plan -- one hop, no register")
     async def swap_ok(messages, schema=None):
         return json.dumps({"shot_plan": {"shots": [{
-            "beat": "She stands like @her_face and turns toward the light.",
+            "beat": ("The subject stands looking like @her_face and turns toward "
+                     "the light. The face and hair of @her_face are the "
+                     "subject's own."),
             "directives": {"tail": "settle"},
             "refs": ["her_face"],
         }]}})
@@ -1516,7 +1518,8 @@ def main():
     async def swap_with_rail(messages, schema=None):
         return json.dumps({
             "shot_plan": {"shots": [{
-                "beat": "She stands like @her_face.",
+                "beat": ("The subject stands looking like @her_face. The face "
+                         "of @her_face is the subject's own."),
                 "directives": {"tail": "hold"},
                 "refs": ["her_face"],
             }]},

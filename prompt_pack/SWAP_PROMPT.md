@@ -75,6 +75,16 @@ So every mode that swaps somebody names the tag **twice**:
 and it has been observed to render the clip's own person unchanged. Do not
 write the identity as a possessive aside.
 
+## One subject, and no pronouns
+
+Refer to the swapped person as "the subject" or by @tag every time, never as
+he, she or they. A pronoun gives the encoder nothing to bind, and a plural
+"they" has rendered two people from one photograph.
+
+If the clip shows more than one person, the swap is the one the brief names;
+with no brief, the most prominent one. Describe anyone else as "a second
+figure" by what they do, with no tag, and keep them doing it.
+
 ## If the swap only takes hold part-way through
 
 Not something you can fix in the beat, but worth knowing why the beat is not
@@ -117,10 +127,31 @@ it drapes on the body in frame, creases where that body bends, and moves
 with the action. Where a change reveals skin that was not in frame before,
 that skin belongs to the person wearing it.
 
+## Sound and speech
+
+The user message says whether the clip has its own sound. If it does, that
+sound goes into the generate with the clip: name it in the beat (the music,
+the room) so the beat and the clip agree. If it is silent, name one specific
+sound for the hop.
+
+Write a spoken line only when the brief gives the words, in the contract's
+form: `(S1) says, <d>[English] the words.</d>`. The clip's mouth is moving to
+its own audio, and a line you invent fights both.
+
 ## What the shot is
 
 One hop. The hop length is named in the user message; fill that duration.
 This is the last shot, so `tail` is `settle` or `hold`.
+
+If the user message says the clip is shorter than the hop, the clip's motion
+ends there: write how the action carries on from its last frame, in the same
+place, for the seconds after.
+
+`camera` and `framing` are optional, and each adds a sentence the encoder
+follows. Set one only when it describes what the clip already does (a clip
+that pans gets `pan`, a close clip gets `close`); a held camera or a medium
+frame on a clip that moves or sits close fights it, the same way a still
+pose does.
 
 The action, place and motion follow the
 frame. Scene text inside `<scene_brief>` may redirect those three and
@@ -135,28 +166,28 @@ Omit `join` (shot 1 has nothing to join to). Omit `anchor`. Omit `id`.
 ## Duration
 
 A beat has to fill the hop. Written short, the model finishes early and
-settles on the identity photograph. Count the words and write the count
-down.
+settles on the identity photograph. Count the words before you answer; the
+count is for you, never part of the beat.
 
-| hop | words in the beat | spoken lines |
-|---|---|---|
-| `5 s` | 30-45 | 1 |
-| `7 s` | 30-55 | 1 |
-| `8 s` | 35-60 | 1-2 |
-| `10 s` | 45-75 | 2 |
-| `15 s` | 70-100 | 2-3 |
-
-If the user asked for a wordless hop, write zero spoken lines, name a
-specific narrowband sound, and ignore the spoken-lines column. Do not write
-"no dialogue".
+| hop | words in the beat |
+|---|---|
+| `5 s` | 30-45 |
+| `7 s` | 30-55 |
+| `8 s` | 35-60 |
+| `10 s` | 45-75 |
+| `15 s` | 70-100 |
 
 ## Reply shape
 
 One JSON object, no markdown fences required:
 
 ```json
-{"shot_plan": {"shots": [{"beat": "...", "directives": {"camera": "hold", "framing": "medium", "pace": "steady", "tail": "settle"}, "refs": ["identity_tag"]}]}}
+{"shot_plan": {"shots": [{"beat": "...", "directives": {"tail": "settle"}, "refs": ["identity_tag"]}]}}
 ```
 
 Optional, on its own line after the JSON: `VIDEO_DESC: ` plus one sentence
-saying what the clip is for (the action to copy, not the person's face).
+saying what the clip is for: the action, the movement, the setting and the
+light. Call the person "the subject". Their sex, age, build, face, hair and
+clothing stay out of it -- this sentence reaches the encoder as what
+`<Video 1>` is, and a caption describing the clip's person asks for that
+person.

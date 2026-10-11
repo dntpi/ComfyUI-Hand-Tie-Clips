@@ -1125,6 +1125,8 @@ def register():
 
         import asyncio
 
+        clip = {}
+
         def encode():
             images = []
             if ident_file:
@@ -1147,6 +1149,8 @@ def register():
             # UnboundLocalError into the handler below -- which then blamed the
             # identity stills and threw away the ones it had already encoded.
             first = frames[0] if frames else None
+            clip.update(zip(("seconds", "sound"),
+                            _media.probe_clip(video, start=start, end=end)))
             for k, frame in enumerate(frames, 1):
                 images.append({
                     "caption": (
@@ -1196,7 +1200,8 @@ def register():
                 brief, complete_fn=complete_fn, identity_tag=ident_tag,
                 rail_tags=rail_tags, images=images, duration=duration,
                 mode=mode, background=background,
-                background_tag=background_tag, wardrobe_tag=wardrobe_tag)
+                background_tag=background_tag, wardrobe_tag=wardrobe_tag,
+                clip_s=clip.get("seconds"), clip_sound=clip.get("sound"))
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:

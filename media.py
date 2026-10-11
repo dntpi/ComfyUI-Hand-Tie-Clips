@@ -670,6 +670,30 @@ def probe_frames(name, start=0.0, end=0.0, max_frames=0):
     return n
 
 
+def probe_clip(name, start=0.0, end=0.0):
+    """`(seconds, has_sound)` of a clip's trim window, from headers only.
+
+    SWAP tells the writer both, because neither is visible in three frames: a
+    hop longer than the clip runs on past the clip's last motion, and a clip
+    with a soundtrack sends it into the generate (core's `ref_video_audios`).
+    Either is None when it cannot be read.
+    """
+    n = probe_frames(name, start=start, end=end)
+    path = resolve(name, kinds={"video"})
+    secs, sound = None, None
+    try:
+        import av
+
+        with av.open(path) as container:
+            vs = container.streams.video[0] if container.streams.video else None
+            fps = float(vs.average_rate or 0) if vs is not None else 0.0
+            secs = (n / fps) if (n and fps) else None
+            sound = bool(container.streams.audio)
+    except Exception:  # noqa: BLE001
+        pass
+    return secs, sound
+
+
 # -- writing (used by the upload route) ------------------------------------
 
 def unique_path(directory, filename):

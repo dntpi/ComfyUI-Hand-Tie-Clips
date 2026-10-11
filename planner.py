@@ -2212,11 +2212,12 @@ _MODE_RULE = {
         "sentence that the face, hair and skin tone of @{ident} sit on the "
         "clip's own body -- build, posture, hands, and every garment and worn "
         "accessory stay exactly as the clip has them, and the neck and jaw "
-        "meet that body. If the photograph shows clothing it contributes a "
-        "head and nothing below the collar.",
+        "meet that body. The photograph contributes the head alone; from the "
+        "collar down the body is the clip's.",
     "face_only":
         "Say the subject is looking like @{ident}, then state in a second "
-        "sentence that only the facial features of @{ident} are theirs -- "
+        "sentence that only the facial features of @{ident} are the subject's "
+        "own -- "
         "hair, ears, expression range, build and every garment stay exactly "
         "as the clip has them.",
     "keep_person":
@@ -2316,7 +2317,7 @@ def parse_swap_reply(raw):
 
 
 def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
-                  mode=DEFAULT_SWAP_MODE):
+                  mode=DEFAULT_SWAP_MODE, allowed=None):
     """SWAP policy: one shot, tags already on the rail, no register document.
 
     Errors go back to the model. This is not `validate()`: that function
@@ -2351,12 +2352,52 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
         errors.append(_clean(exc))
 
     beat = shots[0].get("beat") or ""
-    if ident and ("@" + ident) not in beat:
+    cites = len(re.findall(r"@" + re.escape(ident) + r"\b", beat)) if ident else 0
+    if ident and not cites:
         errors.append(
             f"the beat must cite @{ident} -- that is the identity being "
             "swapped in, and a generate that does not name it will keep "
             "the person from the clip."
         )
+    elif ident and cites < 2:
+        # The instruct's load-bearing rule, and until now checked as "once":
+        # one mention loses to the clip, which is many frames of conditioning
+        # against one picture (observed: the clip's own person, unchanged).
+        errors.append(
+            f"the beat names @{ident} once. Name it twice: first \"looking like "
+            f"@{ident}\" on the subject, then a sentence saying what of @{ident} "
+            "is the subject's own and what stays with the clip.")
+
+    if allowed is not None:
+        # keep_person: the shot rides exactly these plates, so any other tag in
+        # the beat names a picture the hop does not have (queue: "in the
+        # register but no picture on this hop").
+        extra = sorted({t for t in re.findall(r"@([A-Za-z0-9_]+)", beat)
+                        if t not in allowed})
+        if extra:
+            errors.append(
+                "this mode keeps the clip's own person and swaps nobody, so the "
+                "beat cites no identity. Remove " + ", ".join("@" + t for t in extra)
+                + (" and cite only " + ", ".join("@" + t for t in allowed)
+                   if allowed else "") + ".")
+
+    _dur = str(shots[0].get("duration") or duration or "").strip()
+    band = beat_table().get(_dur)
+    if band:
+        words = count_beat(beat)[0]
+        if words < band[0] or words > band[1]:
+            warnings.append(
+                f"the beat is {words} words; a {_dur} hop wants "
+                f"{band[0]}-{band[1]}. "
+                + ("Written short, the action ends early and the hop settles on "
+                   "the photograph." if words < band[0] else
+                   "Written long, the action is truncated."))
+    neg = _SWAP_NEGATION.findall(dialogue_free(beat))
+    if neg:
+        warnings.append(
+            "the beat says " + ", ".join(sorted({n.lower() for n in neg}))
+            + " -- at cfg 1.0 a negation ADDS what it names. Say what is there "
+            "instead.")
 
     refs = shots[0].get("refs")
     if refs is not None and ident and ident not in refs:
@@ -2374,7 +2415,20 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
     return errors, warnings
 
 
-def _ensure_swap_refs(shot_text, tags):
+# Outside quoted lines only: a line may say "no" and mean it.
+_SWAP_NEGATION = re.compile(r"\b(?:no|not|never|without|none|nobody|nothing)\b|\w+n't\b",
+                            re.I)
+
+
+def dialogue_free(beat):
+    """The beat with its quoted and <d> lines removed."""
+    text = str(beat or "")
+    for a, b, _said in sorted(dialogue_spans(text), reverse=True):
+        text = text[:a] + " " + text[b:]
+    return text
+
+
+def _ensure_swap_refs(shot_text, tags, exact=False):
     """Stage 3: every tag the instruct asked for rides the one shot.
 
     `shot.refs` is a WHITELIST, not an addition -- a list here replaces the
@@ -2399,7 +2453,7 @@ def _ensure_swap_refs(shot_text, tags):
         t = str(t or "").lstrip("@").strip()
         if t and t not in want:
             want.append(t)
-    if not want or not shot_text:
+    if (not want and not exact) or not shot_text:
         return shot_text
     try:
         obj = json.loads(shot_text)
@@ -2421,7 +2475,10 @@ def _ensure_swap_refs(shot_text, tags):
     refs = shot.get("refs")
     have = ([str(r or "").lstrip("@").strip() for r in refs if str(r).strip()]
             if isinstance(refs, list) else [])
-    shot["refs"] = have + [t for t in want if t not in have]
+    # `exact`: keep_person. Its contract is "swaps nobody", so the shot rides
+    # the cited plates and nothing else -- an absent `refs` falls back to the
+    # register default, which puts every hop-1 still on, the face included.
+    shot["refs"] = want if exact else have + [t for t in want if t not in have]
     obj = dict(obj)
     obj["shots"] = [shot]
     return json.dumps(obj, indent=2)
@@ -2429,7 +2486,8 @@ def _ensure_swap_refs(shot_text, tags):
 
 def build_swap_user_turn(brief, identity_tag, duration=None, *,
                          mode=DEFAULT_SWAP_MODE, background=DEFAULT_BG_MODE,
-                         background_tag="", wardrobe_tag=""):
+                         background_tag="", wardrobe_tag="", clip_s=None,
+                         clip_sound=None):
     ident = str(identity_tag or "").lstrip("@").strip()
     mode = normalise_swap_mode(mode)
     bg = str(background or "").strip().lower()
@@ -2472,6 +2530,27 @@ def build_swap_user_turn(brief, identity_tag, duration=None, *,
         + "Write one hop. Do not emit ref_plan.")
     if duration:
         lines.append(f"Hop length: {duration}. Fill that duration.")
+        try:
+            from .h3_ref_chain import DURATION_FRAMES, FPS  # noqa: PLC0415
+            hop_s = DURATION_FRAMES.get(str(duration).strip(), 0) / float(FPS or 24)
+        except Exception:
+            hop_s = 0
+        if clip_s and hop_s and clip_s < hop_s - 0.5:
+            lines.append(
+                f"The clip runs {clip_s:.1f} s of this {hop_s:.0f} s hop. Its "
+                f"motion ends there: write how the action carries on from the "
+                f"clip's last frame, in the same place, for the seconds after.")
+    if clip_sound is True:
+        lines.append(
+            "Sound: the clip has its own soundtrack and it goes into the "
+            "generate. Name that sound in the beat (the music, the room, the "
+            "voices you can expect from the scene). Write a spoken line only "
+            "with words the brief gives, as (S1) says, <d>[English] ...</d>.")
+    elif clip_sound is False:
+        lines.append(
+            "Sound: the clip is silent. Name one specific sound for the hop. "
+            "Write a spoken line only with words the brief gives, as (S1) says, "
+            "<d>[English] ...</d>.")
     brief = str(brief or "").strip()
     if brief:
         # This lands LAST, which is the position a model weighs most, after
@@ -2523,7 +2602,7 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
                           images=None, duration=None, attempts=MAX_ATTEMPTS,
                           on_step=None, mode=DEFAULT_SWAP_MODE,
                           background=DEFAULT_BG_MODE, background_tag="",
-                          wardrobe_tag=""):
+                          wardrobe_tag="", clip_s=None, clip_sound=None):
     """One hop, no register. Returns no `ref_plan` key."""
     mode = normalise_swap_mode(mode)
     ident = str(identity_tag or "").lstrip("@").strip()
@@ -2557,7 +2636,8 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
     text = build_swap_user_turn(brief, ident, duration=duration, mode=mode,
                                 background=background,
                                 background_tag=background_tag,
-                                wardrobe_tag=wardrobe_tag)
+                                wardrobe_tag=wardrobe_tag, clip_s=clip_s,
+                                clip_sound=clip_sound)
     messages = [{"role": "system", "content": swap_prompt()},
                 {"role": "user", "content": attach_images(text, images)}]
     sch = swap_schema()
@@ -2579,14 +2659,26 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
         else:
             last_errors, warnings = validate_swap(
                 shot_text, rail_tags=rail_tags, identity_tag=ident, mode=mode,
-                duration=duration)
+                duration=duration,
+                allowed=(None if swap_mode_needs_identity(mode)
+                         else [t for t in cited if t]))
         if not last_errors:
+            # A caption naming the person reaches the encoder as what <Video 1>
+            # IS and fights the swap (observed: a head swap rendered the clip's
+            # own person). Describe already checks its caption; this one is
+            # the same text arriving by the other door.
+            who = _identity_words(video_desc) if (video_desc and ident) else []
             out = {
                 "ok": True,
-                "shot_plan": _ensure_swap_refs(shot_text, cited),
+                "shot_plan": _ensure_swap_refs(
+                    shot_text, cited, exact=not swap_mode_needs_identity(mode)),
                 "attempts": attempt,
                 "errors": [],
-                "warnings": warnings,
+                "warnings": list(warnings) + (
+                    [f"the clip caption describes the person ({', '.join(who)}); "
+                     "it reaches the encoder as what <Video 1> is and fights the "
+                     "swap. Edit it to the action and place before Accept."]
+                    if who else []),
             }
             if video_desc:
                 out["video_desc"] = video_desc

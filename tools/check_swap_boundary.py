@@ -95,7 +95,8 @@ def main():
     async def fake_with_register(messages, schema=None):
         return json.dumps({
             "shot_plan": {"shots": [{
-                "beat": "She stands in the room like @her_face and turns.",
+                "beat": ("The subject stands in the room looking like @her_face and "
+                         "turns. The face of @her_face is the subject's own."),
                 "directives": {"camera": "hold", "framing": "medium",
                                "tail": "settle"},
                 "refs": ["her_face"],

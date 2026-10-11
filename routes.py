@@ -626,6 +626,9 @@ def register():
                 # which is a real way to end up with two processes fighting over
                 # 32 GB.
                 "running": await _llm.server_running_async(),
+                # Why the last Start died, from the server's own log ("" when
+                # it did not). The panel polls this after Start.
+                "startup_error": _llm.startup_error(),
                 # [{id, loaded}] -- `loaded` is None on servers with no
                 # native state route. The panel marks the difference, because
                 # picking an unloaded model is picking a 400.

@@ -230,6 +230,12 @@ def _server_args(name, model_file=None):
     reproducible anyway). Without it this pack measured 17-26 tok/s decode on a
     5090 (server.err, 2026-10-11).
 
+    `--max-context 65536`, not the launcher's 150000. The KV reservation is made
+    at startup for the whole context, and with the MTP head and `--vision` the
+    weights are 20.0 GiB: at 150k the reservation came up 0.7 GB short and the
+    server died at startup (2026-10-11). A writer turn is ~11k prompt + at most
+    12k out; 64k is the whole thread with room to spare.
+
     `--no-thinking` because the models this pack is tested against reason
     before they answer, and a repair loop that spends its budget on a page of
     reasoning never gets to the beat.
@@ -240,7 +246,7 @@ def _server_args(name, model_file=None):
                                                DEFAULT_MODEL_FILE))
         port = (BACKENDS["ninfer"]["default_base"].rsplit(":", 1)[-1])
         return [model, "--host", "127.0.0.1", "--port", port,
-                "--max-context", "150000", "--vision", "--no-thinking",
+                "--max-context", "65536", "--vision", "--no-thinking",
                 "--spec", "mtp", "--draft-tokens", "3", "--lm-head-draft"]
     return []
 
@@ -298,6 +304,37 @@ def server_running(name=None):
         return False
     except Exception:
         return False
+
+
+def startup_error(name=None, tail_bytes=65536):
+    """The FATAL that ended the writer's last start, or "".
+
+    Start returns as soon as the process is spawned, so a server that dies
+    while reserving VRAM read as "started" in the panel with nothing after it
+    (2026-10-11: 0.7 GB short at 150k context). The reason is in the server's
+    own log, which this pack already points stderr at; it is read, not guessed.
+    Only a FATAL after the LAST "starting engine" counts -- an old failure is
+    not this start's.
+    """
+    import os
+    exe = _server_exe(backend_name(name or CONN.get("backend")))
+    if not exe:
+        return ""
+    path = os.path.join(os.path.dirname(exe), "server.err")
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - int(tail_bytes)))
+            text = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    last = text.rfind("starting engine")
+    if last < 0:
+        return ""
+    for line in text[last:].splitlines():
+        if " FATAL " in line:
+            return line.split(" FATAL ", 1)[1].strip()
+    return ""
 
 
 async def start_process_async(model_file=None, name=None):

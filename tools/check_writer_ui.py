@@ -648,6 +648,32 @@ check("an unknown load state gets its own message, not the red one",
       "does not report load state" in js
       and "conn.any_loaded === false" in js)
 
+# --- Start that dies during startup (2026-10-11) ---
+# Start returns at spawn. nInfer died reserving VRAM (0.7 GB short at 150k
+# context with MTP + vision) and the panel said "started" and nothing else.
+print("\nStart that dies during startup")
+import tempfile as _tf
+_fn2 = next(n for n in _llm_tree.body
+            if isinstance(n, _ast.FunctionDef) and n.name == "startup_error")
+_d = _tf.mkdtemp()
+_exe = os.path.join(_d, "ninfer-serve.exe")
+_ns2 = {"_server_exe": lambda n: _exe, "backend_name": lambda n: n,
+        "CONN": {"backend": "ninfer"}}
+exec(_ast.get_source_segment(llm, _fn2), _ns2)
+def _log(t):
+    io.open(os.path.join(_d, "server.err"), "w", encoding="utf-8").write(t)
+_log("a starting engine\na  FATAL  old\na starting engine\na  INFO  listening\n")
+check("an old FATAL is not this start's", _ns2["startup_error"]("ninfer") == "")
+_log("a starting engine\na  FATAL  server failed during startup | short by 0.7 GB\n")
+check("this start's FATAL is reported, in the server's own words",
+      _ns2["startup_error"]("ninfer") == "server failed during startup | short by 0.7 GB")
+check("the status route carries it and the panel watches after Start",
+      '"startup_error": _llm.startup_error(),' in py
+      and "if (action === \"start\" && j.ok) await watchStart();" in js
+      and "s?.startup_error" in js)
+check("the writer reserves 64k context, not the launcher's 150k",
+      '"--max-context", "65536"' in llm and '"--spec", "mtp"' in llm)
+
 print()
 if fails:
     print("WRITER UI: %d check(s) failed." % len(fails))

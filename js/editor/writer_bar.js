@@ -872,6 +872,29 @@ if (!list.length) {
         }
     }
 
+    /* Start returns when the process is SPAWNED, not when it serves. Poll
+     * until it answers, or until its own log says why it died -- a server that
+     * failed reserving VRAM used to read as "started" and nothing after. */
+    async function watchStart(limitS = 120) {
+        for (let t = 0; t < limitS; t += 3) {
+            await new Promise((res) => setTimeout(res, 3000));
+            let s = null;
+            try { s = await (await fetch(LLM_URL)).json(); } catch (_) { continue; }
+            if (s?.online) {
+                await loadConn(true);
+                return;
+            }
+            if (s?.startup_error) {
+                serverUp = false;
+                paintServer();
+                say(`The writer stopped during startup: ${s.startup_error}`, "error");
+                return;
+            }
+        }
+        say("The writer has not answered after two minutes. Its log is "
+            + "server.err beside the program.", "error");
+    }
+
     async function serverAction(action) {
         const b = action === "start" ? startBtn : stopBtn;
         b.disabled = true;
@@ -888,6 +911,7 @@ if (!list.length) {
             serverUp = Boolean(j.running);
             say(j.note || (j.ok ? "" : (j.error || "failed")),
                 j.ok ? "hint" : "error");
+            if (action === "start" && j.ok) await watchStart();
         } catch (e) {
             say(String(e), "error");
         } finally {

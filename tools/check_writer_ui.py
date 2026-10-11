@@ -348,42 +348,74 @@ check("the refusal is recorded, keyed by ADDRESS not by backend name",
 check("an unknown server still gets the schema",
       re.search(r"return _active_base\(\) not in _NO_STRUCTURED", llm) is not None,
       "-- assuming the worst costs the retry we already had")
-check("the log says the offer is withdrawn",
-      "Not offering it to this" in llm and "server again until ComfyUI restarts" in llm,
+check("the log says the finding is banked, not just refused this once",
+      "does not accept structured output; banked in" in llm,
       "-- a silent behaviour change looks like the panel misreading")
 
 # And it must only be believed when the server NAMED the schema. A 404, a 401
 # or a 400 for an unloaded model all land on the same branch, and any of them
 # would permanently disable a capability the server does have.
-# And it must only be believed when the server NAMED the schema. A 404, a 401
-# or a 400 for an unloaded model all land on the same branch, and any of them
-# would permanently disable a capability the server does have.
 #
-# This has to be checked STRUCTURALLY. Checking that `blames_schema =` exists
-# passes when the line is there and nothing reads it -- which is exactly what
-# the negative test found when `if blames_schema:` was replaced by `if True:`.
+# STRUCTURAL, not a token search. D1k's first version asserted
+# `blames_schema =` exists, which passed when the line was there and nothing
+# read it. It also has to survive the work moving into a helper, so these
+# follow the CALL rather than the add.
 _BS = llm.find("blames_schema = any(")
 _GUARD = llm.find("if blames_schema:")
-_RECORD = llm.find("_NO_STRUCTURED.add(")
-# Search for the retry AFTER the guard. A whole-file find() finds an earlier
-# `schema=None` elsewhere in the module and compares a false pair.
+_CALL = llm.find("_remember_no_structured()", _GUARD) if _GUARD > 0 else -1
 _RETRY = llm.find("schema=None", _GUARD) if _GUARD > 0 else -1
+_HELPER = llm.find("def _remember_no_structured")
+_ADD = llm.find("_NO_STRUCTURED.add(", _HELPER) if _HELPER > 0 else -1
+
 check("a 4xx alone is not enough to remember it",
-      _BS > 0 and _GUARD > _BS and _RECORD > _GUARD,
+      _BS > 0 and _GUARD > _BS,
       "-- 'HTTP 4' also covers a wrong path, a refused key, and a model that "
       "is not loaded; any of those would downgrade every later generate")
 check("...and the remembering actually sits INSIDE that guard",
-      _GUARD > 0 and _RECORD > _GUARD and llm[_GUARD:_RECORD].count("\n") <= 8,
+      _GUARD > 0 and _CALL > _GUARD and llm[_GUARD:_CALL].count("\n") <= 10,
       "-- an assignment nobody branches on is a comment")
 for _w in ("response_format", "json_schema", "unsupported"):
     check("...and it listens for %r" % _w, ('"%s"' % _w) in llm)
 check("...but still retries without the schema when it is something else",
-      _RETRY > _RECORD > 0,
+      _RETRY > _CALL > 0,
       "-- the retry must still happen; only the REMEMBERING is conditional")
+check("the helper banks the ADDRESS it was learned against",
+      _HELPER > 0 and _ADD > _HELPER
+      and re.search(r"def _remember_no_structured\(\):.*?"
+                    r"addr = _active_base\(\).*?_NO_STRUCTURED\.add\(addr\)",
+                    llm, re.S) is not None,
+      "-- keying it on anything else pins one server's answer onto another")
 check("the key is the address, not the backend name",
-      re.search(r"_NO_STRUCTURED\.add\(_active_base\(\)\)", llm) is not None
-      and re.search(r"_NO_STRUCTURED\.add\((?:\"ninfer\"|'ninfer')\)", llm) is None,
+      re.search(r"_NO_STRUCTURED\.add\((?:\"ninfer\"|'ninfer'|backend)", llm) is None,
       "-- one 4xx on one port would downgrade a second server on another")
+
+check("a settings file that cannot be written is not a failed generate",
+      re.search(r"could not bank the structured-output finding", llm) is not None,
+      "-- the in-memory set already does the real work")
+
+# --- 10b. D1m: banked on disk, because "restart and pay it again" is not a fix
+# These were written once already and then silently deleted by a scripted
+# block rewrite, which is why three of the negative tests below passed with
+# the feature gone. The negative test is the only reason that was caught.
+check("the finding is written to the settings file, not just remembered",
+      re.search(r"def _remember_no_structured", llm) is not None
+      and re.search(r"def _restore_no_structured", llm) is not None,
+      "-- in memory means every ComfyUI restart pays the 568 s again")
+check("...and reloaded at startup",
+      # The CALL, indented inside load_conn. A bare `_restore_no_structured()`
+      # search matches its own `def _restore_no_structured():` line, so deleting
+      # the call left this green -- the negative test found that too.
+      re.search(r"def load_conn.*?^\s{4}_restore_no_structured\(\)", llm,
+                re.S | re.M) is not None)
+check("the stored value is the ADDRESS, not a bare true",
+      re.search(r'entry\["no_structured"\]\s*=\s*addr\b', llm) is not None,
+      "-- the flag lives on an entry whose address is editable, so a boolean "
+      "follows the server to a port it was never asked about")
+check("...and only applies while the entry still points at that address",
+      re.search(r"if addr and addr == normalise_base\(banked\)", llm) is not None)
+check("...and a bare true from an older file is ignored, not honoured",
+      re.search(r"if not banked or not isinstance\(banked, str\)", llm) is not None,
+      "-- a bool is exactly what the address check exists to reject")
 
 # --- 11. D1l: the composer takes a paragraph, the reply takes the pane ------
 # Two boxes, opposite ends, and both were too small. The composer was a

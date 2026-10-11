@@ -577,6 +577,7 @@ def load_conn():
             CONN["backend"] = DEFAULT_BACKEND
             CONN["servers"] = {} if not isinstance(saved.get("servers"), dict) \
                 else saved.get("servers")
+    _restore_no_structured()
     # A file written before there was more than one backend has no `backend`
     # key and one flat pair. That pair belongs to LM Studio, which is what it
     # was written for -- so seed the per-backend table from it rather than
@@ -853,6 +854,67 @@ def structured_supported():
     already had.
     """
     return _active_base() not in _NO_STRUCTURED
+
+
+def _restore_no_structured():
+    """Reload the learned per-server capabilities from the settings file.
+
+    In memory only was not enough. The cost of being wrong is a whole wasted
+    generation -- 568 s on the machine that reported it -- and ComfyUI is
+    restarted for all sorts of reasons that have nothing to do with the
+    writer. Making the person restart a second time, having already restarted
+    once to get the fix, is a poor trade for a 60-byte flag.
+
+    So it is banked beside the other per-server settings, in the same file
+    that is already explicitly machine-local and never travels with a shared
+    workflow. Keyed by the same address it was learned against.
+    """
+    for name, entry in (CONN.get("servers") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        # The stored value is the ADDRESS that refused, not a bare true. The
+        # flag lives on a backend entry and the entry's address is editable:
+        # a boolean would follow the server to the port it was just moved to,
+        # which was never asked and may well support structured output. So the
+        # flag only applies while the entry still points at the address it was
+        # learned against.
+        banked = entry.get("no_structured")
+        if not banked or not isinstance(banked, str):
+            continue
+        addr = normalise_base(entry.get("server_url")
+                              or backend_spec(name)["default_base"])
+        if addr and addr == normalise_base(banked):
+            _NO_STRUCTURED.add(addr)
+
+
+def _remember_no_structured():
+    """Bank the refusal for this address, in memory and on disk."""
+    addr = _active_base()
+    if not addr:
+        return
+    if addr in _NO_STRUCTURED:
+        return
+    _NO_STRUCTURED.add(addr)
+    try:
+        n = backend_name(CONN.get("backend"))
+        servers = CONN.get("servers")
+        if not isinstance(servers, dict):
+            servers = {}
+        entry = dict(servers.get(n) or {})
+        # The address goes IN the flag. See _restore_no_structured: the entry
+        # is editable and a bare boolean would follow the server to a port it
+        # was never tested on.
+        entry["no_structured"] = addr
+        servers[n] = entry
+        CONN["servers"] = servers
+        save_conn({})
+        print(f"[{TAG}] {addr} does not accept structured output; banked in "
+              f"{CONN_FILE}. It will not be offered again.", flush=True)
+    except Exception as exc:
+        # A settings file we could not write is not worth failing a generate
+        # over -- the in-memory set already does the real work.
+        print(f"[{TAG}] could not bank the structured-output finding: {exc}",
+              flush=True)
 
 
 def _active_base():
@@ -1289,11 +1351,12 @@ async def complete(base_url, model, messages, *, schema=None,
                 if blames_schema:
                     # Remember it BEFORE retrying. The retry is the expensive
                     # half and it will be identical next time; the whole point
-                    # is that the second click starts without the schema.
-                    _NO_STRUCTURED.add(_active_base())
+                    # is that the second click starts without the schema. It
+                    # is banked on disk as well, because "restart and pay it
+                    # again" is a poor trade for a flag.
+                    _remember_no_structured()
                     print(f"[{TAG}] server rejected structured output; "
-                          f"retrying without it. Not offering it to this "
-                          f"server again until ComfyUI restarts.", flush=True)
+                          f"retrying without it.", flush=True)
                 data = await _post(
                     session, url,
                     _chat_body(model, messages, schema=None,

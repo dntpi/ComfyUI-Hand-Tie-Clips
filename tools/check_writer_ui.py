@@ -396,6 +396,28 @@ check("a settings file that cannot be written is not a failed generate",
       re.search(r"could not bank the structured-output finding", llm) is not None,
       "-- the in-memory set already does the real work")
 
+# The dropped-connection message used to assert a CAUSE it had no evidence for
+# -- "it is probably still loading the model -- wait until the status line says
+# a model is loaded" -- and it was wrong twice over: nInfer loads a 27B in
+# seven seconds, and this panel cannot report load state on a backend that
+# returns no `state` field. It cost a minute of chasing a model that was
+# already loaded.
+_dropped = llm[llm.index("if _dropped_connection(exc):"):][:1400]
+# Read it with the full-line comments removed. The comment ABOVE this raise
+# quotes the old wording in order to explain why it went -- and a check that
+# greps prose finds its own explanation. Fourth time this phase that a file's
+# comments were mistaken for its code.
+_dropped = "\n".join(l for l in _dropped.splitlines()
+                     if not l.lstrip().startswith("#"))
+check("the dropped-connection message does not blame the model load",
+      "still loading" not in _dropped and "wait until the status line" not in _dropped,
+      "-- it names a cause it cannot see, and points at a status line that "
+      "does not exist on a backend with no load state")
+check("...and says what is actually true instead",
+      "send it again" in _dropped
+      and "server's own log" in _dropped,
+      "-- usually transient, and the evidence is in the server's log, not here")
+
 # --- 10b. D1m: banked on disk, because "restart and pay it again" is not a fix
 # These were written once already and then silently deleted by a scripted
 # block rewrite, which is why three of the negative tests below passed with

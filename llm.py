@@ -986,11 +986,25 @@ async def _post(session, url, body, timeout):
         # Every word of it is the socket layer talking to itself; none of it
         # tells the person that the fix is to wait for the model.
         if _dropped_connection(exc):
+            # It used to say "probably still loading the model -- wait until
+            # the status line says a model is loaded". That was wrong twice
+            # over, and both times it cost someone a minute: nInfer loads a
+            # 27B in SEVEN SECONDS, and this panel cannot report load state at
+            # all on a backend that returns no `state` field on /v1/models.
+            # So it named a cause it had no evidence for and pointed at a
+            # status line that does not exist.
+            #
+            # What is actually known is that the socket went away mid-request.
+            # That is usually transient and a retry is the right move, and if
+            # it is not transient the reason is in the SERVER's own log at the
+            # moment it dropped -- which is where the evidence lives. Saying so
+            # costs nothing and stops this being the place people look twice.
             raise LLMError(
                 f"{active_label()} closed the connection before it answered. "
-                f"If it was just started, it is probably still loading the "
-                f"model -- wait until the status line says a model is loaded, "
-                f"then send again. ({exc})") from exc
+                f"That is usually transient -- send it again. If it happens "
+                f"every time, the reason is in that server's own log at the "
+                f"moment it dropped; nothing on this side can see why the "
+                f"connection went away. ({exc})") from exc
         raise LLMError(f"request failed: {exc}") from exc
 
 

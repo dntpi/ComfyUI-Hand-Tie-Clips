@@ -354,7 +354,7 @@ def split_reply(raw):
 # -- validation ------------------------------------------------------------
 
 def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
-             duration=None, pin_mech=""):
+             duration=None, pin_mech="", mv=False):
     """Run the node's own checkers. Returns (errors, warnings).
 
     `errors` are what the node would REJECT -- they go back to the model.
@@ -449,6 +449,16 @@ def validate(shot_text, ref_text, *, hops=None, known_files=None, pinned=None,
         # the real defect, because that is the shape H3 fills with speech.
         wordless = spoken == 0 and bool(
             _SOUND.search(str((sh or {}).get("beat") or "")))
+        if mv:
+            # A music video: the frozen song drives every mouth, so the
+            # spoken-line floor, the talk-throughout share and the lead-in rule
+            # (all about GENERATED speech) do not apply. A quoted line does:
+            # unmatched text pulls the mouth off the take.
+            if spoken:
+                warnings.append(
+                    f"shot {i + 1}: a music-video beat carries no <d> line -- the "
+                    f"song drives the mouth. Say who sings or raps instead.")
+            continue
         if spoken < l0 and not wordless:
             warnings.append(
                 f"shot {i + 1}: {spoken} spoken line(s); the {label} row wants "
@@ -891,7 +901,29 @@ def hand_tie_rules(duration=None):
     ])
 
 
-def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech=""):
+# A music video renders over the song (`master_audio_file`), frozen in the joint
+# AV latent, so the take drives every mouth. Learned on DDP, Nodes MV and
+# Headliner (2026-10-03..07): a quoted line pulls the mouth off the take; crew
+# written "lips closed" reads robotic; a 30-45 word beat is a static slideshow.
+MV_RULES = "\n".join([
+    "This is a MUSIC VIDEO cut to the song, which plays under every hop and "
+    "drives every mouth. These rules replace the spoken-word targets of the "
+    "length table:",
+    "1. No <d> lines and no (S1) speaker tags. Say who sings or raps and how "
+    "(\"@x raps the verse straight into the lens\"); the song supplies the words.",
+    "2. Everyone else reacts with their body -- points, laughs, daps, throws an "
+    "arm round a shoulder -- and the whole crew shouts the hooks together. "
+    "Nobody stands posed.",
+    "3. Every hop has an open, a mid-hop change and a definite end move, and "
+    "uses the top of its word budget on action: a thin beat finishes early and "
+    "idles.",
+    "4. The overall_soundscape is the song itself: name the music and the room "
+    "(the bass, the crowd), never a voice saying words.",
+])
+
+
+def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech="",
+                    mv=False):
     """The one user message. Names the files that actually exist, so the model
     schedules pictures it has rather than inventing plausible filenames.
 
@@ -919,9 +951,11 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech="")
         lines.append(
             f"Every hop is {duration}. That is the row of the length table you "
             f"are writing to: {w0}-{w1} words in each beat, and "
-            + (f"{l0}-{l1} spoken lines" if l1 > l0 else
+            + ("no spoken lines -- the song is the sound" if mv else
+               f"{l0}-{l1} spoken lines" if l1 > l0 else
                f"{l0} spoken line" + ("" if l0 == 1 else "s"))
-            + ". Count both in every beat before you answer.")
+            + (". Count the words in every beat before you answer." if mv else
+               ". Count both in every beat before you answer."))
         # Lines alone do not size the audio: one runs from six words to twenty,
         # and six words is 2.4 s of a 10 s hop. Live, a 3x10 s vlog written
         # with one six-word line per hop rendered 17.8% voiced, in fragments.
@@ -930,8 +964,8 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech="")
             secs = DURATION_FRAMES.get(str(duration).strip(), 0) / float(FPS or 24)
         except Exception:
             secs = 0
-        if pin_mech == "hand_tie":
-            secs = 0       # hand_tie_rules below replaces the spoken-word target
+        if pin_mech == "hand_tie" or mv:
+            secs = 0       # hand_tie_rules / mv_rules below replace the spoken-word target
         if secs:
             lines.append(
                 f"Speech runs about {SPEECH_WPS:g} words a second, so a "
@@ -953,6 +987,8 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech="")
                 "silent.")
     if pin_mech == "hand_tie":
         lines += ["", hand_tie_rules(duration)]
+    if mv:
+        lines += ["", MV_RULES]
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned:
         lines += ["",
@@ -1374,6 +1410,7 @@ def _subjects_repair(errors):
 # counts: the warning text already says the whole thing, in the node's own
 # words, per shot.
 _SPEECH_WARN = ("spoken line(s)",
+                "a music-video beat carries no <d>",
                 "spoken lines run about",
                 "the beat is ",
                 "words of action run before",
@@ -1385,7 +1422,16 @@ def _speech_warnings(warns):
             if any(k in str(w) for k in _SPEECH_WARN)]
 
 
-def _speech_repair(warns, pin_mech=""):
+def _speech_repair(warns, pin_mech="", mv=False):
+    if mv:
+        return (
+            "That plan is accepted -- do not restructure it. Keep every shot's id, "
+            "directives, @tags and files, and re-emit the ref_plan unchanged.\n\n"
+            "The beats below miss the music-video rules. Rewrite ONLY the `beat` "
+            "text of the shots named: lengthen a short beat with action (an open, "
+            "a change, an end move), and turn any <d> line into who sings or raps "
+            "it. Count the words before you answer."
+            "\n\n" + "\n".join(f"- {w}" for w in warns))
     if pin_mech == "hand_tie":
         return (
             "That plan is accepted -- do not restructure it. Keep every shot's id, "
@@ -1936,7 +1982,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     if sk:
         hops = len(sk)
     text = build_user_turn(brief, hops, files, pinned=pinned, duration=duration,
-                           pin_mech=pin_mech)
+                           pin_mech=pin_mech, mv=bool(sk))
     if sk:
         text = ("This film is laid out already. The following is fixed and your "
                 "beats must match it shot for shot:\n\n"
@@ -2019,7 +2065,8 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                 else:
                     last_errors, warnings = validate(
                         shot_text, ref_text, hops=hops, known_files=files,
-                        pinned=pinned, duration=duration, pin_mech=pin_mech)
+                        pinned=pinned, duration=duration, pin_mech=pin_mech,
+                        mv=True)
             else:
                 last_errors, warnings = validate(
                     shot_text, ref_text, hops=hops, known_files=files,
@@ -2040,7 +2087,8 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                 messages.append({"role": "assistant", "content": reply})
                 messages.append({"role": "user",
                                  "content": validator_turn(
-                                     _speech_repair(accepted[3], pin_mech))})
+                                     _speech_repair(accepted[3], pin_mech,
+                                                    mv=bool(sk)))})
                 turn_sch = sch
                 continue
             return {"ok": True, "mv_skeleton": sk,
@@ -2101,7 +2149,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         stub = _stub_missing_subjects(ref_text)
         errs, warns = validate(
             shot_text, stub, hops=hops, known_files=files, pinned=pinned,
-            duration=duration, pin_mech=pin_mech)
+            duration=duration, pin_mech=pin_mech, mv=bool(sk))
         if not errs:
             note = ("subjects were filled from the photo descriptions because "
                     "the model left them empty; read them before Accept.")

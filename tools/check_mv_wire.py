@@ -259,6 +259,53 @@ ck("...while an ordinary word-count lint still fires as usual",
    isinstance(_w, list),
    "-- the lint system is not disabled for MV, only its impossible asks")
 
+# The fixture above passes on its "low hum of the air handler" -- a named sound
+# bed, which makes ANY hop legitimately wordless. A real MV beat names the song
+# ("bass thumping, the crowd shouting the hook"), not a room-tone word, and the
+# generic speech target + speech round then asked it for 1-2 lines a hop: an
+# MV pushed into dialogue over the take (2026-10-11).
+print("\nan MV beat is never pushed into dialogue")
+_MVB = ("@mina dances under strobing club lights, arms thrown up and hair whipping "
+        "as the crowd jumps around her, the camera circling close before pulling "
+        "back to the packed floor, bass thumping, the whole crowd shouting the hook "
+        "together.")
+
+
+def mv_reply(beat, n=3):
+    shots = [{"id": f"s{i + 1}", "beat": beat, "duration": "8 s"} for i in range(n)]
+    reg = json.dumps({"refs": [{"tag": "mina", "retention": "fully_preserved"}]})
+    return ("```json\n" + json.dumps({"shots": shots}) + "\n```\n```json\n"
+            + reg + "\n```")
+
+
+SK8 = {"hops": [{"kind": "R", "duration": "8 s"}, {"kind": "C", "duration": "8 s"},
+                {"kind": "R", "duration": "8 s"}],
+       "master_audio_start_s": 0.62, "song_file": "take.wav"}
+_mv = asyncio.run(PL.write_plan("write the beats for this layout", 3,
+                                complete_fn=scripted([mv_reply(_MVB)]),
+                                skeleton=SK8, duration="8 s", attempts=3))
+_turn = CALLS[0]["messages"][-1]["content"] if CALLS else ""
+ck("the MV turn drops the spoken-word target",
+   "Speech runs about" not in _turn and "spoken lines -- the song is the sound" in _turn,
+   _turn[-400:])
+ck("and carries the MV rules", "MUSIC VIDEO" in _turn and "No <d> lines" in _turn)
+ck("a song-only beat is accepted in ONE call -- no speech round",
+   _mv.get("ok") is True and len(CALLS) == 1, f"{len(CALLS)} calls")
+ck("and no warning asks it for a spoken line",
+   not [x for x in _mv.get("warnings") or [] if "spoken line" in x],
+   str(_mv.get("warnings"))[:200])
+_DB = _MVB + " (S1) says, <d>[English] Put your hands up for the night.</d>"
+_mv2 = asyncio.run(PL.write_plan("write the beats for this layout", 3,
+                                 complete_fn=scripted([mv_reply(_DB), mv_reply(_MVB)]),
+                                 skeleton=SK8, duration="8 s", attempts=3))
+ck("a <d> line in an MV is linted and gets the MV repair round",
+   len(CALLS) == 2 and "music-video rules" in CALLS[1]["messages"][-1]["content"]
+   and "Speech runs about" not in CALLS[1]["messages"][-1]["content"],
+   f"{len(CALLS)} calls")
+_plain_turn = PL.build_user_turn("a vlog", 3, [], duration="8 s")
+ck("without a layout the spoken-word target is still there",
+   "Speech runs about" in _plain_turn and "MUSIC VIDEO" not in _plain_turn)
+
 print("\nno skeleton is the old behaviour, untouched")
 CALLS.clear()
 plain = asyncio.run(PL.write_plan(

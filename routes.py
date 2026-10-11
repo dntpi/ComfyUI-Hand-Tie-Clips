@@ -889,7 +889,16 @@ def register():
                         {"ok": False,
                          "error": "no bars to cut on -- confirm at least one "
                                   "section on the SONG card first."})
-                _mvsong_path = _mvsong
+                # The widget holds a name under h3_refs, as run() reads it
+                # (`media.load_audio`). song_map opens what it is given, so the
+                # bare name failed from ComfyUI's working directory.
+                _mvsong_path = _media.resolve(_mvsong, kinds={"audio", "video"})
+                if not _mvsong_path:
+                    return web.json_response(
+                        {"ok": False,
+                         "error": f"{_mvsong} is not in h3_refs -- pick the song "
+                                  "in MEDIA so the node and the layout read the "
+                                  "same file."})
                 _mvsecs = list(mv_sections)
                 _mvlisten = bool(body.get("listen"))
 
@@ -924,7 +933,9 @@ def register():
                            "total_frames": _out.get("total_frames"),
                            "labels": _out.get("labels"),
                            "sections": _mvsecs,
-                           "song_file": _mvsong_path,
+                           # The NAME, as the widget holds it: Accept compares
+                           # this with master_audio_file and writes it there.
+                           "song_file": _mvsong,
                        }}
             elif stage == "song":
                 # MV mode's entry point. Measures a song and returns it; writes
@@ -940,9 +951,15 @@ def register():
                          "error": "no song file -- pick one in MEDIA, or set a "
                                   "master_audio_file, then ask for the song "
                                   "again."})
+                _song_path = _media.resolve(_song, kinds={"audio", "video"})
+                if not _song_path:
+                    return web.json_response(
+                        {"ok": False,
+                         "error": f"{_song} is not in h3_refs -- pick the song "
+                                  "in MEDIA."})
                 out = await asyncio.get_running_loop().run_in_executor(
                     None, lambda: _songmap.song_map(
-                        _song, listen=bool(body.get("listen")),
+                        _song_path, listen=bool(body.get("listen")),
                         status=lambda m: print(f"[{TAG}] {m}", flush=True),
                         allow_download=False))
                 out = {"ok": True, "song": _songmap_summary(out)}

@@ -287,7 +287,8 @@ function mountEditor(node) {
             // Accept writes a third field, and only for a solved layout.
             if (extra && extra.master_audio_start_s != null) {
                 const startW = widgetByName(node, "master_audio_start_s");
-                if (startW) startW.value = String(extra.master_audio_start_s);
+                // A FLOAT widget: a string here serialises as a string.
+                if (startW) startW.value = Number(extra.master_audio_start_s);
                 const audioW = widgetByName(node, "master_audio_file");
                 if (audioW && !String(audioW.value || "").trim()
                     && extra.song_file) {

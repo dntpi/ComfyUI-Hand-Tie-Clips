@@ -1903,8 +1903,9 @@ def _describe_skeleton(sk):
     for i, h in enumerate(sk, 1):
         bit = "%02d %s %s" % (i, h["kind"], h.get("duration") or "?")
         if h.get("section") is not None:
+            # The solver numbers sections from 0; people (and the card) from 1.
             bit += "  (section %s%s)" % (
-                h["section"],
+                int(h["section"]) + 1,
                 ", " + str(h["section_kind"]) if h.get("section_kind") else "")
         rows.append(bit)
     return "\n".join(rows)

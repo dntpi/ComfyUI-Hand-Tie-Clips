@@ -469,8 +469,11 @@ function writeThread(t) {
     }
 
     function rememberDraft() {
+        // `extra` too: an MV draft restored without its offset would Accept
+        // a film whose every cut is off the bar.
         remember(DRAFT_PROP, pending
-            ? { shot: pending.shot || "", ref: pending.ref || "" }
+            ? { shot: pending.shot || "", ref: pending.ref || "",
+                extra: pending.extra || null }
             : null);
     }
 
@@ -1158,9 +1161,8 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
             .filter((n) => Number.isFinite(n) && n > 0);
         if (String(widgetByName(node, "pin_mech")?.value || "").trim() === "hand_tie") {
             b.appendChild(el("div", "h3e-note h3e-note-error",
-                "MV is not hand-tie: a chain pinned with master_audio_file is "
-                + "refused at run() time (h3_ref_chain.py:3335). Switch the join "
-                + "back to auto or motion_context to lay out an MV."));
+                "A music video plays over master_audio_file, which hand-tie "
+                + "does not take. Set pin_mech to auto to lay out an MV."));
         } else {
             c.acts.appendChild(button("Lay out", "Place the cuts on the bars "
                 + "you confirmed. No model call — this is arithmetic, and it "
@@ -1223,7 +1225,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
         for (const [i, h] of (sk.hops || []).entries()) {
             b.appendChild(el("div", "h3e-cardbox-row h3e-mv-hop",
                 `${String(i + 1).padStart(2, "0")} ${h.kind === "R" ? "R" : "C"} `
-                + `${h.duration || "?"}${h.section ? ` · ${h.section_kind || "section"} ${h.section}` : ""}`));
+                + `${h.duration || "?"}${h.section != null ? ` · ${h.section_kind || "section"} ${Number(h.section) + 1}` : ""}`));
         }
         b.appendChild(el("div", "h3e-note h3e-note-hint",
             "Hop count, each length and the restarts are the solver's. Write "
@@ -1301,7 +1303,7 @@ c.acts.appendChild(button("Accept edit",
             brief.value = p[BRIEF_PROP];
         }
         const d = p[DRAFT_PROP];
-        if (!pending && d && (d.shot || d.ref)) showDraft(d.shot, d.ref);
+        if (!pending && d && (d.shot || d.ref)) showDraft(d.shot, d.ref, d.extra);
         // The thread and the accepted proposal. Properties arrive with the
         // workflow AFTER the mount, so this is the only place they can be put
         // back -- without it a reload drops the whole conversation and the

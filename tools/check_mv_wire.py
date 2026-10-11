@@ -126,9 +126,11 @@ def merge(text, sk):
     return PL._apply_skeleton(text, PL._skeleton_from(sk))
 
 
-SK = {"hops": [{"kind": "R", "duration": "5 s", "section": 1, "section_kind": "chorus"},
-               {"kind": "C", "duration": "7 s", "section": 2, "section_kind": "verse"},
-               {"kind": "R", "duration": "6 s", "section": 3, "section_kind": None}],
+# `section` as the solver numbers it: from 0 (enumerate). The card and the
+# writer's turn show it from 1.
+SK = {"hops": [{"kind": "R", "duration": "5 s", "section": 0, "section_kind": "chorus"},
+               {"kind": "C", "duration": "7 s", "section": 1, "section_kind": "verse"},
+               {"kind": "R", "duration": "6 s", "section": 2, "section_kind": None}],
       "master_audio_start_s": 0.62, "song_file": "take.wav"}
 
 merged, errs = merge(plan(3, duration="WRONG", anchor="restart"), SK)
@@ -352,8 +354,8 @@ ck("the skeleton card's action is Write beats",
 # text made the check CRASH when the guard was replaced, and a crash reads as
 # a pass to anything that only looks at the exit code -- which is the same
 # trap as an empty string satisfying a substring search.
-_i_note = js.find("MV is not hand-tie")
-_i_ref = js.find("h3_ref_chain.py:3335")
+_i_note = js.find("A music video plays over master_audio_file")
+_i_ref = js.find("does not take. Set pin_mech to auto")
 _i_lay = js.find('button("Lay out"')
 ck("hand_tie refuses it and says why",
    _i_note > 0 and _i_ref > _i_note,
@@ -375,7 +377,8 @@ ck("...and says which offset belongs to which song",
 ck("Accept writes the offset through to the widget",
    "onWritten?.(shot, ref, ex)" in js)
 ck("the widget side writes master_audio_start_s",
-   re.search(r'startW\.value = String\(extra\.master_audio_start_s\)', ui)
+   # A number: master_audio_start_s is a FLOAT widget.
+   re.search(r'startW\.value = Number\(extra\.master_audio_start_s\)', ui)
    is not None)
 ck("...and only fills an EMPTY master_audio_file",
    re.search(r'if \(audioW && !String\(audioW\.value \|\| ""\)\.trim\(\)', ui)
@@ -383,6 +386,27 @@ ck("...and only fills an EMPTY master_audio_file",
    "-- silently overwriting a song the user wired is the worst outcome here")
 ck("the draft shows the offset before Accept",
    re.search(r"for \(const row of acceptDiff\(\)\)", js) is not None)
+
+print("\nreview fixes (2026-10-11)")
+# song_map opens what it is handed; the widget holds a name under h3_refs, so
+# the bare name failed from ComfyUI's working directory on Song AND Lay out.
+ck("Lay out resolves the song under h3_refs before song_map opens it",
+   re.search(r'_mvsong_path = _media\.resolve\(_mvsong, kinds=\{"audio", "video"\}\)',
+             routes) is not None
+   and "_songmap.song_map(\n                        _mvsong_path" in routes)
+ck("...and Song does too",
+   re.search(r'_song_path = _media\.resolve\(_song, kinds=\{"audio", "video"\}\)', routes)
+   is not None and "_songmap.song_map(\n                        _song_path" in routes)
+ck("the layout carries the NAME the widget holds, not the resolved path",
+   '"song_file": _mvsong,' in routes and '"song_file": _mvsong_path' not in routes)
+# A draft remembered without `extra` comes back after a reload and Accepts a
+# film whose every cut is off the bar.
+ck("a remembered draft keeps the MV offset",
+   re.search(r"extra: pending\.extra \|\| null", js) is not None)
+ck("...and a restored draft hands it back to showDraft",
+   re.search(r"showDraft\(d\.shot, d\.ref, d\.extra\)", js) is not None)
+ck("the card numbers sections from 1, as the solver's 0 arrives",
+   "Number(h.section) + 1" in js)
 
 print()
 if FAILS:

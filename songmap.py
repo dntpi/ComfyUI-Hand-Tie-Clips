@@ -1540,7 +1540,7 @@ def _bar_of(bars, t):
 
 
 def _hf_cache_root():
-    """Where the HuggingFace hub keeps its snapshots.
+    r"""Where the HuggingFace hub keeps its snapshots.
 
     Asked of the library rather than read out of the environment. The two
     answer the same thing -- the library honours the same variables and the same

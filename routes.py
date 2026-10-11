@@ -482,69 +482,69 @@ def register():
                 if kind is None:
                     skipped.append(f"{name}: not an image, video or audio file")
                     continue
-                    size = 0
-                    digest = _hashlib.sha256()
-                    temp = _os.path.join(
-                        dest, f".upload_{_os.getpid()}_{len(saved)}.part")
+                size = 0
+                digest = _hashlib.sha256()
+                temp = _os.path.join(
+                    dest, f".upload_{_os.getpid()}_{len(saved)}.part")
+                try:
+                    # D1i: hashed WHILE it streams, so a duplicate costs one
+                    # pass rather than a write followed by a read. The bytes
+                    # land on a temp name first, because a dedup decision
+                    # cannot be made until the last byte.
+                    with open(temp, "wb") as fh:
+                        while True:
+                            chunk = await part.read_chunk()
+                            if not chunk:
+                                break
+                            size += len(chunk)
+                            total += len(chunk)
+                            if total > MAX_UPLOAD_BYTES:
+                                raise ValueError("upload too large")
+                            digest.update(chunk)
+                            fh.write(chunk)
+                except Exception:
+                    # A partial file is worse than no file: it would list in
+                    # the picker and fail to open.
                     try:
-                        # D1i: hashed WHILE it streams, so a duplicate costs one
-                        # pass rather than a write followed by a read. The bytes
-                        # land on a temp name first, because a dedup decision
-                        # cannot be made until the last byte.
-                        with open(temp, "wb") as fh:
-                            while True:
-                                chunk = await part.read_chunk()
-                                if not chunk:
-                                    break
-                                size += len(chunk)
-                                total += len(chunk)
-                                if total > MAX_UPLOAD_BYTES:
-                                    raise ValueError("upload too large")
-                                digest.update(chunk)
-                                fh.write(chunk)
-                    except Exception:
-                        # A partial file is worse than no file: it would list in
-                        # the picker and fail to open.
-                        try:
-                            _os.remove(temp)
-                        except OSError:
-                            pass
-                        raise
-
-                    # D1i: dedup by CONTENT, not by name. `unique_path` only
-                    # ever appended _1, _2, -- so dropping the same picture
-                    # twice left photo.png AND photo_1.png forever. Two files
-                    # with the same bytes ARE the same file here: nothing reads
-                    # a path back out, only a name, and the name is the store.
-                    #
-                    # The existing file is kept, never replaced. If the author
-                    # has already wired photo.png into a plan, overwriting the
-                    # bytes under that name would silently change what their
-                    # film renders from.
-                    hexed = digest.hexdigest()
-                    same = _media.find_by_hash(dest, hexed)
-                    if same:
-                        try:
-                            _os.remove(temp)
-                        except OSError:
-                            pass
-                        print(f"[{TAG}] {name}: identical to {same}, not copied "
-                              f"again", flush=True)
-                        saved.append({"name": same, "size": size,
-                                      "kind": kind, "deduped": True})
-                        continue
-
-                    # The temp file BECOMES the real one only now, and only when
-                    # it is genuinely new -- which is what lets an upload land
-                    # under the name it asked for instead of always a suffix.
-                    path = _media.claim_for_hash(dest, name, hexed)
-                    try:
-                        _os.replace(temp, path)
+                        _os.remove(temp)
                     except OSError:
-                        # Another upload took the name between the check and
-                        # here. Never overwrite it.
-                        path = _media.unique_path(dest, name)
-                        _os.replace(temp, path)
+                        pass
+                    raise
+
+                # D1i: dedup by CONTENT, not by name. `unique_path` only
+                # ever appended _1, _2, -- so dropping the same picture
+                # twice left photo.png AND photo_1.png forever. Two files
+                # with the same bytes ARE the same file here: nothing reads
+                # a path back out, only a name, and the name is the store.
+                #
+                # The existing file is kept, never replaced. If the author
+                # has already wired photo.png into a plan, overwriting the
+                # bytes under that name would silently change what their
+                # film renders from.
+                hexed = digest.hexdigest()
+                same = _media.find_by_hash(dest, hexed)
+                if same:
+                    try:
+                        _os.remove(temp)
+                    except OSError:
+                        pass
+                    print(f"[{TAG}] {name}: identical to {same}, not copied "
+                          f"again", flush=True)
+                    saved.append({"name": same, "size": size,
+                                  "kind": kind, "deduped": True})
+                    continue
+
+                # The temp file BECOMES the real one only now, and only when
+                # it is genuinely new -- which is what lets an upload land
+                # under the name it asked for instead of always a suffix.
+                path = _media.claim_for_hash(dest, name, hexed)
+                try:
+                    _os.replace(temp, path)
+                except OSError:
+                    # Another upload took the name between the check and
+                    # here. Never overwrite it.
+                    path = _media.unique_path(dest, name)
+                    _os.replace(temp, path)
                 w = h = 0
                 if kind == "image":
                     path, w, h = _media.shrink_image(path)

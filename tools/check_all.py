@@ -35,6 +35,7 @@ CHECKS = [
     ("check_previs_warn.py", []),
     ("check_swap_boundary.py", []),
     ("check_swap_instruct.py", []),
+    ("check_unreachable.py", []),
     ("check_publish.py", []),
     ("check_prompts.py", []),
     ("check_waveform.py", []),

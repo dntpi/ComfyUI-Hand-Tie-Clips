@@ -1811,10 +1811,107 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
             "errors": last_errors, "warnings": []}
 
 
+# -- MV: the solved layout --------------------------------------------------
+#
+# In HTC a cut IS a hop boundary, so `solve()` and the plan are one decision at
+# two resolutions: the solver says how many hops, how long each, and which
+# start fresh; the writer says what happens inside them. Splitting it that way
+# is what keeps a cut on the bar, because a writer choosing its own lengths
+# puts every cut somewhere else and no amount of good prose recovers that.
+
+
+def _skeleton_from(skeleton):
+    """Normalise a solved layout, or None.
+
+    It arrives over HTTP from the solve stage, so a malformed one degrades to
+    "there is no layout" rather than taking the plan route down. The writer can
+    still write a plan without a layout; it just cannot promise the cuts.
+    """
+    if not isinstance(skeleton, dict):
+        return None
+    raw = skeleton.get("hops")
+    if not isinstance(raw, list) or not raw:
+        return None
+    hops = []
+    for h in raw:
+        if not isinstance(h, dict):
+            return None
+        hops.append({
+            "kind": "R" if str(h.get("kind") or "").strip().upper().startswith("R")
+                    else "C",
+            "duration": str(h.get("duration") or "").strip() or None,
+            "section": h.get("section"),
+            "section_kind": h.get("section_kind"),
+        })
+    return hops
+
+
+def _describe_skeleton(sk):
+    """The layout as a numbered list for the writer's turn.
+
+    It has to arrive IN the turn. A turn that does not carry the shape is a
+    turn where the model invents its own, which is the thing this exists to
+    prevent.
+    """
+    rows = []
+    for i, h in enumerate(sk, 1):
+        bit = "%02d %s %s" % (i, h["kind"], h.get("duration") or "?")
+        if h.get("section") is not None:
+            bit += "  (section %s%s)" % (
+                h["section"],
+                ", " + str(h["section_kind"]) if h.get("section_kind") else "")
+        rows.append(bit)
+    return "\n".join(rows)
+
+
+def _apply_skeleton(shot_text, sk):
+    """-> (text, errors). Duration and anchor are overwritten; count is not.
+
+    The asymmetry is the design. A wrong duration is a field code can set, so
+    asking the model to get it right spends a whole generate on something that
+    is about to be replaced. A wrong COUNT is the film: two hops where the bar
+    grid has six means the cuts are not on the music, and no overwriting of a
+    duration rescues a plan that is four beats short. So count goes back to
+    the repair loop and duration does not.
+    """
+    if not sk:
+        return shot_text, []
+    try:
+        data = json.loads(shot_text)
+    except (TypeError, ValueError):
+        return shot_text, []        # let validate() say it in its own words
+    if isinstance(data, dict):
+        shots = data.get("shots")
+        if not isinstance(shots, list):
+            return shot_text, []
+    elif isinstance(data, list):
+        shots, data = data, {"shots": data}
+    else:
+        return shot_text, []
+    if len(shots) != len(sk):
+        return shot_text, [
+            "the plan has %d shot(s) and the layout has %d. The layout is the "
+            "film: write exactly %d, one per line."
+            % (len(shots), len(sk), len(sk))]
+    for shot, h in zip(shots, sk):
+        if not isinstance(shot, dict):
+            continue
+        if h.get("duration"):
+            shot["duration"] = h["duration"]
+        # R is a restart and C is not. `anchor` is REMOVED rather than given a
+        # continuation value: the plan field has no such thing, and inventing
+        # one is how a continuation starts behaving like a cut.
+        if h["kind"] == "R":
+            shot["anchor"] = "restart"
+        else:
+            shot.pop("anchor", None)
+    return json.dumps(data, indent=2, ensure_ascii=False), []
+
+
 async def write_plan(brief, hops, *, complete_fn, files=None,
                      pinned=None, images=None, duration=None,
                      attempts=MAX_ATTEMPTS, use_schema=True, on_step=None,
-                     thread=None, proposal=None, pin_mech=""):
+                     thread=None, proposal=None, pin_mech="", skeleton=None):
     """Generate a plan and repair it until the node would accept it.
 
     `complete_fn(messages, schema=...)` is injected rather than imported so the
@@ -1833,8 +1930,22 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
              if pinned else list(files or []))
     rail_tags = {str(p.get("tag") or "").lstrip("@").strip()
                  for p in pinned if p.get("tag")}
+    # The layout OWNS the hop count. `hops` arrives from the panel's own field,
+    # which is a guess next to a solver's arithmetic.
+    sk = _skeleton_from(skeleton)
+    if sk:
+        hops = len(sk)
     text = build_user_turn(brief, hops, files, pinned=pinned, duration=duration,
                            pin_mech=pin_mech)
+    if sk:
+        text = ("This film is laid out already. The following is fixed and your "
+                "beats must match it shot for shot:\n\n"
+                + _describe_skeleton(sk)
+                + "\n\nWrite one beat per line above, in that order. `R` starts a "
+                  "new shot and `C` continues the one before it. Do not add, "
+                  "remove or reorder lines. The lengths are the solver's and are "
+                  "overwritten on the way in, so do not argue with them.\n\n"
+                + text)
     # A thread or an accepted proposal turns this from a one-shot into a
     # conversation; with neither it is the same two messages it has always
     # been, byte for byte, so a plain Write plan is unchanged.
@@ -1898,9 +2009,21 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
             last_errors = ["the reply contained no JSON. Answer with the two "
                            "JSON blocks and nothing else."]
         else:
-            last_errors, warnings = validate(
-                shot_text, ref_text, hops=hops, known_files=files,
-                pinned=pinned, duration=duration, pin_mech=pin_mech)
+            if sk:
+                # BEFORE validate, so the lints and the returned plan both see
+                # the layout. Merging after would let a shot pass a duration
+                # check it would have failed.
+                shot_text, _sk_errs = _apply_skeleton(shot_text, sk)
+                if _sk_errs:
+                    last_errors, warnings = _sk_errs, []
+                else:
+                    last_errors, warnings = validate(
+                        shot_text, ref_text, hops=hops, known_files=files,
+                        pinned=pinned, duration=duration, pin_mech=pin_mech)
+            else:
+                last_errors, warnings = validate(
+                    shot_text, ref_text, hops=hops, known_files=files,
+                    pinned=pinned, duration=duration, pin_mech=pin_mech)
         if not last_errors:
             speech = _speech_warnings(warnings)
             if accepted is None or len(speech) < len(accepted[3]):
@@ -1920,7 +2043,10 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                                      _speech_repair(accepted[3], pin_mech))})
                 turn_sch = sch
                 continue
-            return {"ok": True, "shot_plan": accepted[0],
+            return {"ok": True, "mv_skeleton": sk,
+                    "master_audio_start_s": (skeleton or {}).get("master_audio_start_s"),
+                    "song_file": (skeleton or {}).get("song_file"),
+                    "shot_plan": accepted[0],
                     "ref_plan": accepted[1], "attempts": attempt,
                     "errors": [], "warnings": accepted[2]}
 
@@ -1931,7 +2057,10 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
             print(f"[{TAG}] speech repair came back rejected: "
                   + "; ".join(last_errors[:2])
                   + " -- keeping the accepted plan", flush=True)
-            return {"ok": True, "shot_plan": accepted[0],
+            return {"ok": True, "mv_skeleton": sk,
+                    "master_audio_start_s": (skeleton or {}).get("master_audio_start_s"),
+                    "song_file": (skeleton or {}).get("song_file"),
+                    "shot_plan": accepted[0],
                     "ref_plan": accepted[1], "attempts": attempt,
                     "errors": [], "warnings": accepted[2]}
 
@@ -1976,7 +2105,10 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         if not errs:
             note = ("subjects were filled from the photo descriptions because "
                     "the model left them empty; read them before Accept.")
-            return {"ok": True, "shot_plan": shot_text, "ref_plan": stub,
+            return {"ok": True, "mv_skeleton": sk,
+                    "master_audio_start_s": (skeleton or {}).get("master_audio_start_s"),
+                    "song_file": (skeleton or {}).get("song_file"),
+                    "shot_plan": shot_text, "ref_plan": stub,
                     "attempts": int(attempts), "errors": [],
                     "warnings": list(warns) + [note]}
 

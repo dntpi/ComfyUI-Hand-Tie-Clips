@@ -519,13 +519,40 @@ check("and the thread is still the only thing that shrinks",
 # Typing "test" produced a ten-beat film: correct behaviour, and not what
 # anyone typing one word into a chat box meant. There was no way to ASK.
 check("the route accepts an `ask` stage",
-      re.search(r'not in \("ask", "propose", "develop", "edit", "song"\)', py)
-      is not None,
+      re.search(r"if stage not in \([^)]*[\"']ask[\"']", py) is not None,
       "-- without it the panel posts a stage the route rejects, which is "
       "exactly the D1j failure")
+# Not the whole tuple: pinning it meant adding `solve` broke a check about
+# `ask`, which is the brittleness this pack keeps paying for. What matters is
+# that every stage the PANEL sends is accepted by the ROUTE.
 check("...and dispatches it before the other three",
       py.index('if stage == "ask"') < py.index('elif stage == "song"')
       if 'if stage == "ask"' in py and 'elif stage == "song"' in py else False)
+
+# The panel and the route must agree, in BOTH directions. A stage the panel
+# sends that the route rejects is the D1j bug (`chat`); a stage the route
+# accepts that no branch handles is the same bug wearing a different hat.
+_SENT = set(re.findall(r'sendCanned\("(\w+)"', js)) | set(
+    re.findall(r'stage:\s*"(\w+)"', js))
+_WL = py[py.index("if stage not in ("):]
+_TUP = _WL[:_WL.index(")")]
+_ACCEPTED = set(re.findall(r'"(\w+)"', _TUP))
+# `develop` has no `stage == "develop"` branch BY DESIGN -- it is the else,
+# so an unknown-looking stage lands on it. Looking only for explicit branches
+# reports it as unhandled, which is the check being wrong.
+_EXPLICIT = set(re.findall(r'stage == "(\w+)"', py))
+_HANDLED = _EXPLICIT | ({"develop"} if re.search(r"else:\s*\n\s*out = await "
+                                                         r"_planner\.write_plan\(", py)
+                        else set())
+check("every stage the panel sends, the route accepts",
+      bool(_SENT) and _SENT <= _ACCEPTED,
+      "panel sends %s, route accepts %s" % (sorted(_SENT), sorted(_ACCEPTED)))
+check("and every stage the route accepts, a branch handles",
+      _ACCEPTED <= _HANDLED,
+      "accepted but never dispatched: %s" % sorted(_ACCEPTED - _HANDLED))
+check("`develop` really is the else-branch, not a missing case",
+      "develop" in _HANDLED and 'stage == "develop"' not in py,
+      "-- an absent explicit branch is only correct if something else is")
 check("the composer offers the choice rather than guessing",
       re.search(r'const chipRow = el\("div", "h3e-writer-row h3e-stage-chips"\)',
                 js) is not None,

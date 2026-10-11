@@ -719,11 +719,11 @@ def register():
         # second route is a second place for the "no model selected" answer and
         # the unload policy to drift apart.
         stage = str(body.get("stage") or "develop").strip().lower()
-        if stage not in ("ask", "propose", "develop", "edit", "song"):
+        if stage not in ("ask", "solve", "propose", "develop", "edit", "song"):
             return web.json_response(
                 {"ok": False,
                  "error": f"unknown stage {stage!r}: "
-                          f"ask, propose, develop, edit, song"},
+                          f"ask, solve, propose, develop, edit, song"},
                 status=400)
         # The conversation. Bounded server-side as well as in the panel: a
         # hand-rolled client that posts a thousand turns gets the last twelve,
@@ -734,6 +734,18 @@ def register():
         if proposal is not None and not isinstance(proposal, (dict, str)):
             proposal = None
         pin_mech = str(body.get("pin_mech") or "").strip()
+
+        # MV layout. A list of BAR NUMBERS, e.g. [{"bar": 17}]. The
+        # solver is arithmetic over a bar grid, so this plus the song is
+        # all it needs -- and it is the one number the user confirms: the
+        # section detector suggests, it does not decide.
+        mv_sections = []
+        for _sec in (body.get("sections") or []):
+            if isinstance(_sec, dict) and _sec.get("bar") is not None:
+                try:
+                    mv_sections.append({"bar": int(_sec["bar"])})
+                except (TypeError, ValueError):
+                    continue
         # Stage 3 edits what is already on the node. It reads shot_plan /
         # ref_plan straight off the request rather than the rail alone, so an
         # edit never depends on the panel having re-sent a register the user
@@ -859,6 +871,61 @@ def register():
                     proposal=proposal, shot_text=cur_shots,
                     ref_text=cur_refs, images=images,
                     duration=duration, pin_mech=pin_mech)
+            elif stage == "solve":
+                # No model call anywhere in here. `solve()` is arithmetic over
+                # a bar grid, so this stage is deterministic and a checker can
+                # assert its exact output -- which is why it is a stage of its
+                # own rather than a side effect of `song`.
+                from . import mv_solver as _mv
+                from . import songmap as _songmap
+                _mvsong = str(body.get("song_file") or "").strip()
+                if not _mvsong:
+                    return web.json_response(
+                        {"ok": False,
+                         "error": "no song file -- pick one in MEDIA, or set "
+                                  "a master_audio_file, then press Lay out."})
+                if not mv_sections:
+                    return web.json_response(
+                        {"ok": False,
+                         "error": "no bars to cut on -- confirm at least one "
+                                  "section on the SONG card first."})
+                _mvsong_path = _mvsong
+                _mvsecs = list(mv_sections)
+                _mvlisten = bool(body.get("listen"))
+
+                def _lay_out():
+                    # song_map has its own cache, so a second Lay out on the
+                    # same song is arithmetic over a warm map.
+                    _map = _songmap.song_map(
+                        _mvsong_path, listen=_mvlisten,
+                        status=lambda m: print(f"[{TAG}] {m}", flush=True),
+                        allow_download=False)
+                    return _mv.solve(_map, _mvsecs)
+
+                _out = await asyncio.get_running_loop().run_in_executor(
+                    None, _lay_out)
+                # Only what the card shows and Write beats needs. A solver hop
+                # also carries frames, film/song spans, sung flags and lyric
+                # lines; the lyric lines are a listening-path artefact and have
+                # no business riding a plan request.
+                _hops = [{
+                    "kind": _h.get("kind"),
+                    "duration": _h.get("duration"),
+                    "frames": _h.get("frames"),
+                    "section": _h.get("section"),
+                    "section_kind": _h.get("section_kind"),
+                } for _h in (_out.get("hops") or [])]
+                out = {"ok": True,
+                       "skeleton": {
+                           "hops": _hops,
+                           "master_audio_start_s": _out.get("master_audio_start_s"),
+                           "worst_cut_f": _out.get("worst_cut_f"),
+                           "end_s": _out.get("end_s"),
+                           "total_frames": _out.get("total_frames"),
+                           "labels": _out.get("labels"),
+                           "sections": _mvsecs,
+                           "song_file": _mvsong_path,
+                       }}
             elif stage == "song":
                 # MV mode's entry point. Measures a song and returns it; writes
                 # nothing. `listen` is off by default and stays off unless the

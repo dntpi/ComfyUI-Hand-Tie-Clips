@@ -1920,6 +1920,38 @@ video.h3e-trim-media {
     color: var(--h3-text);
 }
 
+/* -- MV: the bars field, and the layout it produces ---------------------- */
+/* The one suggestion the user CONFIRMS. Read-only it could only be stared at,
+ * and a section list is a suggestion at 4/9 -- it has to be editable or the
+ * number is not actually the user's. */
+.h3e-mv-bars {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+}
+/* The detector's reasoning, under the field. Indented so it reads as an aside
+ * to the number rather than as another number to confirm. */
+.h3e-mv-why {
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-faint);
+    padding-left: 8px;
+}
+/* A solved hop. Tabular so the durations line up down the column; they are
+ * the whole point of the card. */
+.h3e-mv-hop {
+    font-variant-numeric: tabular-nums;
+    color: var(--h3-accent);
+}
+/* What Accept will write beyond the two plan strings. Monospace and small:
+ * these are field assignments, not prose, and they sit under a JSON dump that
+ * is already the escape hatch for people who want the literal text. */
+.h3e-mv-diff {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: var(--h3-fs-xs);
+    color: var(--h3-muted);
+    padding-left: 8px;
+}
+
 .h3e-writer-row {
     display: flex;
     align-items: center;

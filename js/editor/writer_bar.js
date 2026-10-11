@@ -497,8 +497,15 @@ function writeThread(t) {
      * cannot read. Nothing is truncated here: the pane scrolls, and a beat that
      * runs long is a beat worth seeing before it goes on the cards.
      */
-    function showDraft(shotJson, refJson) {
-        pending = { shot: shotJson || "", ref: refJson || "" };
+    function showDraft(shotJson, refJson, resp) {
+        // `extra` carries what Accept may write beyond the two plan strings.
+        // Today that is the MV offset and the song it was solved against --
+        // acceptDraft is the only thing that reads it.
+        const extra = resp && resp.master_audio_start_s != null
+            ? { master_audio_start_s: resp.master_audio_start_s,
+                song_file: resp.song_file || "" }
+            : null;
+        pending = { shot: shotJson || "", ref: refJson || "", extra };
         rememberDraft();
         draftList.textContent = "";
         const { shots, refs } = summarise(pending.shot, pending.ref);
@@ -578,7 +585,34 @@ function writeThread(t) {
         wrap.appendChild(area);
         draftList.appendChild(wrap);
 
+        // Every field Accept will write, as a before -> after row, INCLUDING
+        // the ones that are not JSON strings. A draft that quietly also moves
+        // the audio offset is a draft whose diff does not describe it, and that
+        // offset is the number every cut in the film is placed against.
+        for (const row of acceptDiff()) {
+            draftList.appendChild(el("div", "h3e-cardbox-row h3e-mv-diff", row));
+        }
+
         draft.style.display = "";
+    }
+
+    /** What Accept writes beyond shot_plan/ref_plan, as readable rows. */
+    function acceptDiff() {
+        const ex = pending && pending.extra;
+        if (!ex || ex.master_audio_start_s == null) return [];
+        const arrow = "→";
+        const rows = [];
+        const cur = String(widgetByName(node, "master_audio_start_s")?.value ?? "");
+        rows.push(`master_audio_start_s  ${cur || "0.00"} ${arrow} `
+            + Number(ex.master_audio_start_s).toFixed(2));
+        const songNow = String(widgetByName(node, "master_audio_file")?.value || "");
+        if (!songNow) {
+            rows.push(`master_audio_file  (empty) ${arrow} ${ex.song_file || ""}`);
+        } else if (ex.song_file && songNow !== ex.song_file) {
+            rows.push(`master_audio_file  ${songNow} ${arrow} ${ex.song_file}`
+                + "  (different song - the offset belongs to the one solved)");
+        }
+        return rows;
     }
 
     function discardDraft() {
@@ -592,8 +626,23 @@ function writeThread(t) {
         if (!pending) return;
         const shot = pending.shot;
         const ref = pending.ref;
+        const ex = pending.extra;
+        // The offset is only meaningful against the song it was solved on, so a
+        // draft carrying a DIFFERENT song than the node is wired to is refused
+        // rather than written. Accepting it would give a film placed on the bar
+        // of a track nobody is going to render.
+        if (ex && ex.song_file) {
+            const now = String(widgetByName(node, "master_audio_file")?.value || "");
+            if (now && now !== ex.song_file) {
+                say(`master_audio_file is ${now}, but this layout was solved `
+                    + `against ${ex.song_file}. The offset belongs to the song it `
+                    + `was solved on. Point the node at that file, or lay the `
+                    + `film out again.`, "error");
+                return;
+            }
+        }
         discardDraft();
-        onWritten?.(shot, ref);
+        onWritten?.(shot, ref, ex);
         say("Accepted. On the cards now.", "hint");
     }
 
@@ -890,7 +939,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
     // `unknown stage 'chat': propose, develop, edit, song` before reaching the
     // model at all. Typing "a dynamic fight scene" is the most ordinary thing
     // this box is for, and it was the one input that could not be sent.
-    async function sendCanned(stage, text) {
+    async function sendCanned(stage, text, extra) {
         if (busy) return;
         const msg = String(text || "").trim();
         if (!msg) return;
@@ -920,6 +969,9 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
                     shot_plan: String(widgetByName(node, "shot_plan")?.value || ""),
                     ref_plan: String(widgetByName(node, "ref_plan")?.value || ""),
                     pin_mech: String(widgetByName(node, "pin_mech")?.value || ""),
+                    // The solved layout, when there is one. Code owns the
+                    // structure; this only tells the writer what it is filling.
+                    ...(extra && extra.skeleton ? { skeleton: extra.skeleton } : {}),
                 }),
             });
             const j = await r.json();
@@ -927,6 +979,8 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
                 || (j.warnings || []).join("\n");
             if (j.song) {
                 renderSongCard(j.song, note);
+            } else if (j.skeleton) {
+                renderSkeletonCard(j.skeleton);
             } else if (j.proposal) {
                 // A proposal is accepted by READING it, and Accepting it
                 // stores the proposal and writes nothing to the plan.
@@ -934,7 +988,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
             } else if (j.diffs) {
                 renderEditCard(j, note);
             } else if (j.shot_plan) {
-                showDraft(j.shot_plan || "", j.ref_plan || "");
+                showDraft(j.shot_plan || "", j.ref_plan || "", j);
                 addTurn("assistant", note
                     || `Draft of ${j.shot_plan ? "a plan" : ""}. Accept to put it on the cards.`);
             } else if (typeof j.text === "string" && j.text) {
@@ -1046,6 +1100,11 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
     }
 
     function renderSongCard(s, note) {
+        // The card shows a summary, not the map, and the summary carries no
+        // filename -- so Lay out would have nothing to solve. Read it off the
+        // widget: the song the user picked IS the song being laid out, and a
+        // second copy of it here is a second thing to forget.
+        const songForCard = String(widgetByName(node, "master_audio_file")?.value || "");
         const c = cardShell("plan", "SONG",
             s.bpm ? `${Math.round(s.bpm)} BPM` : "");
         const b = c.bodyEl;
@@ -1058,17 +1117,31 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
         if (s.steady != null) {
             b.appendChild(field("steady", `${s.steady}${(s.grid_drift_f != null) ? `, drift ${s.grid_drift_f}f` : ""}`));
         }
+        // The sections were a read-only list, which is the one thing they must
+        // not be: they are a SUGGESTION (4/9 on the headliner set, 2/9 with
+        // listening) and the only number the user actually confirms. A list
+        // cannot be confirmed or moved, it can only be stared at.
+        const barInput = el("input", "h3e-in h3e-mv-bars");
+        barInput.type = "text";
+        barInput.spellcheck = false;
+        barInput.value = (s.sections || []).map((x) => x.bar).filter((x) => x != null).join(", ");
+        barInput.placeholder = "1, 17, 33, 49";
+        barInput.title = "The bars the film may cut on. The detector suggests "
+            + "these; move them if it is wrong. Commas or spaces, bar numbers.";
+        const barRow = el("div", "h3e-cardbox-row");
+        barRow.appendChild(el("span", "h3e-cardbox-k", "bars"));
+        barRow.appendChild(barInput);
+        b.appendChild(barRow);
         if ((s.sections || []).length) {
-            b.appendChild(el("div", "h3e-cardbox-k", "sections — suggestions"));
             for (const x of s.sections) {
-                b.appendChild(el("div", "h3e-cardbox-row",
+                b.appendChild(el("div", "h3e-cardbox-row h3e-mv-why",
                     `bar ${x.bar ?? "?"}${x.from != null ? ` (${x.from.toFixed(1)}s)` : ""}`
                     + `${x.why ? ` — ${x.why}` : ""}`));
             }
-            b.appendChild(el("div", "h3e-note h3e-note-hint",
-                s.sections_confidence
-                || "Section detection is a suggestion — confirm or move them."));
         }
+        b.appendChild(el("div", "h3e-note h3e-note-hint",
+            s.sections_confidence
+            || "Section detection is a suggestion — confirm or move them."));
         if ((s.lines || []).length) {
             b.appendChild(el("div", "h3e-cardbox-k", "lyrics"));
             b.appendChild(el("div", "h3e-chat-text", s.lines.join("\n")));
@@ -1076,14 +1149,91 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
         // No Accept. A song card is a MEASUREMENT, and nothing about the plan
         // changes because you read it. The bar grid is the trustworthy part and
         // the user should see it before anything is written.
-        c.acts.appendChild(button("Propose the film", "Ask for a film cut to "
-            + "this song — hop lengths on bar lines, cuts at the sections you "
-            + "confirm above.", () => {
+        // MV is not hand-tie. `run()` refuses pin_mech=hand_tie together with
+        // master_audio_file (h3_ref_chain.py), so offering Lay out while hand_tie
+        // is selected offers a button that cannot work. Say why on the card
+        // instead -- and do NOT switch pin_mech for the user.
+        const readBars = () => String(barInput.value || "")
+            .split(/[^0-9]+/).map((x) => parseInt(x, 10))
+            .filter((n) => Number.isFinite(n) && n > 0);
+        if (String(widgetByName(node, "pin_mech")?.value || "").trim() === "hand_tie") {
+            b.appendChild(el("div", "h3e-note h3e-note-error",
+                "MV is not hand-tie: a chain pinned with master_audio_file is "
+                + "refused at run() time (h3_ref_chain.py:3335). Switch the join "
+                + "back to auto or motion_context to lay out an MV."));
+        } else {
+            c.acts.appendChild(button("Lay out", "Place the cuts on the bars "
+                + "you confirmed. No model call — this is arithmetic, and it "
+                + "tells you the shape of the film before you write a word of it.",
+                () => solveMv(songForCard, readBars())));
+        }
+        c.acts.appendChild(button("Propose the film", "Skip the layout and ask "
+            + "for a film cut to this song in one go — the writer chooses its "
+            + "own lengths, which puts the cuts off the bar.", () => {
                 draft.style.display = "none";
                 draftList.textContent = "";
                 sendCanned("develop", `propose a music video cut to this song. `
-                    + `Sections: ${(s.sections || []).map((x) => `bar ${x.bar}`).join(", ") || "none yet"}.`
+                    + `Sections: ${readBars().map((x) => `bar ${x}`).join(", ") || "none yet"}.`
                     + ` Nobody speaks: the song carries it.`);
+            }));
+        c.acts.appendChild(button("Close", "Dismiss this card",
+            () => { draft.style.display = "none"; draftList.textContent = ""; }));
+    }
+
+    /** POST stage:solve and render what comes back. No model call happens. */
+    async function solveMv(songFile, bars) {
+        if (busy) return;
+        setBusy(true);
+        try {
+            const r = await fetch(PLAN_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    stage: "solve",
+                    song_file: songFile,
+                    sections: bars.map((n) => ({ bar: n })),
+                }),
+            });
+            const j = await r.json();
+            if (!j.ok || !j.skeleton) {
+                say((j.errors || []).join("\n") || j.error || "could not lay out", "error");
+                return;
+            }
+            renderSkeletonCard(j.skeleton);
+        } catch (e) {
+            say(String(e), "error");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    function renderSkeletonCard(sk) {
+        const c = cardShell("plan", "LAYOUT",
+            `${sk.hops.length} hop(s)`);
+        const b = c.bodyEl;
+        for (const [k, v] of [
+            ["offset", `${sk.master_audio_start_s ?? 0} s into the song`],
+            ["worst cut", `${sk.worst_cut_f ?? "?"} f`],
+            ["film", sk.end_s ? `${Math.floor(sk.end_s / 60)}:${String(Math.round(sk.end_s % 60)).padStart(2, "0")}` : ""],
+        ]) {
+            const row = field(k, v);
+            if (row) b.appendChild(row);
+        }
+        b.appendChild(el("div", "h3e-cardbox-k", "hops — the solver owns these"));
+        for (const [i, h] of (sk.hops || []).entries()) {
+            b.appendChild(el("div", "h3e-cardbox-row h3e-mv-hop",
+                `${String(i + 1).padStart(2, "0")} ${h.kind === "R" ? "R" : "C"} `
+                + `${h.duration || "?"}${h.section ? ` · ${h.section_kind || "section"} ${h.section}` : ""}`));
+        }
+        b.appendChild(el("div", "h3e-note h3e-note-hint",
+            "Hop count, each length and the restarts are the solver's. Write "
+            + "beats fills the words only — a writer that picks its own lengths "
+            + "puts every cut off the bar."));
+        c.acts.appendChild(button("Write beats", "Fill this layout with beats.",
+            () => {
+                draft.style.display = "none";
+                draftList.textContent = "";
+                sendCanned("develop", "write the beats for this layout", { skeleton: sk });
             }));
         c.acts.appendChild(button("Close", "Dismiss this card",
             () => { draft.style.display = "none"; draftList.textContent = ""; }));

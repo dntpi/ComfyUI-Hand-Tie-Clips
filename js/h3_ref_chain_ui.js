@@ -278,9 +278,22 @@ function mountEditor(node) {
     // an accelerator for the manual recipe, not a step in it.
     const writer = createWriterBar(node, {
         hopCount,
-        onWritten: (shotJson, refJson) => {
+        onWritten: (shotJson, refJson, extra) => {
             if (shotJson) planWidget.value = shotJson;
             if (refJson) refWidget.value = refJson;
+            // MV: the offset the solver found, and the song it was found
+            // against. `extra` is null for every non-MV draft, so an ordinary
+            // Write plan touches neither widget -- this is the ONE case where
+            // Accept writes a third field, and only for a solved layout.
+            if (extra && extra.master_audio_start_s != null) {
+                const startW = widgetByName(node, "master_audio_start_s");
+                if (startW) startW.value = String(extra.master_audio_start_s);
+                const audioW = widgetByName(node, "master_audio_file");
+                if (audioW && !String(audioW.value || "").trim()
+                    && extra.song_file) {
+                    audioW.value = extra.song_file;
+                }
+            }
             // Force Shots mode by setting the property rather than calling
             // setMode(): setMode's "shots" branch is written for an EMPTY
             // editor and migrates the prompt widget into cards, which would

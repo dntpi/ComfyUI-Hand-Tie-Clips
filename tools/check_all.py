@@ -69,6 +69,7 @@ CHECKS = [
     ("check_planner.py", []),
     ("check_writer_ui.py", []),
     ("check_ask_stage.py", []),
+    ("check_mv_wire.py", []),
     ("check_structured_bank.py", []),
     ("check_dedup.py", []),
     ("check_write_handtie.py", []),

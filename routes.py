@@ -737,6 +737,15 @@ def register():
         if proposal is not None and not isinstance(proposal, (dict, str)):
             proposal = None
         pin_mech = str(body.get("pin_mech") or "").strip()
+        # MV is decided ONCE, here, and reaches every stage.
+        #
+        # It used to be decided per-stage from `bool(skeleton)`, so the MV
+        # rules existed only on the Lay out -> Write beats path. A develop
+        # with `master_audio_file` wired and no layout got the ordinary
+        # dialogue instructions and wrote <d> lines over a music video --
+        # which is what the user saw. Same treatment `pin_mech` already gets:
+        # one flag, computed from the node, passed everywhere.
+        mv = bool(str(body.get("song_file") or "").strip())
 
         # MV layout. A list of BAR NUMBERS, e.g. [{"bar": 17}]. The
         # solver is arithmetic over a bar grid, so this plus the song is
@@ -977,17 +986,17 @@ def register():
                     brief, complete_fn=complete_fn, thread=thread,
                     proposal=proposal, shot_text=cur_shots,
                     ref_text=cur_refs, images=images,
-                    duration=duration, pin_mech=pin_mech)
+                    duration=duration, pin_mech=pin_mech, mv=mv)
             elif stage == "propose":
                 out = await _planner.write_propose(
                     brief, complete_fn=complete_fn, hops=hops, files=files,
                     pinned=pinned, images=images, duration=duration,
-                    thread=thread, pin_mech=pin_mech)
+                    thread=thread, pin_mech=pin_mech, mv=mv)
             elif stage == "edit":
                 out = await _planner.write_edit(
                     brief, cur_shots, cur_refs, complete_fn=complete_fn,
                     hops=hops, files=files, pinned=pinned, duration=duration,
-                    thread=thread, pin_mech=pin_mech)
+                    thread=thread, pin_mech=pin_mech, mv=mv)
             else:
                 out = await _planner.write_plan(
                     brief, hops, complete_fn=complete_fn, files=files,
@@ -998,7 +1007,8 @@ def register():
                     # hop count, the writer's own lengths, dialogue over the
                     # song (user, 2026-10-11: 60 s track, 50 s plan).
                     skeleton=(body.get("skeleton")
-                              if isinstance(body.get("skeleton"), dict) else None))
+                              if isinstance(body.get("skeleton"), dict) else None),
+                    mv=mv)
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:

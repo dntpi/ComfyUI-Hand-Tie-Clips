@@ -1594,7 +1594,7 @@ def proposal_errors(obj):
 
 async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
                         images=None, duration=None, thread=None, attempts=2,
-                        pin_mech="", on_step=None):
+                        pin_mech="", on_step=None, mv=False):
     """Stage 1: the film, in words, before any beat exists.
 
     No repair loop. A proposal is not the plan, so `validate()` does not apply
@@ -1662,6 +1662,12 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
                "note": {"type": "string"},
            },
            "required": ["one_line", "look", "frames", "shots"]}
+    if mv:
+        # A proposal written for a music video that then describes dialogue is
+        # the half of the bug that survives the plan stage: the beats get fixed
+        # but the FILM has already been pitched as a spoken one. Same reason
+        # `pin_mech` reaches this stage rather than only `develop`.
+        lines += ["", MV_RULES]
     messages = build_thread(system_prompt(), thread, instruction="\n".join(lines),
                             images=images)
     last = []
@@ -1709,7 +1715,7 @@ def _word_diff(before, after, limit=24):
 async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
                      files=None, pinned=None, duration=None, thread=None,
                      attempts=MAX_ATTEMPTS, use_schema=True, on_step=None,
-                     pin_mech=""):
+                     pin_mech="", mv=False):
     """Stage 3: change named shots, leave every other byte alone.
 
     The model is asked for ONLY the shots it is changing, as `edits`, and this
@@ -1760,7 +1766,12 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
           "a field, list its name in `clear` (for example \"clear\": [\"moment\"]). "
           "Do not return shots you were not asked to change, and do not return "
           "the whole plan."
-        + ("\n\n" + hand_tie_rules(duration) if pin_mech == "hand_tie" else ""))
+        + ("\n\n" + hand_tie_rules(duration) if pin_mech == "hand_tie" else "")
+        # An EDIT is how a `<d>` line gets into an MV: nobody writes the
+        # dialogue, they ask for a shot to be changed and the rewrite puts a
+        # quoted line in. The rules have to be in the edit's own turn, not only
+        # in the develop that came before it.
+        + ("\n\n" + MV_RULES if mv else ""))
     sch = {"type": "object",
            "properties": {"edits": {"type": "array", "items": {"type": "object"}},
                           "note": {"type": "string"}},
@@ -1816,7 +1827,8 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
                                       indent=2, ensure_ascii=False)
                 errors, warnings = validate(new_text, ref_text, hops=hops,
                                             known_files=files, pinned=pinned,
-                                            duration=duration, pin_mech=pin_mech)
+                                            duration=duration, pin_mech=pin_mech,
+                                            mv=mv)
                 if not errors:
                     diffs = []
                     for idx, before, after in sorted(spliced, key=lambda t: t[0]):
@@ -1958,7 +1970,8 @@ def _apply_skeleton(shot_text, sk):
 async def write_plan(brief, hops, *, complete_fn, files=None,
                      pinned=None, images=None, duration=None,
                      attempts=MAX_ATTEMPTS, use_schema=True, on_step=None,
-                     thread=None, proposal=None, pin_mech="", skeleton=None):
+                     thread=None, proposal=None, pin_mech="", skeleton=None,
+                     mv=False):
     """Generate a plan and repair it until the node would accept it.
 
     `complete_fn(messages, schema=...)` is injected rather than imported so the
@@ -1982,8 +1995,19 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
     sk = _skeleton_from(skeleton)
     if sk:
         hops = len(sk)
+    # MV is a property of the FILM, not of how the film was laid out. A chain
+    # with `master_audio_file` renders over the song whatever wrote the beats,
+    # and the song drives every mouth -- so the spoken-word targets have to go
+    # whether or not anyone pressed Lay out.
+    #
+    # It was `mv=bool(sk)`, so the rules existed ONLY on the layout path: a
+    # develop with a song wired and no layout got the ordinary dialogue
+    # instructions and wrote <d> lines over a music video. Found by POSTING
+    # through the route -- the previous check_mv_wire called write_plan()
+    # directly, which is precisely how that gap survived a green suite.
+    mv = bool(mv or sk)
     text = build_user_turn(brief, hops, files, pinned=pinned, duration=duration,
-                           pin_mech=pin_mech, mv=bool(sk))
+                           pin_mech=pin_mech, mv=mv)
     if sk:
         text = ("This film is laid out already. The following is fixed and your "
                 "beats must match it shot for shot:\n\n"
@@ -2089,7 +2113,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
                 messages.append({"role": "user",
                                  "content": validator_turn(
                                      _speech_repair(accepted[3], pin_mech,
-                                                    mv=bool(sk)))})
+                                                    mv=mv))})
                 turn_sch = sch
                 continue
             return {"ok": True, "mv_skeleton": sk,
@@ -2150,7 +2174,7 @@ async def write_plan(brief, hops, *, complete_fn, files=None,
         stub = _stub_missing_subjects(ref_text)
         errs, warns = validate(
             shot_text, stub, hops=hops, known_files=files, pinned=pinned,
-            duration=duration, pin_mech=pin_mech, mv=bool(sk))
+            duration=duration, pin_mech=pin_mech, mv=mv)
         if not errs:
             note = ("subjects were filled from the photo descriptions because "
                     "the model left them empty; read them before Accept.")
@@ -2777,7 +2801,7 @@ _ASK_SYSTEM = (
 
 async def write_ask(brief, *, complete_fn, thread=None, proposal=None,
                     shot_text=None, ref_text=None, images=None,
-                    duration="", pin_mech="", max_chars=1800):
+                    duration="", pin_mech="", max_chars=1800, mv=False):
     """Stage 0: talk. No schema, no validate, no repair loop.
 
     Returns {ok, text, warnings}. `text` is prose and is shown as a chat turn
@@ -2807,6 +2831,11 @@ async def write_ask(brief, *, complete_fn, thread=None, proposal=None,
         except Exception:
             pass
     framing.append("Answer now, in prose. Do not produce a plan.")
+    if mv:
+        # The chat is where an MV gets talked about, and the first thing asked
+        # is "what should they say here?". Answering THAT with spoken-word
+        # targets is how a music video ends up with dialogue nobody asked for.
+        framing += ["", MV_RULES]
 
     messages = build_thread(
         _ASK_SYSTEM, thread, proposal=proposal, shot_text=shot_text,

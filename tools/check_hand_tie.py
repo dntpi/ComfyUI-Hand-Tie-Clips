@@ -522,6 +522,27 @@ ck("the key names its two windows and no prev_key", k == {"pin": "hand_tie", "he
 ck("window sound digests join only when sound is pinned",
    set(HT.hop_key_fields("aa", "bb", "ca", "cb")) == {"pin", "head", "tail", "head_audio", "tail_audio"})
 
+print("\nthe voice rides a hand-tie hop only where it speaks")
+_vt = ast.parse(src)
+_vns = {"_planner": type("P", (), {"spoken_spans": staticmethod(lambda t: [])})}
+for _fn in _vt.body:
+    if isinstance(_fn, ast.FunctionDef) and _fn.name in ("_voice_rides_hop", "_start_carries_voice"):
+        exec(compile(ast.Module([_fn], []), "h3_ref_chain.py", "exec"), _vns)
+_scv = _vns.get("_start_carries_voice")
+ck("_start_carries_voice exists in h3_ref_chain.py", _scv is not None)
+if _scv:
+    _said = "@mina waves. (S1) says, <d>[English] Hi.</d> Footsteps."
+    _quiet = "@mina bites the skewer and chews with her lips closed. Crunching, footsteps."
+    ck("a hand-tie hop with a line carries the voice", _scv(True, True, "off", _said))
+    ck("a quiet hand-tie hop does not (chain_00038)", not _scv(True, True, "off", _quiet))
+    ck("voice_every_hop=on still rides a quiet hand-tie hop", _scv(True, True, "on", _quiet))
+    ck("a plain chain start carries it, line or not", _scv(True, False, "off", _quiet))
+    ck("a continuation is not a start", not _scv(False, True, "on", _said))
+ck("run() gates hop and row voices on it",
+   "_voice_start = _start_carries_voice(hop_is_start, ht, voice_every_hop, block)" in src
+   and "_voice_start or str(hop_script) != " in src
+   and "_row_voice_on = (_voice_start or" in src)
+
 print("\nthe module stays ComfyUI-free")
 tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read())
 mods = {n.module if isinstance(n, ast.ImportFrom) else a.name

@@ -1210,6 +1210,21 @@ def _voice_rides_hop(mode, block):
     return bool("<d>" in text or _planner.spoken_spans(text))
 
 
+def _start_carries_voice(hop_is_start, hand_tie, mode, block):
+    """Whether a START hop carries the voice (a continuation asks `_voice_rides_hop`).
+
+    Every hand-tie hop is assembled as a start, and a start carries the voice,
+    so the quiet hops (a bite, a lick) got a timbre clip with no line to attach
+    to: the chain_00038 failure, on every hop that eats. A hand-tie hop carries
+    it where it speaks; `on` still rides every hop.
+    """
+    if not hop_is_start:
+        return False
+    if not hand_tie or str(mode or "off") == "on":
+        return True
+    return _voice_rides_hop("speaking", block)
+
+
 def _last_pixel_guide_idx():
     """AddGuide frame_idx for the last pixel frame of this hop.
 
@@ -4674,9 +4689,14 @@ class HandTieClips:
             # holds the reasoning and why `speaking` is not the same risk
             # as `on`.
             _voice_lift = _voice_rides_hop(voice_every_hop, block)
+            _voice_start = _start_carries_voice(hop_is_start, ht, voice_every_hop, block)
             hop_voice = voice is not None and (
-                hop_is_start or str(hop_script) != "next" or _voice_lift)
-            if not hop_is_start and voice is not None and not hop_voice:
+                _voice_start or str(hop_script) != "next" or _voice_lift)
+            if ht and hop_is_start and not _voice_start and (
+                    voice is not None or slot_voices):
+                print(f"[{TAG}] hop {i + 1}: hand-tie hop with no spoken line; "
+                      "the voice stays off it", flush=True)
+            elif not hop_is_start and voice is not None and not hop_voice:
                 _why = ("no spoken line in this beat"
                         if str(voice_every_hop) == "speaking"
                         else "pin carries the spoken audio; "
@@ -4716,7 +4736,7 @@ class HandTieClips:
             # Row voices obey the same gate as `voice_file`. A row that rides
             # all seven hops used to carry its recording onto all seven, and
             # a quiet hop fills its leftover frames with whatever it is shown.
-            _row_voice_on = (hop_is_start or str(hop_script) != "next"
+            _row_voice_on = (_voice_start or str(hop_script) != "next"
                              or _voice_lift)
             _hop_voice_tags = []
             _row_slot = {r["tag"]: r["slot"] for r in (hop_active or [])}
@@ -4725,6 +4745,8 @@ class HandTieClips:
                 if _rv is None:
                     continue
                 if not _row_voice_on:
+                    if hop_is_start:  # hand-tie, quiet: said once above
+                        continue
                     print(f"[{TAG}] hop {i + 1}: @{_pr['tag']} voice stays off "
                           f"this continue (voice_every_hop={voice_every_hop})",
                           flush=True)

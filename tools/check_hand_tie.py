@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import os
+import re
 import sys
 
 import torch
@@ -123,11 +124,12 @@ plan = [
 plan[-1]["moment_end"] = "<Subject 1> chops again and (S1) says, <d>[English] Right. Soup won't make itself.</d>"
 text, lay = HT.compile_previs(plan, [192] * 4)
 ck("one timed line per window, in order", text.count("At ") == 4, text)
-ck("plain moments sit on their window: 00:00.000, 00:05.667, 00:08.500",
-   all(s in text for s in ("At 00:00.000 <Subject 1> chops", "At 00:05.667 <Subject 1> leans",
-                           "At 00:08.500 <Subject 1> lifts")))
+ck("plain moments sit on their window: 00:00.000, 00:05.667, 00:08.500, each later one the same take",
+   all(s in text for s in ("At 00:00.000 <Subject 1> chops",
+                           "At 00:05.667 The same take continues as <Subject 1> leans",
+                           "At 00:08.500 The same take continues as <Subject 1> lifts")), text)
 ck("a speaking moment is led in so the window lands mid-line (window B 2.833 -> 1.833)",
-   "At 00:01.833 <Subject 1> turns to the window" in text, text)
+   "At 00:01.833 The same take continues as <Subject 1> turns to the window" in text, text)
 ck("there is no closing MOMENT (00150 cut to reach one): moment_end does not reach the previs",
    "chops again" not in text, text[-160:])
 no_moment = HT.compile_previs([{"beat": "First thing. Second thing."}, {"beat": "Third. Fourth."}], [192, 192])[0]
@@ -151,14 +153,16 @@ ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,
 # the bug _sound_sentence exists for: a moment is a picture, and a previs whose
 # text names only pictures gives its audio branch nothing to do but invent a
 # voice (chain_00147: 6 invented words, all in the first 4 s).
-ck("plain beats: first sentence per window; the last beat's own closing sound reaches no window",
-   plain == ("At 00:00.000 @cook chops herbs. At 00:02.833 @cook looks out of the window. "
-             "At 00:05.667 @cook sips."), plain)
+ck("plain beats: opening per window, the ending halfway to the next; the last beat's own sound reaches no window",
+   plain == ("At 00:00.000 @cook chops herbs. At 00:01.875 @cook turns to the window. "
+             "At 00:02.833 The same take continues as @cook looks out of the window. "
+             "At 00:04.708 @cook steps to the sink. "
+             "At 00:05.667 The same take continues as @cook sips."), plain)
 ck("_last_sentence still reads a pronoun ending (kept for moment_end's split)",
    HT._last_sentence("@dex steps out. He walks toward the camera.") == "@dex walks toward the camera.",
    HT._last_sentence("@dex steps out. He walks toward the camera."))
 ck("without moments: each beat's first sentence, one per hop",
-   no_moment == "At 00:00.000 First thing. At 00:02.833 Third.", no_moment)
+   no_moment == "At 00:00.000 First thing. At 00:02.833 The same take continues as third.", no_moment)
 
 print("\nthe moment carries its beat's sound, so the audio branch has a target")
 # chain_00147's kept previs (seed 219378) invented "Looks to be I'm hard." (5
@@ -191,14 +195,15 @@ _on = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."
                          {"beat": "@dex turns. He walks toward the camera down the street."}],
                         [192, 192])[0]
 ck("sound=False restores the exact old text (the A/B lever)",
-   _off == "At 00:00.000 @dex walks. At 00:02.833 @dex turns.", _off)
+   _off == ("At 00:00.000 @dex walks. At 00:02.833 The same take continues as @dex turns. "
+            "At 00:04.708 @dex walks toward the camera down the street."), _off)
 ck("and the default is the sound-carrying one", "The low hum of the refrigerator." in _on, _on)
 _eat = HT.moments([{"beat": "@mina slows by a stall. A sizzling grill, the vendor calling out orders."},
                    {"beat": "@mina holds the skewer up. (S1) says, <d>[English] Here goes.</d> She bites. "
                             "The crunch of her chewing, traffic hum, footsteps."}])
 ck("a window's sound is the PREVIOUS beat's closing sound (00154: chewing at the bite hop's opening)",
-   _eat == ["@mina slows by a stall. A sizzling grill, the vendor calling out orders.",
-            "@mina holds the skewer up. A sizzling grill, the vendor calling out orders."], _eat)
+   _eat == ["@mina slows by a stall. A sizzling grill.",
+            "@mina holds the skewer up. A sizzling grill."], _eat)
 _carry = HT.moments([{"beat": "@cook chops. The low hum of the refrigerator."}, {"beat": "@cook turns. She sips."},
                      {"beat": "@cook sits. She reads."}])
 _ws = HT.window_speaks(plan, 5)
@@ -225,7 +230,7 @@ _move = [{"beat": "@dex walks down a busy night street of neon shop signs, rolli
                   "Steady rain, distant traffic, footsteps splashing."}]
 _t = HT.compile_previs(_move, [192] * 3)[0]
 ck("each window carries the sound the hop before it ends on (window 0: its own)",
-   _t.count("A sizzling grill, crowd chatter, footsteps on wet pavement.") == 2
+   _t.count("A sizzling grill and footsteps on wet pavement.") == 2
    and "Rain pattering on the canvas awning, the bass beat muffled behind him." in _t
    and "Steady rain" not in _t, _t)
 ck("and the bass line the sound vocabulary misses is still carried",
@@ -385,14 +390,9 @@ ck("a fast walk is not a cut", HT.previs_cuts(_walk) == [], HT.previs_cuts(_walk
 ck("a cut inside a fast walk is found (00154 f66: 3.6x under the old median test)",
    HT.previs_cuts(_wcut) == [30], HT.previs_cuts(_wcut))
 _w5 = HT.layout([192] * 5)["windows"]
-ck("every previs cut seen so far sits on a moment boundary (7 takes, 00159-00162)",
-   all(HT.moment_cuts(t, _w5) == t for t in ([66, 196], [66, 130, 194], [66, 131, 198], [67, 135, 200],
-                                             [69, 134, 201], [68, 136, 200], [65, 130, 194, 263])))
-ck("a cut mid-moment is not the text's, and earns a new take",
-   HT.moment_cuts([100, 30], _w5) == [] and HT.moment_cuts([100, 70], _w5) == [70])
-ck("run() keeps a previs whose cuts are all on moment boundaries; only a mid-moment cut re-rolls",
-   "_free = [c for c in _cuts if c not in _ht.moment_cuts(_cuts, _lay[\"windows\"])]" in src
-   and "each on a moment" in src)
+ck("no cut is kept as the text's any more: a cut at a window re-rolls like any other (2026-10-13)",
+   "moment_cuts" not in src and not hasattr(HT, "moment_cuts") and "each on a moment" not in src
+   and "            if _cuts:" + chr(10) + "                # A cut that survives every take" in src)
 ck("a cut that moved, or a new one, is not the same cut",
    not HT.same_cut([321], [261, 327]) and not HT.same_cut([100], [200]) and not HT.same_cut([], [321]))
 
@@ -472,7 +472,8 @@ ck("the vlog's 16-word line is linted at 8 s, a 9-word one is not (cap 14)",
    len(HT.line_lints([_vlog], [192])) == 1
    and HT.line_lints([{"beat": "(S1) says, <d>[English] One two three four five six seven eight nine.</d>"}], [192]) == [])
 ck("run() stamps lines (with the hop lengths) before splitting crossing lines, and lints after",
-   "_ht.split_crossing(_ht.time_lines(shots, hop_frames=_tl_frames))" in src
+   "_ht.split_crossing(_ht.time_lines(_ht.quiet_sounds(shots)," in src
+   and "hop_frames=_tl_frames))]" in src
    and "_ht.line_lints(shots, lengths)" in src)
 _c = HT.time_lines([{"beat": _b}], hop_frames=[192])[0]["beat"]
 ck("the sentence after the line is stamped where the line ends at 3 words/s (00155: mouthing after it)",
@@ -542,6 +543,82 @@ ck("run() gates hop and row voices on it",
    "_voice_start = _start_carries_voice(hop_is_start, ht, voice_every_hop, block)" in src
    and "_voice_start or str(hop_script) != " in src
    and "_row_voice_on = (_voice_start or" in src)
+
+print("\nthe previs is one take, played to each beat's end (the Carolyn run, 2026-10-13)")
+_car = [
+    {"beat": "@carolyn walks down a busy shopping street, holding her phone out. (S1) says, "
+             "<d>[English] Welcome back.</d> She grins with her lips closed. "
+             "Traffic hum, footsteps, the chatter of the crowd."},
+    {"beat": "@carolyn keeps walking with the phone held out. (S1) says, <d>[English] Look.</d> "
+             "She smiles. Shop doors chiming, footsteps, a bus pulling away."},
+    {"beat": "@carolyn slows beside a street food stall and takes a skewer. (S1) says, "
+             "<d>[English] Here goes.</d> She raises the skewer. A sizzling grill, the vendor "
+             "calling out orders."},
+    {"beat": "@carolyn walks on and takes a big bite of the skewer, then chews slowly with her lips "
+             "closed. She swallows and gives the camera a thumbs up. The crunch of the skewer, "
+             "traffic hum and footsteps."},
+    {"beat": "@carolyn walks on, holding the half-eaten skewer. (S1) says, <d>[English] So good.</d> "
+             "She nods. Footsteps, traffic hum, a car horn far off."},
+]
+_ct, _cl = HT.compile_previs(_car, [192] * 5)
+ck("every later moment is the same take going on, not a new shot",
+   _ct.count(HT.CONTINUE) == 4 and _ct.startswith("At 00:00.000 @carolyn walks"), _ct)
+ck("the taste beat's swallow is stamped halfway to the next window (204 + 22 + 23 = f249)",
+   "At 10.375 @carolyn swallows".replace("10", "00:10") in _ct, _ct)
+ck("an ending is a person's action, never the beat's sound",
+   HT._end_sentence("@a walks. He sits. Traffic hum, footsteps.") == "@a sits."
+   and HT._end_sentence("@a walks. Traffic hum, footsteps.") == ""
+   and HT._end_sentence("@a walks.") == "", HT._end_sentence("@a walks. He sits. Traffic hum, footsteps."))
+ck("an authored moment gets no ending of its own",
+   "@x sits" not in HT.compile_previs([{"beat": "@x walks. @x sits.", "moment": "@x stands."},
+                                       {"beat": "@x runs."}], [192, 192])[0])
+_full = HT.compile_previs([{"beat": "@x walks. @x sits."}] * 6, [192] * 6)
+ck("no ending past the previs's last frame (a full section's last hop)",
+   all(int(s[3:5]) * 24 * 60 + float(s[6:12]) * 24 < _full[1]["previs"]
+       for s in re.findall(r"At \d\d:\d\d\.\d{3}", _full[0])) and _full[0].count("@x sits") == 5, _full[0])
+ck("no voice reaches the previs (gibberish from 'the chatter of the crowd')",
+   not re.search(r"chatter|calling out", _ct), _ct)
+
+print("\nvoices leave the sound sentences")
+ck("a voice item is taken out, the rest kept",
+   HT.quiet_sound("Traffic hum, footsteps, the chatter of the crowd.")
+   == ("Traffic hum and footsteps.", ["the chatter of the crowd"]),
+   HT.quiet_sound("Traffic hum, footsteps, the chatter of the crowd."))
+ck("a sound with no voice is returned untouched",
+   HT.quiet_sound("A sizzling grill, footsteps, a car horn far off.")
+   == ("A sizzling grill, footsteps, a car horn far off.", []))
+ck("non-verbal sounds stay (laughter, cheers, a refrigerator's hum)",
+   HT.quiet_sound("Laughter, cheers from the club, the low hum of the refrigerator.")[1] == [])
+ck("every item a voice: nothing left", HT.quiet_sound("Crowd chatter, voices.")[0] == "")
+_qs = HT.quiet_sounds(_car)
+ck("a hop's beat loses the voice from its sound sentence only",
+   _qs[0]["beat"].endswith("She grins with her lips closed. Traffic hum and footsteps.")
+   and _qs[2]["beat"].endswith("She raises the skewer. A sizzling grill.")
+   and _qs[1]["beat"] == _car[1]["beat"], [q["beat"][-60:] for q in _qs])
+ck("a beat ending on a person, or a line, is not a sound sentence",
+   HT.quiet_sounds([{"beat": "@a walks. She talks to the vendor."},
+                    {"beat": "@a waves. (S1) says, <d>[English] Stop talking.</d>"}])
+   == [{"beat": "@a walks. She talks to the vendor."},
+       {"beat": "@a waves. (S1) says, <d>[English] Stop talking.</d>"}])
+ck("the input shots are not modified", "chatter" in _car[0]["beat"])
+_lv = [w for w in HT.line_lints(_car, [192] * 5) if "names a voice" in w]
+ck("the lint names each voice it leaves out", len(_lv) == 2 and "the vendor calling out orders" in _lv[1], _lv)
+ck("run() compiles the hops from quiet_sounds",
+   "_ht.time_lines(_ht.quiet_sounds(shots)," in src)
+
+print("\na fresh section's first hop opens free (hop 1's closed mouth, its f171 cut)")
+ck("hop 1 of a fresh section, no start image: free",
+   HT.free_head(0, False) and HT.free_head(0, False, False))
+ck("a chained section's first hop keeps its head; so does any later hop; so does a start image",
+   not HT.free_head(0, True) and not HT.free_head(1, False) and not HT.free_head(0, False, True))
+ck("run() drops the head tie for it, and the head from its key",
+   "_free = _ht.free_head(_k, ht_chained[_si], start_image is not None)" in src
+   and "_ties = ([] if _free else [(0, _k)])" in src
+   and "_store.tensor_digest(_wp[_k]) if _hd else None" in src
+   and "_store.audio_digest(_ws[_k]) if _hd else None" in src)
+ck("run() does not tone-match a free hop to a window it was never tied to",
+   "if _ht.free_head(_k, ht_chained[_si], start_image is not None):" + chr(10)
+   + "                    # No head window to match" in src)
 
 print("\nthe module stays ComfyUI-free")
 tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read())

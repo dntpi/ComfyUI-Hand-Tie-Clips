@@ -3210,10 +3210,12 @@ class HandTieClips:
                 # continuation airlock and no `join` sentence.
                 # Each hop's own line is placed after its head window (time_lines),
                 # before a crossing line is split across the join (split_crossing).
+                # A voice in a beat's sound sentence is left out (quiet_sounds).
                 _tl_frames = [align_frame_count(_duration_frames((s or {}).get("duration") or duration))
                               for s in shots]
                 blocks = [_d.compile_shot(s, 0, establish)
-                          for s in _ht.split_crossing(_ht.time_lines(shots, hop_frames=_tl_frames))]
+                          for s in _ht.split_crossing(_ht.time_lines(_ht.quiet_sounds(shots),
+                                                                     hop_frames=_tl_frames))]
                 for _w in _ht.crossing_lints(shots):
                     print(f"[{TAG}] note: {_w}", flush=True)
             unique = len(shots)
@@ -4326,15 +4328,6 @@ class HandTieClips:
                     _best = (_p_imgs, _p_wav, _p_sr, _cuts, _p_seed, _rank)
                 if not _cuts:
                     break
-                _free = [c for c in _cuts if c not in _ht.moment_cuts(_cuts, _lay["windows"])]
-                if not _free:
-                    # Every cut is on a moment boundary: the text's, which a new
-                    # seed only moves a few frames. The hops check themselves.
-                    print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts at "
-                          + ", ".join(f"f{c}" for c in _cuts) + ", each on a moment "
-                          "boundary (the text's); keeping it, each hop checks its own cut",
-                          flush=True)
-                    break
                 _again = _ht.same_cut(_last_cuts, _cuts)
                 _last_cuts = _cuts
                 print(f"[{TAG}] hand-tie previs {_si + 1}: seed {_p_seed} cuts at "
@@ -4347,7 +4340,7 @@ class HandTieClips:
                     break
             del _pc, _pl
             _p_imgs, _p_wav, _p_sr, _cuts, _p_seed = _best[:5]
-            if [c for c in _cuts if c not in _ht.moment_cuts(_cuts, _lay["windows"])]:
+            if _cuts:
                 # A cut that survives every take is usually the text's: a beat that
                 # moves to a new place. The hop there may carry it as a camera move
                 # (00150's hop 5) or copy it (00154's hop 1).
@@ -5006,10 +4999,11 @@ class HandTieClips:
                     _si, _k = ht_pos[i]
                     _wp, _ws = ht_windows[_si]
                     _tl = _k + 1 < len(_wp)
+                    _hd = not _ht.free_head(_k, ht_chained[_si], start_image is not None)
                     hop_payload.update(_ht.hop_key_fields(
-                        _store.tensor_digest(_wp[_k]),
+                        _store.tensor_digest(_wp[_k]) if _hd else None,
                         _store.tensor_digest(_wp[_k + 1]) if _tl else None,
-                        _store.audio_digest(_ws[_k]),
+                        _store.audio_digest(_ws[_k]) if _hd else None,
                         _store.audio_digest(_ws[_k + 1]) if _tl else None))
                 hop_key = _store.hop_key(
                     None if (hop_restart or ht) else prev_key, hop_payload)
@@ -5157,7 +5151,10 @@ class HandTieClips:
                     _si, _k = ht_pos[i]
                     _wp, _ws = ht_windows[_si]
                     # A section's last hop has no window k+1: tied at its start only.
-                    _ties = [(0, _k)] + ([(-_ht.WINDOW, _k + 1)] if _k + 1 < len(_wp) else [])
+                    # A fresh section's first hop is tied at its end only (free_head).
+                    _free = _ht.free_head(_k, ht_chained[_si], start_image is not None)
+                    _ties = ([] if _free else [(0, _k)]) \
+                        + ([(-_ht.WINDOW, _k + 1)] if _k + 1 < len(_wp) else [])
                     for _fi, _w in _ties:
                         cond = _result(_core_call(
                             MiniMaxH3AddGuide, "the hand-tie window",
@@ -5169,6 +5166,8 @@ class HandTieClips:
                     _heard = [str(_w + 1) for _fi, _w in _ties if _ws[_w] is not None]
                     print(f"[{TAG}] hop {i + 1}: hand-tie, "
                           + (f"windows {_k + 1} and {_k + 2}" if len(_ties) == 2
+                             else f"window {_k + 2} (its end; the section opens free)" if _free and _ties
+                             else "no window (a one-hop section opens and ends free)" if _free
                              else f"window {_k + 1} (its start; the section's last hop)")
                           + f" of section {_si + 1} (picture"
                           + (f"; sound at window {', '.join(_heard)}" if _heard else " only")
@@ -5513,10 +5512,15 @@ class HandTieClips:
                 # is closed by seam_bend at the master write.
                 _si, _k = ht_pos[i]
                 _wp, _ws = ht_windows[_si]
-                imgs, (_ho, _to) = _ht.tone_match(imgs, _wp[_k], None)
-                tone_note = ("hand-tie head " + "/".join("%+.1f" % (float(v) * 255) for v in _ho)
-                             + " /255")
-                print(f"[{TAG}] hop {i + 1} tone: {tone_note}", flush=True)
+                if _ht.free_head(_k, ht_chained[_si], start_image is not None):
+                    # No head window to match: this hop sets the section's opening
+                    # tone, and seam_bend meets it to the next hop's first frame.
+                    imgs = imgs.clamp(0.0, 1.0)
+                else:
+                    imgs, (_ho, _to) = _ht.tone_match(imgs, _wp[_k], None)
+                    tone_note = ("hand-tie head " + "/".join("%+.1f" % (float(v) * 255) for v in _ho)
+                                 + " /255")
+                    print(f"[{TAG}] hop {i + 1} tone: {tone_note}", flush=True)
             if tone_on and not ht:
                 if i > 0 and prev_imgs is not None:
                     imgs, tone_note = _tone.compensate(

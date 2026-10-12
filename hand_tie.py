@@ -266,6 +266,85 @@ def _last_sentence(text):
     return parts[-1] if parts else ""
 
 
+def _end_sentence(text):
+    """How the beat ends: its last sentence after the first that names a person
+    (a pronoun opening counts, the named person put in its place), else "".
+
+    The previs used to get only the opening, so it never finished a beat. The
+    Carolyn taste beat (2026-10-13) stopped at "chews"; the swallow lived in its
+    second sentence. Window 5 then caught her mid-chew and hop 5 said its line
+    through it. Unlike `_last_sentence`, a sound sentence is never an ending.
+    """
+    parts = [p.strip() for p in _SENT.split(_no_speech(text)) if p.strip()]
+    who = _WHO_RE.search(_no_speech(text))
+    for p in reversed(parts[1:]):
+        if _WHO_RE.search(p):
+            return p
+        if who and _PRONOUN.match(p):
+            return _PRONOUN.sub(who.group(0), p, count=1)
+    return ""
+
+
+# A sound that is a voice. Under cfg 1.0 nothing is subtracted, so "the chatter of
+# the crowd" or "the vendor calling out orders" is rendered as people talking, and
+# with no words given H3 makes them up (the Carolyn run, 2026-10-13: gibberish over
+# the walk). Hand-tie leaves these out of the previs and the hops; `line_lints` says
+# so. Only voices that carry WORDS: laughter, giggles and cheers are the non-verbal
+# sounds the official soundscape field is for, and "hum" is the low hum of a
+# refrigerator, the sound bed this pack recommends.
+_VOICE = re.compile(
+    r"\b(chatter\w*|voices?|talk\w*|conversations?|murmur\w*|calls? out|calling out|"
+    r"call(?:s|ing)? orders|shout\w*|yell\w*|singing|sings|"
+    r"whisper\w*|chant\w*|banter\w*|announc\w*)\b", re.I)
+
+
+def quiet_sound(sentence):
+    """(the sound sentence without its voices, [what was taken out]).
+
+    Items are the sentence's comma / "and" parts. Nothing is rewritten unless a
+    voice is found; "" when every item was one."""
+    body = (sentence or "").strip()
+    items = [i.strip() for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", body.rstrip(".!")) if i.strip()]
+    gone = [i for i in items if _VOICE.search(i)]
+    if not gone:
+        return sentence, []
+    keep = [i for i in items if not _VOICE.search(i)]
+    if not keep:
+        return "", gone
+    s = keep[0] if len(keep) == 1 else ", ".join(keep[:-1]) + " and " + keep[-1]
+    return s[0].upper() + s[1:] + ".", gone
+
+
+def _trailing_sound(beat):
+    """(text before, the beat's trailing sound sentence) or None. A sound sentence
+    follows another sentence, names no one, opens on no pronoun, and holds no line."""
+    b = str(beat or "").rstrip()
+    cut = max(b.rfind(". "), b.rfind("! "), b.rfind("? "), b.rfind("</d> "))
+    if cut < 0:
+        return None
+    cut += 6 if b[cut:cut + 5] == "</d> " else 2
+    last = b[cut:]
+    if not last or "<d>" in last or _WHO_RE.search(last) or _SUBJ.match(last) \
+            or re.search(r"\(S\d+\)", last):
+        return None
+    return b[:cut], last
+
+
+def quiet_sounds(shots):
+    """Shots with the voices taken out of each beat's trailing sound sentence.
+    Returns copies; a beat without one, or without a voice in it, is unchanged."""
+    out = []
+    for sh in shots or []:
+        s = dict(sh or {})
+        tr = _trailing_sound(s.get("beat"))
+        if tr:
+            q, gone = quiet_sound(tr[1])
+            if gone:
+                s["beat"] = (tr[0] + q).rstrip()
+        out.append(s)
+    return out
+
+
 _SUBJ = re.compile(r"^(He|She|They|His|Hers|Their)\b")
 
 
@@ -321,12 +400,13 @@ def moments(shots, sound=PREVIS_SOUND):
     chewing.
     """
     out = []
+    quiet = lambda b: quiet_sound(_sound_sentence(b))[0]  # noqa: E731
     for k, sh in enumerate(shots):
         beat = (sh or {}).get("beat")
         m = str((sh or {}).get("moment") or "").strip() or _first_sentence(beat)
         if m and sound:
-            snd = _sound_sentence(beat) if not k else next(
-                (s for s in (_sound_sentence((shots[j] or {}).get("beat")) for j in range(k - 1, -1, -1))
+            snd = quiet(beat) if not k else next(
+                (s for s in (quiet((shots[j] or {}).get("beat")) for j in range(k - 1, -1, -1))
                  if s), "")
             if snd and snd not in m:
                 m = m.rstrip() + " " + snd
@@ -371,6 +451,14 @@ def compile_previs(shots, hop_frames, fps=FPS, sound=None):
     `sound` defaults to PREVIS_SOUND and appends each beat's sound sentence to
     its own moment. It does not disturb the lead-in arithmetic: `_spoken_s`
     counts words only inside `<d>`, and a sound sentence has none.
+
+    The previs is ONE take (2026-10-13). Every moment used to open on the person
+    again, a new place behind a new stamp: a shot list, and the previs cut there
+    on every take (f134 / f203 against windows 136 / 204, two seeds). A later
+    moment now reads as the same take going on (CONTINUE). And a beat is played
+    to its end: a derived moment's ending sentence is stamped halfway between its
+    head window and the next window, so the next window opens with the beat done
+    (the taste beat's swallow never reached the previs).
     """
     lay = layout(hop_frames)
     rows = []
@@ -382,8 +470,18 @@ def compile_previs(shots, hop_frames, fps=FPS, sound=None):
         sp = _spoken_s(m)
         if sp:
             t = max(0.0, t - _lead_s(sp))
+        if k and rows:
+            m = CONTINUE + (m if m[:1] in "@<" else m[:1].lower() + m[1:])
         rows.append("At %s %s" % (_stamp(t), m))
+        sh = shots[k] or {}
+        end = "" if str(sh.get("moment") or "").strip() else _end_sentence(sh.get("beat"))
+        at = w + WINDOW + (spacing(int(hop_frames[k])) - WINDOW) // 2
+        if end and at < lay["previs"]:
+            rows.append("At %s %s" % (_stamp(at / float(fps)), end))
     return " ".join(rows), lay
+
+
+CONTINUE = "The same take continues as "   # a later moment, so the previs does not cut to it
 
 
 _SID = re.compile(r"\(S\d+\)")
@@ -567,6 +665,13 @@ def line_lints(shots, hop_frames, fps=FPS):
     warn = []
     for k, sh in enumerate(shots or []):
         beat = str((sh or {}).get("beat") or "")
+        tr = _trailing_sound(beat)
+        gone = quiet_sound(tr[1])[1] if tr else []
+        if gone:
+            warn.append("hand-tie: shot %d's sound names a voice (%s). With no words to say, "
+                        "H3 makes them up, so the node leaves it out. Name sounds that are "
+                        "not voices: footsteps, traffic, a sizzling grill."
+                        % (k + 1, "; ".join(gone)))
         if _D.search(beat):
             m = _MOUTH.search(_D.sub(" ", beat))
             if m:
@@ -742,20 +847,14 @@ def same_cut(before, now, near=CUT_SAME_FRAMES):
         any(abs(int(c) - int(b)) <= near for b in before) for c in now)
 
 
-MOMENT_CUT_FRAMES = 12   # a cut this close to a later window's start is the text's
-
-
-def moment_cuts(cuts, windows, near=MOMENT_CUT_FRAMES):
-    """The cuts that sit on a moment boundary: the text asks for them.
-
-    Each moment opens with `At MM:SS` on its window, and the previs cuts there:
-    every one of 7 takes across chain_00159, 00160 and the 10-hop run cut within
-    10 frames of a window start (66/130/194, 68/136/200, ...), and a new seed only
-    moved them a few frames. Re-rolling for those cost ~5 min a take at native for
-    nothing. A hop that copies one is caught by its own check and retaken alone.
-    """
-    starts = [int(w) for w in windows[1:]]
-    return [c for c in cuts if any(abs(int(c) - w) <= near for w in starts)]
+# There is no "the text's cut" any more (moment_cuts, removed 2026-10-13). Every
+# one of 7 takes across chain_00159, 00160 and the 10-hop run cut within 10 frames
+# of a window start, so those cuts were kept as asked for by the text. They were:
+# the previs was written as a shot list (see compile_previs). A cut at a window
+# leaves the hop before it pinned to two different shots, and that hop cuts or
+# morphs to reach the second (Carolyn's hop 1 at f171 on both seeds, the shifting
+# background). The previs is now one take, so such a cut re-rolls like any other;
+# `same_cut` still stops a cut the next seed repeats.
 
 
 def window_cuts(cuts, windows):
@@ -910,6 +1009,20 @@ def settings_errors(overlap_frames, last_frame_guide="off", shots=None, hop_fram
         err.append("hand-tie: shot 1 has anchor=extend, but there is no hop before it to "
                    "continue. Remove the anchor from shot 1.")
     return err
+
+
+def free_head(k, chained, start_image=False):
+    """Whether hop k of a section opens untied: the first hop of a section that
+    starts fresh (hop 1, a restart) with no start image.
+
+    Such a hop has nothing before it to join, so its head window tied it to the
+    previs's cold first frames for no continuity at all. Hop 1 is where the
+    closed-mouth line kept landing (chain_00164, 00165, the Carolyn run) and
+    where it cut at f171 on both seeds to reach window 2. It is tied at its end
+    only. A chained section's first hop continues the film and keeps its head;
+    a start image is the head window's picture, so that one does too.
+    """
+    return int(k) == 0 and not chained and not start_image
 
 
 def hop_key_fields(head_digest, tail_digest, head_audio_digest=None, tail_audio_digest=None):

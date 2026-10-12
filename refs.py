@@ -732,6 +732,12 @@ def speaker_ids(text, speech_starts=()):
     starts after `. ` / `! ` / `? ` (or `.' `), a line break, or the previous
     line's `</d>`. `speech_starts` are the offsets where lines begin, from the
     caller, so the quoted-line rule is not copied here.
+
+    A line whose sentence names no one but writes the ID, "<Subject 1> walks
+    on. (S1) says, <d>...", is spoken by the first person of the nearest
+    sentence before it that names one, under the author's ID. Every vlog plan
+    is written that way, and this returned nothing for it: the voice was bound
+    without `(S1)` and `(S1)` was tied to no face (chain_00164-166).
     """
     import re                       # local, as everywhere else in this module
 
@@ -747,7 +753,20 @@ def speaker_ids(text, speech_starts=()):
     for start in sorted(speech_starts):
         opens = max([b for b in bounds if b <= start], default=0)
         who = [s for pos, s in subjects if opens <= pos < start]
-        if not who or who[0] in ids:
+        sx = None
+        if not who:
+            sx = re.search(r"\((S\d+)\)", text[opens:start])
+            before = [pos for pos, _s in subjects if pos < opens]
+            if not sx or not before:
+                continue
+            prev = max([b for b in bounds if b <= before[-1]], default=0)
+            who = [s for pos, s in subjects if prev <= pos < opens]
+            sx = sx.group(1)
+        if who[0] in ids:
+            continue
+        if sx and sx not in taken:
+            ids[who[0]] = sx
+            taken.add(sx)
             continue
         n += 1
         while f"S{n}" in taken:

@@ -780,6 +780,29 @@ def test_voice_binding():
     got = R.speaker_ids("<Subject 2> (S1) says: <d>[English] a</d> <Subject 1> "
                         "answers: <d>[English] b</d>", [30, 70])
     ck("a derived ID skips one the author took", got == {2: "S1", 1: "S2"}, repr(got))
+    # The vlog form, as time_lines stamps it: the ID opens a sentence of its own
+    # (chain_00164-166 bound the voice with no (S1)).
+    vlog = ("At 00:00.000 <Subject 1> walks down a busy street, holding her phone out. "
+            "At 00:01.000 (S1) says, <d>[English] What's up, everybody.</d> "
+            "At 00:03.300 She grins with her lips closed.")
+    got = R.speaker_ids(vlog, starts(vlog))
+    ck("'(S1) says' on its own is the person the sentence before names",
+       got == {1: "S1"}, repr(got))
+    two = ("<Subject 2> waves. <Subject 1> hands <Subject 2> a cup. (S2) says, "
+           "<d>[English] a</d> <Subject 2> laughs at <Subject 1>. (S1) answers, <d>[English] b</d>")
+    got = R.speaker_ids(two, starts(two))
+    ck("...its FIRST person, under the author's ID", got == {1: "S2", 2: "S1"}, repr(got))
+    got = R.speaker_ids("A street at dusk. (S1) says, <d>[English] a</d>",
+                        starts("A street at dusk. (S1) says, <d>[English] a</d>"))
+    ck("...and nobody when no sentence before names anyone", got == {}, repr(got))
+    got = R.speaker_ids("<Subject 1> walks on. She says, <d>[English] a</d>",
+                        starts("<Subject 1> walks on. She says, <d>[English] a</d>"))
+    ck("...and nobody when the author wrote no ID there", got == {}, repr(got))
+    out = R.bind_voices(head + "detailed_description:\n" + vlog,
+                        [{"audio": 1, "subject": 1, "who": "<Subject 1>"}],
+                        starts(head + "detailed_description:\n" + vlog))
+    ck("the vlog form's voice is bound with its speaker ID",
+       "<Audio 1> is the voice-timbre reference for <Subject 1> (S1)." in out, out[:300])
 
     bindings = [{"audio": 1, "subject": 1, "who": "<Subject 1>"},
                 {"audio": 2, "subject": 2, "who": "<Subject 2>"}]

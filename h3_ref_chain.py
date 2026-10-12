@@ -4299,6 +4299,9 @@ class HandTieClips:
                     if hop_store is not None:
                         hop_store.put(_p_key, _p_imgs, _p_wav, _p_sr,
                                       {"previs": _si + 1, "block": pblock[:400]})
+                        # The hops key on these frames' digests, so they must
+                        # be the bytes a cache hit returns.
+                        _p_imgs, _p_wav = _store.as_stored(_p_imgs, _p_wav)
                 # Every cut earns a new take: a hop copies one between its windows
                 # about half the time (chain_00154's hop 1, from f66). A cut inside
                 # a window is worse, so it ranks the takes when all of them cut.
@@ -5463,6 +5466,9 @@ class HandTieClips:
                                   latent=this_sampled)
                     hop_store.set_pointer(
                         str(shot.get("id") or f"shot{i + 1}"), hop_key)
+                    # Go on with what a hit returns: a chained hand-tie section
+                    # keys its previs on this hop's frames.
+                    imgs, wav = _store.as_stored(imgs, wav)
 
             # Tone compensation, at the one point both the render and the
             # cache-hit paths have converged.

@@ -50,6 +50,7 @@ CHECKS = [
     ("check_h3_cache.py", []),
     ("check_cache_keys.py", []),
     ("check_latent_sidecar.py", []),
+    ("check_store_roundtrip.py", []),
     ("check_master_spill.py", []),
     ("check_anchor.py", []),
     ("check_media_slots.py", []),

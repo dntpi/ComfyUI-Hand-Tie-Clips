@@ -107,6 +107,28 @@ def audio_digest(a):
     return h.hexdigest()[:16]
 
 
+def _q16(frame):
+    """One float frame [H,W,3] as the cache writes it: uint16, 0..65535."""
+    return (frame.clamp(0, 1) * 65535.0).round().to(torch.int32).numpy().astype("<u2")
+
+
+def as_stored(imgs, wav):
+    """`imgs` and `wav` exactly as `HopStore.get` will hand them back.
+
+    A render goes on with these after `put`, so a fresh hop and its cache hit
+    are the same bytes. Hand-tie keys every hop on digests of previs frames:
+    the decoder's float frames on the render, their 16-bit copy on the hit, so
+    the run after a finished one missed every hop. Frames are rewritten in
+    place when they are cpu float32, so a 362-frame previs is not held twice.
+    """
+    out = (imgs if imgs.dtype == torch.float32 and imgs.device.type == "cpu"
+           and imgs.is_contiguous() else torch.empty(imgs.shape, dtype=torch.float32))
+    for i in range(int(imgs.shape[0])):
+        out[i] = torch.from_numpy(_q16(imgs[i].detach().cpu()).astype(np.float32) / 65535.0)
+    wav = torch.from_numpy(wav.detach().cpu().contiguous().numpy().astype(np.float32))
+    return out, wav
+
+
 def hop_key(prev_key, payload):
     """Chained content key. `payload` must contain everything that changes pixels.
 
@@ -278,9 +300,7 @@ class HopStore:
                 stream.options = dict(FFV1_OPTIONS)
                 # Frame at a time: never materialise a second full-size copy.
                 for i in range(n):
-                    f = (imgs[i].clamp(0, 1) * 65535.0).round().to(torch.int32)
-                    frame = av.VideoFrame.from_ndarray(
-                        f.numpy().astype("<u2"), format=PIX_FMT)
+                    frame = av.VideoFrame.from_ndarray(_q16(imgs[i]), format=PIX_FMT)
                     for packet in stream.encode(frame):
                         container.mux(packet)
                 for packet in stream.encode():          # flush the encoder

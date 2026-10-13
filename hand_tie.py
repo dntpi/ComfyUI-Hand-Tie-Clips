@@ -310,10 +310,10 @@ def judge_sound(planned, heard):
 
 
 # The overlap (0.917 s) is dropped from the film, and its picture is the muted window,
-# so nothing said there can be kept or lip-synced. The stamp is soft: chain_00155 spoke
-# 1.2-1.7 s in at a 1.0 s stamp, Storyboard4 hop 3 at ~0.6 s ("-all everyone keeps
-# talking about", 2026-10-13). 1.5 s puts the early edge past the drop.
-LINE_START_S = 1.5
+# so nothing said there can be kept or lip-synced. The stamp does not reliably set the
+# onset: 1.5 s was tried (Storyboard4 run 2, 2026-10-14) and hop 3 lost more of its
+# line than at 1.0 s, so it is back, with the word it cost.
+LINE_START_S = 1.0
 
 
 # H3's speaking rate is not one number: chain_00153 spoke 14-17 words at about 2.1 a
@@ -352,7 +352,7 @@ def time_lines(shots, start_s=LINE_START_S, hop_frames=None, fps=FPS):
     """Shots whose first spoken line is placed after the overlap the hop opens on.
 
     Official H3 syntax, `At MM:SS.mmm` inside the description: the sentence that
-    carries the beat's first `<d>` gets `At 00:01.500`, and the beat's opening
+    carries the beat's first `<d>` gets `At 00:01.000`, and the beat's opening
     gets `At 00:00.000` so the stamps read in order. With `hop_frames`, the
     sentence after the last line is stamped too (`_close_s`): a closed-mouth
     action with no time had nothing to hold it, and chain_00155 mouthed through

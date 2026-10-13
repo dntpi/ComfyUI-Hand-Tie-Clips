@@ -84,6 +84,7 @@ from . import planner as _planner
 from . import refine_blend as _rblend
 from . import tiled_upsampler as _tu
 from . import upscale_guide as _ug
+from . import hear as _hear
 from . import hand_tie as _ht
 # One definition, in refs.py -- routes.py publishes that copy to the editor, so
 # a second constant here meant the node's slot count and the number the UI was
@@ -4145,6 +4146,24 @@ class HandTieClips:
         ht_previs_info = []
         ht_previs_media = []
         ht_previs_warn = []     # (section, seed, cuts) of a previs that cut on every try
+        # The previs renders at PREVIS_RESOLUTION when that is smaller than the
+        # hop canvas; each hop drafts its sound first unless something else owns
+        # the audio (master_audio_file is refused here; the boost's DisableNoise
+        # stage would break a frozen track, as it does for master audio).
+        pv_w, pv_h = int(width), int(height)
+        sound_first = False
+        if ht:
+            _pw, _ph = _canvas(_ht.PREVIS_RESOLUTION, aspect)
+            if _pw * _ph < pv_w * pv_h:
+                pv_w, pv_h = _pw, _ph
+            sound_first = bool(_ht.SOUND_FIRST) and locked is None and boost_model is None
+            sd_w, sd_h = _canvas(_ht.SOUND_DRAFT_RESOLUTION, aspect)
+            print(f"[{TAG}] hand-tie: previs at {pv_w}x{pv_h}"
+                  + (", muted where no window speaks" if _ht.PREVIS_MUTE else "")
+                  + (f"; each hop drafts its sound at {sd_w}x{sd_h} first ("
+                     + (f"checked by {_hear.available()})" if _hear.available()
+                        else "unchecked: no Whisper model in the local cache)")
+                     if sound_first else "; hops render their own sound"), flush=True)
         if ht:
             for _w in _ht.line_lints(shots, lengths):
                 print(f"[{TAG}] note: {_w}", flush=True)
@@ -4236,6 +4255,8 @@ class HandTieClips:
             _pc = _pl = None
             _best = None
             _last_cuts = []
+            # Muted unless a window speaks: that window carries the previs's words.
+            _mute = bool(_ht.PREVIS_MUTE) and not any(ht_speaks[_si])
             for _try in range(_ht.PREVIS_TRIES):
                 _p_seed = _p_seed0 + _try * _ht.PREVIS_RETRY_STRIDE
                 _p_key = None
@@ -4252,6 +4273,9 @@ class HandTieClips:
                                    for k, a in sorted((hop_ref_audios or {}).items())},
                         "start": _store.tensor_digest(start_image),
                         **({"from": _from} if _from else {}),
+                        **({"canvas": [pv_w, pv_h]} if (pv_w, pv_h) != (int(width), int(height))
+                           else {}),
+                        **({"mute": True} if _mute else {}),
                     })
                     _hit = hop_store.get(_p_key)
                 if _hit is not None:
@@ -4261,13 +4285,14 @@ class HandTieClips:
                           flush=True)
                 else:
                     print(f"[{TAG}] hand-tie previs {_si + 1}: rendering {_p_len}f "
-                          f"(seed {_p_seed}, {_p_steps} steps)", flush=True)
+                          f"(seed {_p_seed}, {_p_steps} steps, {pv_w}x{pv_h}"
+                          + (", muted" if _mute else "") + ")", flush=True)
                     _push_preview(unique_id, f"previs {_si + 1} sampling…", hop=i + 1, total=n)
                     if _pc is None:
                         packed = _core_call(
                             MiniMaxH3ReferenceToVideo, "the hand-tie previs",
                             clip=clip, vae=vae, audio_vae=audio_vae, prompt=pblock,
-                            width=int(width), height=int(height), length=_p_len,
+                            width=int(pv_w), height=int(pv_h), length=_p_len,
                             ref_image_size=ref_image_size, ref_images=hop_images,
                             ref_videos=hop_videos,
                             ref_video_audios=(hop_video_audios or None),
@@ -4290,9 +4315,18 @@ class HandTieClips:
                             _pc = _result(_core_call(
                                 MiniMaxH3AddGuide, "the chained previs pin",
                                 positive=_pc, latent=_pl, frame_idx=0,
-                                vae=vae, audio_vae=audio_vae,
-                                image=prev_imgs, audio=prev_audio,
+                                vae=vae, audio_vae=None if _mute else audio_vae,
+                                image=prev_imgs, audio=None if _mute else prev_audio,
                             ))[0]
+                        if _mute:
+                            # Frozen silence: the picture is denoised, the sound is
+                            # not, so nobody in the previs talks.
+                            _pa = _latents.from_dict(_pl)
+                            _sil = torch.zeros(2, int(math.ceil(_p_len / float(FPS) * _alock.VAE_SR))
+                                               + _alock.VAE_SR)
+                            _pl = _splice_locked_audio(_pl, _encode_locked_slice(
+                                audio_vae, _sil, 0.0, _p_len / float(FPS), int(_pa[1].shape[-1])))
+                            del _pa, _sil
                         _offload_text_encoder(clip, model)
                     if _p_steps not in sigma_cache:
                         sigma_cache[_p_steps] = _result(_core_call(
@@ -5005,6 +5039,11 @@ class HandTieClips:
                         _store.tensor_digest(_wp[_k + 1]) if _tl else None,
                         _store.audio_digest(_ws[_k]) if _hd else None,
                         _store.audio_digest(_ws[_k + 1]) if _tl else None))
+                    if sound_first:
+                        # Which draft is kept depends on the canvas, the tries and
+                        # whether anything listened.
+                        hop_payload["sound_first"] = [sd_w, sd_h, _ht.SOUND_TRIES,
+                                                      _hear.available() or "unchecked"]
                 hop_key = _store.hop_key(
                     None if (hop_restart or ht) else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
@@ -5221,6 +5260,86 @@ class HandTieClips:
                     print(f"[{TAG}] hop {i + 1}: last-frame guide "
                           f"(still at pixel frame_idx={_end})",
                           flush=True)
+
+                if ht and sound_first:
+                    # The sound first (hand_tie.SOUND_FIRST): the same block, refs,
+                    # voice and windows on a small canvas, sampled for its sound
+                    # only. The audio latent's length depends on the hop's length,
+                    # not its canvas, so the kept draft's sound is spliced into
+                    # this hop and frozen, as master_audio_file is: the picture
+                    # then renders to it, mouth included.
+                    _dp = _core_call(
+                        MiniMaxH3ReferenceToVideo, "the sound draft conditioning",
+                        clip=clip, vae=vae, audio_vae=audio_vae, prompt=block,
+                        width=int(sd_w), height=int(sd_h), length=hop_length,
+                        ref_image_size=ref_image_size, ref_images=hop_images,
+                        ref_videos=hop_videos,
+                        ref_video_audios=(hop_video_audios or None),
+                        ref_audios=hop_ref_audios)
+                    _dc, _dl = _result(_dp)[0], _result(_dp)[1]
+                    del _dp
+                    if refmod_image_blocks or refmod_video_blocks:
+                        _dc = _refmod.splice_blocks(
+                            _dc, hop_images, hop_videos,
+                            refmod_image_blocks, refmod_video_blocks)
+                    for _fi, _w in _ties:
+                        _dc = _result(_core_call(
+                            MiniMaxH3AddGuide, "the sound draft window",
+                            positive=_dc, latent=_dl, frame_idx=_fi,
+                            vae=vae, audio_vae=audio_vae,
+                            image=_wp[_w], audio=_ws[_w],
+                        ))[0]
+                    _offload_text_encoder(clip, model)
+                    _d_steps = int(shot.get("steps") or steps)
+                    if _d_steps not in sigma_cache:
+                        sigma_cache[_d_steps] = _result(_core_call(
+                            BasicScheduler, "the sigma schedule",
+                            model=model, scheduler=scheduler, steps=_d_steps,
+                            denoise=1.0))[0]
+                    _dg = _result(_core_call(BasicGuider, "the sound draft guider",
+                                             model=model, conditioning=_dc))[0]
+                    _want = _ht.hop_words(block)
+                    _lang = _ht.hop_language(block)
+                    _d_seed0 = (int(shot["seed"]) if shot.get("seed") is not None
+                                else (int(seed) + i) if seed_per_shot else int(seed))
+                    _kept = None
+                    for _t in range(_ht.SOUND_TRIES):
+                        _d_seed = (_d_seed0 + _t * _ht.SOUND_RETRY_STRIDE) & 0x7FFFFFFF
+                        _push_preview(unique_id, f"hop {i + 1}/{n} sound draft {_t + 1}…",
+                                      hop=i + 1, total=n)
+                        _ds = _result(_core_call(
+                            SamplerCustomAdvanced, "the sound draft sampler",
+                            noise=_result(_core_call(RandomNoise, "the sound draft noise",
+                                                     noise_seed=_d_seed))[0],
+                            guider=_dg, sampler=sampler, sigmas=sigma_cache[_d_steps],
+                            latent_image=_dl))[0]
+                        _da = vae_decode_audio(audio_vae, _ds)
+                        _heard = _hear.transcribe(_da["waveform"], _da["sample_rate"], _lang)
+                        if _heard is None:
+                            _ok, _score, _note = True, 0.0, "unchecked"
+                        else:
+                            _ok, _score, _note = _ht.judge_sound(_want, _heard)
+                        _z = _latents.from_dict(_ds)[1].detach().clone()
+                        if _kept is None or (_ok, _score) > (_kept[1], _kept[2]):
+                            _kept = (_z, _ok, _score, _d_seed, _note, _heard)
+                        print(f"[{TAG}] hop {i + 1}: sound draft {_t + 1} (seed {_d_seed}, "
+                              f"{sd_w}x{sd_h}): {_note}"
+                              + (f' -- heard "{_heard[:120]}"' if _heard else "")
+                              + ("" if _ok or _heard is None else
+                                 "; drafting again" if _t + 1 < _ht.SOUND_TRIES else ""),
+                              flush=True)
+                        del _ds, _da
+                        if _ok:
+                            break
+                    del _dc, _dl, _dg
+                    if not _kept[1]:
+                        print(f"[{TAG}] WARNING: hop {i + 1}: no sound draft passed in "
+                              f"{_ht.SOUND_TRIES}; keeping seed {_kept[3]} ({_kept[4]}). "
+                              "Check this hop's line.", flush=True)
+                    latent = _splice_locked_audio(latent, _kept[0])
+                    print(f"[{TAG}] hop {i + 1}: picture renders to the sound of draft "
+                          f"seed {_kept[3]} (frozen)", flush=True)
+                    del _kept
 
                 if locked is not None:
                     # AFTER the pin: Motion-Context may rewrite this hop's

@@ -510,7 +510,7 @@ big = [{"beat": "x"} for _ in range(7)]
 e = HT.settings_errors(22, "off", big, [192] * 7)
 ck("7 hops of 8 s are not refused: they chain into two sections", e == [], e)
 ck("run() pins a chained previs on the previous hop's real frames and uses them as window 0",
-   "MiniMaxH3AddGuide, \"the chained previs pin\"" in src and "image=prev_imgs, audio=prev_audio" in src
+   "MiniMaxH3AddGuide, \"the chained previs pin\"" in src and "image=prev_imgs, audio=None if _mute else prev_audio" in src
    and "pics[0] = prev_imgs[-_ht.WINDOW:].clone()" in src and '**({"from": _from} if _from else {})' in src)
 ck("run() ties a section's last hop at its start only",
    "if _k + 1 < len(_wp) else []" in src and "_store.tensor_digest(_wp[_k + 1]) if _tl else None" in src)
@@ -619,6 +619,66 @@ ck("run() drops the head tie for it, and the head from its key",
 ck("run() does not tone-match a free hop to a window it was never tied to",
    "if _ht.free_head(_k, ht_chained[_si], start_image is not None):" + chr(10)
    + "                    # No head window to match" in src)
+
+print("\nthe sound first: each hop drafts its sound, the picture renders to it")
+_blk = ("detailed_description: At 00:01.000 <Subject 1> says, <d>[English] What's up, "
+        "everybody, welcome back.</d> Footsteps. <d>[English] Okay here<|cutoff|></d>")
+ck("a hop's planned words: every line, the language tag and <|cutoff|> left out",
+   HT.hop_words(_blk) == ["what's", "up", "everybody", "welcome", "back", "okay", "here"],
+   HT.hop_words(_blk))
+ck("a quiet hop plans no words", HT.hop_words("@a bites the skewer. Crunching.") == [])
+ck("[English] or no tag is 'en'; another language is detected",
+   HT.hop_language(_blk) == "en" and HT.hop_language("<d>hi</d>") == "en"
+   and HT.hop_language("<d>[Japanese] konnichiwa</d>") is None)
+_line = HT.hop_words(_blk)
+ck("the line, said: passes",
+   HT.judge_sound(_line, " What's up everybody, welcome back. Okay, here.")[0])
+ck("most of the line plus a stray word: passes",
+   HT.judge_sound(_line, "What's up, everybody! Welcome back, okay?")[0])
+ck("a different sentence (00165 hop 4's 'quick brown fox'): fails",
+   not HT.judge_sound(_line, "makes a man please point up every time the quick brown fox jump")[0])
+ck("nothing said on a hop with a line: fails", not HT.judge_sound(_line, "")[0])
+ck("the line buried in invented speech: fails",
+   not HT.judge_sound(_line, "What's up everybody welcome back okay here and then the man said "
+                             "we should go down to the river before the rain comes")[0])
+ck("a quiet hop with a hum Whisper reads as 'Thank you.': passes",
+   HT.judge_sound([], " Thank you.")[0])
+ck("a quiet hop that talks: fails", not HT.judge_sound([], "so this is the best one on the street")[0])
+ck("a better draft scores higher",
+   HT.judge_sound(_line, "What's up everybody welcome back okay here")[1]
+   > HT.judge_sound(_line, "What's up everybody")[1])
+ck("the sound first is on, and the previs is smaller and muted, by default",
+   HT.SOUND_FIRST and HT.PREVIS_MUTE and HT.SOUND_TRIES >= 2
+   and HT.PREVIS_RESOLUTION.startswith("512p") and HT.SOUND_DRAFT_RESOLUTION.startswith("448p"))
+_t0 = torch.full((48, 8, 6, 3), 0.5)
+_ts = torch.full((22, 4, 3, 3), 0.6)
+_tm, (_th, _) = HT.tone_match(_t0, _ts, None)
+ck("tone_match takes a window cut from a smaller previs",
+   abs(float(_th[0]) - 0.1) < 1e-5 and abs(float(_tm[0, 0, 0, 0]) - 0.6) < 1e-5, (_th, _tm[0, 0, 0]))
+_d0 = src.find("if ht and sound_first:")
+_lk = src.find("latent = _splice_locked_audio(latent, _kept[0])")
+_sm = src.find('SamplerCustomAdvanced, "the sampler",')
+ck("run() drafts after the windows are tied and before the hop samples, then freezes the kept sound",
+   -1 not in (_d0, _lk, _sm) and src.find('"the hand-tie window"') < _d0 < _lk < _sm)
+ck("the draft carries the hop's own windows, and stops at the first pass",
+   'MiniMaxH3AddGuide, "the sound draft window"' in src
+   and "for _t in range(_ht.SOUND_TRIES):" in src and "if _ok:" + chr(10) + "                            break" in src)
+ck("run() keys the hop on the sound draft only when it runs",
+   'hop_payload["sound_first"] = [sd_w, sd_h, _ht.SOUND_TRIES,' in src
+   and "if sound_first:" + chr(10) + "                        # Which draft is kept" in src)
+ck("the sound first stands down under master audio and the boost",
+   "sound_first = bool(_ht.SOUND_FIRST) and locked is None and boost_model is None" in src)
+ck("the previs renders on its own canvas, keyed on it",
+   "width=int(pv_w), height=int(pv_h), length=_p_len," in src
+   and '**({"canvas": [pv_w, pv_h]} if (pv_w, pv_h) != (int(width), int(height))' in src)
+ck("the previs is muted unless a window speaks, keyed on it, and pins no sound when muted",
+   "_mute = bool(_ht.PREVIS_MUTE) and not any(ht_speaks[_si])" in src
+   and '**({"mute": True} if _mute else {}),' in src
+   and "audio=None if _mute else prev_audio" in src
+   and "_pl = _splice_locked_audio(_pl, _encode_locked_slice(" in src)
+_hs = open(os.path.join(HERE, "hear.py"), encoding="utf-8").read()
+ck("hear.py never downloads: local cache only, on the CPU",
+   "local_files_only=True" in _hs and "device=-1" in _hs and "snapshot_download(repo," in _hs)
 
 print("\nthe module stays ComfyUI-free")
 tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read())

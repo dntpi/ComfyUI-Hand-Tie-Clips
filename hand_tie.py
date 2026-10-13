@@ -82,6 +82,32 @@ PREVIS_SEED_OFFSET = 7919    # previs seed = the RUN seed at the section start +
 # turned off to A/B the fix, not to be configured.
 PREVIS_SOUND = True
 
+# The previs is layout: camera, place, light, blocking at the windows. It renders at
+# PREVIS_RESOLUTION when that is smaller than the hop canvas (AddGuide resizes each
+# window to the hop), so a take costs about a third and a re-roll is cheap. And it is
+# MUTED: its sound is never used (a window pins picture only unless the plan speaks
+# there), but it invented speech on every take and the windows showed mouths talking
+# at the joins. A muted previs renders to frozen silence. A section with a line in a
+# window keeps its sound: that window carries the previs's words. Module constants,
+# not widgets: hand-tie stays plug-and-play; these are here to A/B.
+PREVIS_RESOLUTION = "512p (0.44 MP)"
+PREVIS_MUTE = True
+
+# The sound first. Each hand-tie hop drafts its soundtrack at SOUND_DRAFT_RESOLUTION
+# (the picture is thrown away), checks it against the line it should say, and the
+# real hop renders its picture to that soundtrack, frozen. H3 lip-syncs to a fixed
+# track (the music videos: the take drives the mouth), so a line can no longer come
+# out of a closed mouth (chain_00164/00165 hop 1, 00165 hops 7/8/10), and invented
+# words are caught on a draft costing a fraction of a hop (00165 hop 4, the Carolyn
+# run's gibberish). The check needs Whisper in the local Hugging Face cache; without
+# it the first draft is kept unchecked and the lock still holds the mouth.
+SOUND_FIRST = True
+SOUND_DRAFT_RESOLUTION = "448p (0.34 MP)"
+SOUND_TRIES = 3              # drafts before the best one is used anyway
+SOUND_RETRY_STRIDE = 15485863   # seed step between drafts: clear of hops and previs
+SOUND_RECALL = 0.6           # share of the line's words a draft must say
+QUIET_WORDS = 2              # words a quiet hop may "say" (Whisper hears "Thank you." in a hum)
+
 # How long a trailing sentence must be to count as a sound bed rather than another
 # clause. A narrowband bed is a noun phrase naming a thing or two -- "The low hum
 # of the refrigerator." is 6 words, "Steady rain, distant traffic, footsteps
@@ -574,6 +600,52 @@ def crossing_lints(shots):
     return warn
 
 
+# --- the sound first -----------------------------------------------------------
+
+_WORD = re.compile(r"[a-z0-9']+")
+
+
+def _words(text):
+    return [w.strip("'") for w in _WORD.findall(str(text or "").lower()) if w.strip("'")]
+
+
+def hop_words(block):
+    """The words a hop's assembled block asks it to say, in order. A line cut by
+    `<|cutoff|>` counts up to the cut."""
+    out = []
+    for m in _D.findall(str(block or "")):
+        out += _words(_TAG.sub("", m.replace(CUTOFF, " ")))
+    return out
+
+
+def hop_language(block):
+    """Whisper's language code for the block's first line: "en" for `[English]`
+    or an untagged line, None (detect) for any other tag."""
+    m = _D.search(str(block or ""))
+    tag = _TAG.match(m.group(1)) if m else None
+    if not tag:
+        return "en"
+    return "en" if "english" in tag.group(0).lower() else None
+
+
+def judge_sound(planned, heard):
+    """(ok, score, note) for a draft's transcript against the hop's line.
+
+    A hop with a line must say at least SOUND_RECALL of its words and invent few
+    others; a quiet hop may say QUIET_WORDS. Order-free on purpose: Whisper splits
+    and joins words its own way, and a wrong word order is not what fails a film.
+    """
+    want, got = list(planned or []), _words(heard)
+    if not want:
+        ok = len(got) <= QUIET_WORDS
+        return ok, -float(len(got)), ("quiet" if not got else "quiet hop says %d word(s)" % len(got))
+    ws = set(want)
+    recall = len(ws & set(got)) / float(len(ws))
+    extra = sum(1 for w in got if w not in ws)
+    ok = recall >= SOUND_RECALL and extra <= max(3, len(want) // 2)
+    return ok, recall - 0.05 * extra, "%d%% of the line, %d other word(s)" % (round(100 * recall), extra)
+
+
 # --- where a hop's own line sits ----------------------------------------------
 #
 # A hand-tie hop opens on its head window (the previs's sound, 0.92 s) and the
@@ -717,8 +789,10 @@ def tone_match(images, head, tail=None, frames=WINDOW):
     n, f = int(images.shape[0]), int(frames)
     if n < 2 * f:
         raise ValueError("hand-tie tone: a %d-frame hop cannot hold two %d-frame spans" % (n, f))
+    # Channels only: the means are over every pixel, so a window cut from a smaller
+    # previs (PREVIS_RESOLUTION) is compared with the hop as it is.
     for name, w in (("head", head), ("tail", tail)):
-        if w is not None and tuple(w.shape[1:]) != tuple(images.shape[1:]):
+        if w is not None and int(w.shape[-1]) != int(images.shape[-1]):
             raise ValueError("hand-tie tone: the %s window is %s, the hop is %s"
                              % (name, tuple(w.shape[1:]), tuple(images.shape[1:])))
     mean = lambda x: x.float().mean(dim=(0, 1, 2))  # noqa: E731

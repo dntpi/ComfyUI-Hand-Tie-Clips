@@ -153,10 +153,9 @@ ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,
 # the bug _sound_sentence exists for: a moment is a picture, and a previs whose
 # text names only pictures gives its audio branch nothing to do but invent a
 # voice (chain_00147: 6 invented words, all in the first 4 s).
-ck("plain beats: opening per window, the ending halfway to the next; the last beat's own sound reaches no window",
-   plain == ("At 00:00.000 @cook chops herbs. At 00:01.875 @cook turns to the window. "
-             "At 00:02.833 The same take continues as @cook looks out of the window. "
-             "At 00:04.708 @cook steps to the sink. "
+ck("plain beats: one stamp per window, each beat to its end; the last beat's own sound reaches no window",
+   plain == ("At 00:00.000 @cook chops herbs. @cook turns to the window. "
+             "At 00:02.833 The same take continues as @cook looks out of the window. @cook steps to the sink. "
              "At 00:05.667 The same take continues as @cook sips."), plain)
 ck("_last_sentence still reads a pronoun ending (kept for moment_end's split)",
    HT._last_sentence("@dex steps out. He walks toward the camera.") == "@dex walks toward the camera.",
@@ -196,14 +195,14 @@ _on = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."
                         [192, 192])[0]
 ck("sound=False restores the exact old text (the A/B lever)",
    _off == ("At 00:00.000 @dex walks. At 00:02.833 The same take continues as @dex turns. "
-            "At 00:04.708 @dex walks toward the camera down the street."), _off)
+            "@dex walks toward the camera down the street."), _off)
 ck("and the default is the sound-carrying one", "The low hum of the refrigerator." in _on, _on)
 _eat = HT.moments([{"beat": "@mina slows by a stall. A sizzling grill, the vendor calling out orders."},
                    {"beat": "@mina holds the skewer up. (S1) says, <d>[English] Here goes.</d> She bites. "
                             "The crunch of her chewing, traffic hum, footsteps."}])
 ck("a window's sound is the PREVIOUS beat's closing sound (00154: chewing at the bite hop's opening)",
    _eat == ["@mina slows by a stall. A sizzling grill.",
-            "@mina holds the skewer up. A sizzling grill."], _eat)
+            "@mina holds the skewer up. @mina bites. A sizzling grill."], _eat)
 _carry = HT.moments([{"beat": "@cook chops. The low hum of the refrigerator."}, {"beat": "@cook turns. She sips."},
                      {"beat": "@cook sits. She reads."}])
 _ws = HT.window_speaks(plan, 5)
@@ -563,8 +562,8 @@ _car = [
 _ct, _cl = HT.compile_previs(_car, [192] * 5)
 ck("every later moment is the same take going on, not a new shot",
    _ct.count(HT.CONTINUE) == 4 and _ct.startswith("At 00:00.000 @carolyn walks"), _ct)
-ck("the taste beat's swallow is stamped halfway to the next window (204 + 22 + 23 = f249)",
-   "At 10.375 @carolyn swallows".replace("10", "00:10") in _ct, _ct)
+ck("the taste beat plays to its swallow inside its own moment, with no stamp of its own",
+   "chews slowly with her lips closed. @carolyn swallows" in _ct and _ct.count("At ") == 5, _ct)
 ck("an ending is a person's action, never the beat's sound",
    HT._end_sentence("@a walks. He sits. Traffic hum, footsteps.") == "@a sits."
    and HT._end_sentence("@a walks. Traffic hum, footsteps.") == ""
@@ -573,9 +572,8 @@ ck("an authored moment gets no ending of its own",
    "@x sits" not in HT.compile_previs([{"beat": "@x walks. @x sits.", "moment": "@x stands."},
                                        {"beat": "@x runs."}], [192, 192])[0])
 _full = HT.compile_previs([{"beat": "@x walks. @x sits."}] * 6, [192] * 6)
-ck("no ending past the previs's last frame (a full section's last hop)",
-   all(int(s[3:5]) * 24 * 60 + float(s[6:12]) * 24 < _full[1]["previs"]
-       for s in re.findall(r"At \d\d:\d\d\.\d{3}", _full[0])) and _full[0].count("@x sits") == 5, _full[0])
+ck("one stamp per window and no more (each extra stamp was a cut: eeebcad, 4.83/7.54/10.50 s)",
+   _full[0].count("At ") == 6 and _full[0].count("@x sits") == 6, _full[0])
 ck("no voice reaches the previs (gibberish from 'the chatter of the crowd')",
    not re.search(r"chatter|calling out", _ct), _ct)
 

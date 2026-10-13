@@ -429,7 +429,16 @@ def moments(shots, sound=PREVIS_SOUND):
     quiet = lambda b: quiet_sound(_sound_sentence(b))[0]  # noqa: E731
     for k, sh in enumerate(shots):
         beat = (sh or {}).get("beat")
-        m = str((sh or {}).get("moment") or "").strip() or _first_sentence(beat)
+        m = str((sh or {}).get("moment") or "").strip()
+        if not m:
+            # The beat played to its end, in the same moment: an ending with a
+            # stamp of its own was a cut on every take (the Carolyn eeebcad run
+            # cut at 4.83 / 7.54 / 10.50 s against endings stamped 4.71 / 7.54 /
+            # 10.38 s). Every `At` is a shot boundary to H3.
+            m = _first_sentence(beat)
+            end = _end_sentence(beat)
+            if m and end:
+                m = m + " " + end
         if m and sound:
             snd = quiet(beat) if not k else next(
                 (s for s in (quiet((shots[j] or {}).get("beat")) for j in range(k - 1, -1, -1))
@@ -481,10 +490,9 @@ def compile_previs(shots, hop_frames, fps=FPS, sound=None):
     The previs is ONE take (2026-10-13). Every moment used to open on the person
     again, a new place behind a new stamp: a shot list, and the previs cut there
     on every take (f134 / f203 against windows 136 / 204, two seeds). A later
-    moment now reads as the same take going on (CONTINUE). And a beat is played
-    to its end: a derived moment's ending sentence is stamped halfway between its
-    head window and the next window, so the next window opens with the beat done
-    (the taste beat's swallow never reached the previs).
+    moment now reads as the same take going on (CONTINUE). A beat is played to
+    its end inside its own moment (`moments`), never under a stamp of its own:
+    one `At` per window, because every stamp is a place H3 cuts.
     """
     lay = layout(hop_frames)
     rows = []
@@ -499,11 +507,6 @@ def compile_previs(shots, hop_frames, fps=FPS, sound=None):
         if k and rows:
             m = CONTINUE + (m if m[:1] in "@<" else m[:1].lower() + m[1:])
         rows.append("At %s %s" % (_stamp(t), m))
-        sh = shots[k] or {}
-        end = "" if str(sh.get("moment") or "").strip() else _end_sentence(sh.get("beat"))
-        at = w + WINDOW + (spacing(int(hop_frames[k])) - WINDOW) // 2
-        if end and at < lay["previs"]:
-            rows.append("At %s %s" % (_stamp(at / float(fps)), end))
     return " ".join(rows), lay
 
 

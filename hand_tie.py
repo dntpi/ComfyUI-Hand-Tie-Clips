@@ -19,6 +19,8 @@ tools/check_hand_tie.py runs without a server.
 
 import re
 
+import torch
+
 FPS = 24
 OVERLAP = 22                # frames each hop shares with the one before (17 + 5: one token group + 2)
 MIN_HOP_FRAMES = 56         # 17*3+5: shortest hop whose 22-frame head and tail do not share frames
@@ -64,6 +66,147 @@ def write_rows(video, src, rows, tail=False):
     else:
         out[:, :, :rows] = taken
     return out
+
+# Lab joins. `rows` is today's path. The other three hold the windows in the
+# latent instead of calling Motion-Context and AddGuide. The node property
+# picks one; absent is `rows`.
+LAB_JOINS = ("rows", "inplace", "inplace_cont", "inplace_cont_audio")
+
+# A local copy of directives._OFFICIAL_FIELDS. This module does not import it.
+_OFFICIAL_FIELDS = (
+    "subject_definitions:",
+    "summary:",
+    "retention_analysis:",
+    "detailed_description:",
+    "integrated_multimodal_description:",
+    "overall_soundscape:",
+    "non_diegetic_music:",
+)
+
+
+def head_audio_rows(frames=OVERLAP, fps=FPS, hz=40):
+    """Audio latent rows that cover `frames` at `hz` rows per second.
+
+    22 frames at 24 fps is 37 rows.
+    """
+    return int(round(float(frames) / float(fps) * float(hz)))
+
+
+def hold_masks(video_shape, audio_shape, rows, head, tail, audio_head_rows=0):
+    """Ones everywhere, zeros on the rows a hop holds. 0 = hold, 1 = generate.
+
+    `video_shape` is (B, C, T, H, W). `audio_shape` is (B, C, 2, Ta).
+    Returns `(vmask [1,1,T,H,W], amask [1,1,2,Ta])`, float32.
+    """
+    if len(video_shape) < 3 or len(audio_shape) < 3:
+        raise ValueError(
+            "hold_masks needs a video shape (B,C,T,H,W) and an audio shape "
+            "(B,C,2,Ta)")
+    rows = int(rows)
+    t = int(video_shape[2])
+    if head and tail and 2 * rows > t:
+        raise ValueError(
+            "held head and tail overlap: %d + %d rows in %d steps" % (rows, rows, t))
+    vmask = torch.ones((1, 1) + tuple(int(d) for d in video_shape[2:]),
+                       dtype=torch.float32)
+    if head and rows > 0:
+        vmask[:, :, :rows] = 0
+    if tail and rows > 0:
+        vmask[:, :, -rows:] = 0
+    amask = torch.ones((1, 1) + tuple(int(d) for d in audio_shape[2:]),
+                       dtype=torch.float32)
+    n = int(audio_head_rows)
+    if n > 0:
+        amask[..., :n] = 0
+    return vmask, amask
+
+
+def _field_name(line):
+    s = line.lstrip()
+    for name in _OFFICIAL_FIELDS:
+        if s.startswith(name):
+            return name
+    return None
+
+
+def _split_field(block, field):
+    """Split off one official field.
+
+    The field ends at the next official marker, or at the first blank line
+    followed by text that is not a field. Returns (before, value, after).
+    """
+    lines = str(block).split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if _field_name(line) == field:
+            start = i
+            break
+    if start is None:
+        return None
+    inline = lines[start].lstrip()[len(field):].strip()
+    end = start + 1
+    i = start + 1
+    while i < len(lines):
+        if _field_name(lines[i]):
+            end = i
+            break
+        if lines[i].strip() == "":
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == "":
+                j += 1
+            if j >= len(lines) or _field_name(lines[j]) is None:
+                end = i
+                break
+            end = j
+            break
+        i += 1
+    else:
+        end = len(lines)
+    value_lines = ([inline] if inline else []) + lines[start + 1:end]
+    while value_lines and value_lines[-1].strip() == "":
+        value_lines.pop()
+    before = "\n".join(lines[:start]).rstrip("\n")
+    after = "\n".join(lines[end:]).lstrip("\n")
+    return before, "\n".join(value_lines).strip(), after
+
+
+def insert_continuation(block, video_n, audio_n):
+    """Tell this hop it continues one video and its audio.
+
+    Adds one `summary:` when the block has none. A block that already has
+    `summary:` gets the task prefix on that field and the sentence at its
+    end, never a second field. A second call returns the same text.
+    """
+    block = "" if block is None else str(block)
+    video_n = int(video_n)
+    audio_n = int(audio_n)
+    prefix = "[reference generation + video continuation] "
+    cite = "<Video %d> and <Audio %d>" % (video_n, audio_n)
+    summary_value = prefix + "The target video is continuation of %s." % cite
+    sentence = "The shot seamlessly continues %s." % cite
+    if prefix in block and sentence in block:
+        return block
+    if any(_field_name(line) == "summary:" for line in block.split("\n")):
+        before, value, after = _split_field(block, "summary:")
+        if not value.startswith(prefix):
+            value = prefix + value
+        if sentence not in value:
+            value = (value.rstrip() + "\n" + sentence) if value else sentence
+        parts = [p for p in (before, "summary:\n" + value, after) if p]
+        return "\n\n".join(parts)
+    field = "summary:\n" + summary_value
+    if any(_field_name(line) == "subject_definitions:" for line in block.split("\n")):
+        before, value, after = _split_field(block, "subject_definitions:")
+        head = "subject_definitions:" + ("\n" + value if value else "")
+        if before:
+            head = before + "\n\n" + head
+        parts = [head, field + "\n\n" + sentence]
+        if after:
+            parts.append(after)
+        return "\n\n".join(parts)
+    if block.strip():
+        return field + "\n\n" + sentence + "\n\n" + block
+    return field + "\n\n" + sentence
 
 
 def write_back(video, prev_video, rows):

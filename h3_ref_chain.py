@@ -2459,6 +2459,46 @@ def _slice_take_audio(prepared, t0, t1, sr):
     return {"waveform": chunk.unsqueeze(0), "sample_rate": int(sr)}
 
 
+def _lab_join(unique_id, extra_pnginfo):
+    """This node's `htc_lab_join` property. Absent is `rows`.
+
+    ComfyUI passes the workflow on the hidden `extra_pnginfo` input. A subgraph
+    node id is `outer:inner`; the node itself is the last piece. An unknown
+    value is an error, so a typo cannot silently render the old join.
+    """
+    info = extra_pnginfo if isinstance(extra_pnginfo, dict) else {}
+    workflow = info.get("workflow") if isinstance(info.get("workflow"), dict) else {}
+    nodes = []
+    raw = workflow.get("nodes")
+    if isinstance(raw, list):
+        nodes.extend(raw)
+    defs = workflow.get("definitions")
+    subs = defs.get("subgraphs") if isinstance(defs, dict) else None
+    groups = subs if isinstance(subs, list) else (
+        list(subs.values()) if isinstance(subs, dict) else [])
+    for sg in groups:
+        if isinstance(sg, dict) and isinstance(sg.get("nodes"), list):
+            nodes.extend(sg["nodes"])
+    uid = str(unique_id).split(":")[-1] if unique_id is not None else ""
+    value = None
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if str(node.get("id")) != uid or node.get("type") != "HandTieClips":
+            continue
+        props = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+        if "htc_lab_join" in props:
+            value = props.get("htc_lab_join")
+        break
+    if value is None:
+        return "rows"
+    value = str(value).strip()
+    if value not in _ht.LAB_JOINS:
+        raise ValueError(
+            f"{TAG}: htc_lab_join={value!r} is not one of "
+            + ", ".join(_ht.LAB_JOINS))
+    return value
+
 class HandTieClips:
     """Refs + shot plan + N hops, assembled into one clip.
 
@@ -3054,6 +3094,7 @@ class HandTieClips:
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
+                "extra_pnginfo": "EXTRA_PNGINFO",
             },
         }
 
@@ -3159,7 +3200,7 @@ class HandTieClips:
             boost_lora_4="None", boost_lora_4_strength=1.0,
             upsample_lora="None", upsample_lora_strength=1.0,
             upsample_tile_tokens=_tu.TOKEN_BUDGET, upsample_dit=None,
-            unique_id=None):
+            unique_id=None, extra_pnginfo=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
         # right trade everywhere except here -- a 27B and an H3 render do not
@@ -3366,6 +3407,19 @@ class HandTieClips:
         # any sampling, so a forced setting fails on the queue rather than three
         # hops in. The per-hop one (no sampler latent) cannot be known here and
         # is raised by _pin_mech_for at the hop it affects.
+        # Once, before the hop loop. The property is not a widget: rows is
+        # today's join, and anything else holds the windows in place.
+        _join_prop = _lab_join(unique_id, extra_pnginfo)
+        if str(pin_mech) == "hand_tie":
+            lab_join = _join_prop
+            if lab_join != "rows":
+                print(f"[{TAG}] LAB join: {lab_join} (node property htc_lab_join)",
+                      flush=True)
+        else:
+            lab_join = "rows"
+            if _join_prop != "rows":
+                print(f"[{TAG}] LAB join {_join_prop} ignored: pin_mech is not hand_tie",
+                      flush=True)
         if str(pin_mech) == "hand_tie":
             if not shots:
                 raise ValueError(
@@ -3374,7 +3428,7 @@ class HandTieClips:
                     "pin_mech=auto.")
             _ht_errors = _ht.settings_errors(overlap_n, last_frame_guide, master_audio_file)
             _ht_errors += _ht.hop_fit_errors(lengths)
-            if _motion_context_cls() is None:
+            if _motion_context_cls() is None and lab_join == "rows":
                 _ht_errors.append(
                     "pin_mech=hand_tie needs ComfyUI-H3-Motion-Context: the join "
                     "is a window latent, and there is no pixel-pin fallback.")
@@ -4162,6 +4216,8 @@ class HandTieClips:
         ht_stills = {}       # hop index -> its still, the window's last frame [1, H, W, 3]
         ht_clips = {}        # hop index -> the 22-frame window, for the end guide
         ht_latents = {}      # hop index -> the window's sampler latent
+        ht_cont = None       # (video key, video ordinal, audio ordinal) when C/D added one
+        ht_prev_tail_audio = None  # previous hop's last overlap of audio, for C/D
         ht_still_info = []   # (hop, seed, cached, block) for info
         ht_heard = []        # (hop, verdict) from the sound check
         if ht:
@@ -4230,6 +4286,14 @@ class HandTieClips:
             s_seed = _ht.still_seed((int(seed) + i) if seed_per_shot else int(seed))
             s_steps = int(_sh.get("steps") or steps)
             s_len = align_frame_count(_ht.STILL_FRAMES)
+            # The continuation clip is a hop reference, not a window reference.
+            # Leaving it here would make window keys differ across the lab cases.
+            _cont_key = ht_cont[0] if ht_cont else None
+            _cont_audio = ("ref_video_audio_" + _cont_key.rsplit("_", 1)[-1]
+                           if _cont_key else None)
+            s_videos = {k: v for k, v in (hop_videos or {}).items() if k != _cont_key} or None
+            s_video_audios = {k: v for k, v in (hop_video_audios or {}).items()
+                              if k != _cont_audio} or None
             s_key = None
             if hop_store is not None:
                 s_key = _store.hop_key(None, {
@@ -4237,7 +4301,7 @@ class HandTieClips:
                     "seed": s_seed, "steps": s_steps,
                     "refs": {k: _store.tensor_digest(t) for k, t in sorted(s_images.items())},
                     "videos": {k: _store.tensor_digest(t)
-                               for k, t in sorted((hop_videos or {}).items())},
+                               for k, t in sorted((s_videos or {}).items())},
                     "start": _store.tensor_digest(start_image) if i == 0 else None,
                 })
                 _hit = hop_store.get(s_key)
@@ -4262,8 +4326,8 @@ class HandTieClips:
                 clip=clip, vae=vae, audio_vae=audio_vae, prompt=sblock,
                 width=int(width), height=int(height), length=s_len,
                 ref_image_size=ref_image_size, ref_images=(s_images or None),
-                ref_videos=hop_videos,
-                ref_video_audios=(hop_video_audios or None),
+                ref_videos=s_videos,
+                ref_video_audios=(s_video_audios or None),
                 ref_audios=None)
             _sc, _sl = _result(packed)[0], _result(packed)[1]
             del packed
@@ -4347,6 +4411,67 @@ class HandTieClips:
             return lat
 
         assembled = []
+
+        def _ht_hold(lat, prev_audio_lat):
+            """Hold this hop's window rows in place. 0 on the mask is held.
+
+            The end window covers the last rows, and a continuation's opening
+            window covers the first. Case D also holds the first audio rows
+            from the previous hop's sampler audio. `i`, `hop_restart` and
+            `lab_join` are the enclosing hop.
+            """
+            import comfy.nested_tensor as _nt
+            parts = _latents.from_dict(lat)
+            if not parts or len(parts) < 2:
+                raise RuntimeError(
+                    f"{TAG}: hop {i + 1}: in-place hold needs an AV latent")
+            rows = _ht.overlap_rows(overlap_n)
+            head = i > 0 and not hop_restart
+            _end = _latents.from_dict(ht_latents[i])
+            if not _end:
+                raise RuntimeError(
+                    f"{TAG}: hop {i + 1}: the end window latent could not be read")
+            _hv = _ht.write_rows(parts[0], _end[0], rows, tail=True)
+            if _hv is parts[0]:
+                raise RuntimeError(
+                    f"{TAG}: hop {i + 1}: the end window does not match this "
+                    "hop's latent, so it was not held.")
+            if head:
+                _open = _latents.from_dict(ht_latents[i - 1])
+                if not _open:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: the opening window latent could "
+                        "not be read")
+                _prev = _hv
+                _hv = _ht.write_rows(_hv, _open[0], rows, tail=False)
+                if _hv is _prev:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: the opening window does not match "
+                        "this hop's latent, so it was not held.")
+            a_rows = (_ht.head_audio_rows(overlap_n)
+                      if (head and lab_join == "inplace_cont_audio") else 0)
+            _ha = parts[1]
+            if a_rows:
+                if prev_audio_lat is None:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: in-place audio hold needs hop "
+                        f"{i}'s sampler audio")
+                _ap = _latents.from_dict(prev_audio_lat)
+                if not _ap or len(_ap) < 2:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: hop {i}'s sampler latent has no "
+                        "audio to hold")
+                _ha = _ha.clone()
+                _ha[..., :a_rows] = _ap[1][..., -a_rows:].to(_ha)
+            vm, am = _ht.hold_masks(
+                tuple(_hv.shape), tuple(_ha.shape), rows, head, True, a_rows)
+            out = dict(lat)
+            out["samples"] = _latents.rebuild(lat["samples"], [_hv, _ha])
+            out["noise_mask"] = _nt.NestedTensor(
+                (vm.to(_hv.device), am.to(_ha.device)))
+            return out
+
+
         for i, block in enumerate(blocks):
             mm.throw_exception_if_processing_interrupted()
             shot = shots[i] or {}
@@ -4673,6 +4798,30 @@ class HandTieClips:
                     f"(voice_every_hop={voice_every_hop})",
                     flush=True,
                 )
+            # Cases C and D show the previous window as one more reference
+            # video, with that hop's tail audio. Inserted before the audio
+            # walk so the new clip takes the next <Audio N>. Previs and dry
+            # never sample a hop, so they do not decode a window for this.
+            ht_cont = None
+            if (ht and lab_join in ("inplace_cont", "inplace_cont_audio")
+                    and i > 0 and not hop_restart
+                    and not previs_only and str(dry_run) != "on"):
+                if ht_prev_tail_audio is None:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: continuation needs hop {i}'s tail audio")
+                if ht_latents.get(i - 1) is None:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: continuation needs window {i}'s latent")
+                _wv = _decode_av(vae, audio_vae, ht_latents[i - 1])[0]
+                _vn = len(hop_videos or {}) + 1
+                hop_videos = dict(hop_videos or {})
+                hop_videos[f"ref_video_{_vn}"] = _wv
+                hop_video_audios = dict(hop_video_audios or {})
+                hop_video_audios[f"ref_video_audio_{_vn}"] = ht_prev_tail_audio
+                _an = sum(
+                    1 for k in hop_videos
+                    if f"ref_video_audio_{k.rsplit('_', 1)[-1]}" in hop_video_audios)
+                ht_cont = (f"ref_video_{_vn}", _vn, _an)
             # <Audio N> is positional, and core emits every clip's soundtrack
             # BEFORE any standalone voice. So the global voice stops being
             # <Audio 1> the moment a reference clip carries sound -- it was
@@ -4752,6 +4901,8 @@ class HandTieClips:
             # bury both. Applied here, before the key and the encode, so the
             # cache, info and the upsampler all see the same text. Empty
             # strings leave the block byte-identical, so old keys still hit.
+            if ht_cont:
+                block = _ht.insert_continuation(block, ht_cont[1], ht_cont[2])
             _pre = str(prompt_prefix or "").strip()
             _suf = str(prompt_suffix or "").strip()
             if _pre:
@@ -4975,6 +5126,16 @@ class HandTieClips:
                     hop_payload["hand_tie"] = [
                         "window", _open_digest, _ht_digest(ht_latents.get(i)),
                         _ht.overlap_rows(overlap_n)]
+                    # Absent on rows, so that key stays byte-identical. Hop 1
+                    # and a restart record "inplace" for every held case, so
+                    # B, C and D share hop 1. The tail-audio digest is only
+                    # there once a continuation clip was actually added.
+                    if lab_join != "rows":
+                        hop_payload["lab_join"] = [
+                            ("inplace" if (i == 0 or hop_restart) else lab_join),
+                            (_store.audio_digest(ht_prev_tail_audio)
+                             if (ht_cont and i > 0) else None),
+                        ]
                 hop_key = _store.hop_key(
                     None if (hop_restart or ht) else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
@@ -5145,7 +5306,7 @@ class HandTieClips:
                         vae=vae, audio_vae=None,
                         image=start_image[:1], audio=None,
                     ))[0]
-                elif ht and i > 0 and not hop_restart:
+                elif ht and i > 0 and not hop_restart and lab_join == "rows":
                     _wlat = ht_latents.get(i - 1)
                     mc = _motion_context_cls()
                     if mc is None or _wlat is None:
@@ -5177,6 +5338,13 @@ class HandTieClips:
                     pin_mech_used = "window"
                     print(f"[{TAG}] hop {i + 1}: hand-tie opens on window {i}'s "
                           f"latent ({overlap_n}f picture, video only, trim {_trim})",
+                          flush=True)
+                elif ht and i > 0 and not hop_restart:
+                    # Held cases do not call Motion-Context. The key still says
+                    # "window", which is what this hop predicted.
+                    pin_mech_used = "window"
+                    print(f"[{TAG}] hop {i + 1}: hand-tie holds the windows "
+                          f"in place ({lab_join})",
                           flush=True)
                 elif i > 0 and not hop_restart:
                     pin_latent = prev_sampled
@@ -5220,16 +5388,19 @@ class HandTieClips:
                     # frame -22, image only. After the opening pin, so both
                     # sit on `cond`. The write after sampling replaces the
                     # denoised tail with the window's own latent; this guide
-                    # is what the body aims at while it denoises.
-                    cond = _result(_core_call(
-                        MiniMaxH3AddGuide, "the storyboard window",
-                        positive=cond, latent=latent, frame_idx=-_ht.OVERLAP,
-                        vae=vae, audio_vae=None, image=_clip, audio=None,
-                    ))[0]
-                    print(f"[{TAG}] hop {i + 1}: hand-tie, "
-                          + (f"opens on window {i}'s latent (video only), "
-                             if pin_mech_used == "window" else "opens free, ")
-                          + f"ends on its {overlap_n}-frame window", flush=True)
+                    # is what the body aims at while it denoises. Held cases
+                    # keep the missing-window check and skip the guide: the
+                    # mask holds those rows instead.
+                    if lab_join == "rows":
+                        cond = _result(_core_call(
+                            MiniMaxH3AddGuide, "the storyboard window",
+                            positive=cond, latent=latent, frame_idx=-_ht.OVERLAP,
+                            vae=vae, audio_vae=None, image=_clip, audio=None,
+                        ))[0]
+                        print(f"[{TAG}] hop {i + 1}: hand-tie, "
+                              + (f"opens on window {i}'s latent (video only), "
+                                 if pin_mech_used == "window" else "opens free, ")
+                              + f"ends on its {overlap_n}-frame window", flush=True)
 
                 if locked is not None:
                     # AFTER the pin: Motion-Context may rewrite this hop's
@@ -5254,6 +5425,8 @@ class HandTieClips:
 
                 _offload_text_encoder(clip, model)
 
+                if ht and lab_join != "rows":
+                    latent = _ht_hold(latent, prev_sampled)
                 guider = _result(_core_call(
                     BasicGuider, "the guider",
                     model=model, conditioning=cond))[0]
@@ -5689,6 +5862,14 @@ class HandTieClips:
             # Overlap tail for Qwen; full sampler latent for Motion-Context.
             tail_n = overlap_n if overlap_n else 1
             prev_imgs = imgs[-tail_n:].clone()
+            # The last overlap of this hop's audio. Cases C and D hand it to
+            # the next hop as the continuation clip's soundtrack. Both the
+            # render and the cache hit reach this line.
+            _tail_samples = _audio_samples(overlap_n, sr)
+            ht_prev_tail_audio = {
+                "waveform": _batch_wav(wav)[..., -_tail_samples:].clone(),
+                "sample_rate": sr,
+            }
             prev_audio = {"waveform": _tail_audio(audio, overlap_n)["waveform"].clone(),
                           "sample_rate": sr}
             prev_sampled = this_sampled

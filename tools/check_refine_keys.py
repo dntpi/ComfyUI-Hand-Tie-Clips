@@ -140,8 +140,8 @@ def main():
            repr(sig[name].default) if name in sig else "missing")
     ck("run() takes refine_model, defaulting to unwired",
        "refine_model" in sig and sig["refine_model"].default is None)
-    ck("unique_id is still last",
-       list(sig)[-1] == "unique_id", str(list(sig)[-3:]))
+    ck("hidden inputs close the signature (unique_id, extra_pnginfo)",
+       list(sig)[-2:] == ["unique_id", "extra_pnginfo"], str(list(sig)[-3:]))
 
     print("\nthe hop key: absent when off, moving when on")
     base = {"chain": "salt", "block": "a beat", "len": 192, "voice_on": True}

@@ -350,6 +350,78 @@ if _scv:
     ck("a plain chain start carries it, line or not", _scv(True, False, "off", _quiet))
     ck("a continuation is not a start", not _scv(False, True, "on", _said))
 
+print("\nin-place hold")
+ck("22 frames are 37 audio rows", HT.head_audio_rows(22) == 37, HT.head_audio_rows(22))
+_vs = (1, 24, 20, 4, 4)
+_as = (1, 32, 2, 80)
+_vh, _ah = HT.hold_masks(_vs, _as, 7, True, False, 0)
+ck("a head hold zeros the first 7 video rows and nothing else",
+   tuple(_vh.shape) == (1, 1, 20, 4, 4) and _vh.dtype == torch.float32
+   and (_vh[:, :, :7] == 0).all() and (_vh[:, :, 7:] == 1).all()
+   and (_ah == 1).all())
+_vt, _at = HT.hold_masks(_vs, _as, 7, False, True, 0)
+ck("a tail hold zeros the last 7 video rows",
+   (_vt[:, :, :-7] == 1).all() and (_vt[:, :, -7:] == 0).all())
+_vb, _ab = HT.hold_masks(_vs, _as, 7, True, True, 37)
+ck("both ends are held and the audio head is the only audio hold",
+   (_vb[:, :, :7] == 0).all() and (_vb[:, :, -7:] == 0).all()
+   and (_vb[:, :, 7:-7] == 1).all()
+   and (_ab[..., :37] == 0).all() and (_ab[..., 37:] == 1).all()
+   and tuple(_ab.shape) == (1, 1, 2, 80))
+_raised = False
+try:
+    HT.hold_masks((1, 24, 9, 2, 2), (1, 32, 2, 10), 7, True, True)
+except ValueError:
+    _raised = True
+ck("overlapping holds are refused", _raised)
+
+_prose = "She walks to the stall."
+_one = HT.insert_continuation(_prose, 2, 1)
+ck("a plain beat gains exactly one summary",
+   _one.count("summary:") == 1, _one.count("summary:"))
+ck("the summary names the continuation task and both clips",
+   "[reference generation + video continuation]" in _one
+   and "<Video 2>" in _one and "<Audio 1>" in _one
+   and "The shot seamlessly continues <Video 2> and <Audio 1>." in _one)
+ck("insert_continuation is idempotent", HT.insert_continuation(_one, 2, 1) == _one)
+_had = ("summary:\n[reference generation] A woman walks.\n\n"
+        "detailed_description:\nShe walks.")
+_pref = HT.insert_continuation(_had, 3, 2)
+ck("an existing summary is prefixed, not duplicated",
+   _pref.count("summary:") == 1
+   and _pref.split("summary:", 1)[1].lstrip().startswith(
+       "[reference generation + video continuation] ")
+   and "<Video 3>" in _pref and "<Audio 2>" in _pref)
+ck("prefixing a summary is idempotent", HT.insert_continuation(_pref, 3, 2) == _pref)
+_subj = ("subject_definitions:\n<Subject 1> is Carolyn.\n\n"
+         "She walks on.")
+_after = HT.insert_continuation(_subj, 2, 1)
+ck("the summary is inserted after subject_definitions and before the beat",
+   _after.count("summary:") == 1
+   and _after.index("subject_definitions:") < _after.index("summary:")
+   < _after.index("The shot seamlessly continues")
+   < _after.index("She walks on."))
+
+print("\nin-place hold, wired into run()")
+ck("_lab_join is called", "_lab_join(" in run_src)
+ck("extra_pnginfo is a hidden input",
+   '"extra_pnginfo": "EXTRA_PNGINFO"' in src and "extra_pnginfo=None" in run_src)
+_hold_at = run_src.find("latent = _ht_hold(latent, prev_sampled)")
+_guider_at = run_src.find('BasicGuider, "the guider"')
+ck("the hold is applied before the guider", 0 < _hold_at < _guider_at,
+   "hold %s guider %s" % (_hold_at, _guider_at))
+ck("Motion-Context and the end guide run only for rows",
+   'elif ht and i > 0 and not hop_restart and lab_join == "rows":' in run_src
+   and 'if lab_join == "rows":' in run_src
+   and run_src.count('lab_join == "rows"') >= 2)
+_key_lab = run_src.find('hop_payload["lab_join"]')
+ck("lab_join enters the hop key only when it is not rows",
+   _key_lab > 0 and 'if lab_join != "rows":' in run_src[_key_lab - 400:_key_lab])
+_still = run_src[run_src.find("        def _ht_still(i):"):run_src.find("        def _ht_digest")]
+ck("the window render drops the continuation clip",
+   "ht_cont" in _still and "s_videos" in _still and "s_video_audios" in _still
+   and "ref_videos=s_videos" in _still and "ref_videos=hop_videos" not in _still)
+
 print("\nthe module stays ComfyUI-free")
 tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read())
 mods = {n.module if isinstance(n, ast.ImportFrom) else a.name

@@ -89,7 +89,7 @@ def main():
     ck("run() takes speed_mode='regular'",
        sig.get("speed_mode") is not None
        and sig["speed_mode"].default == "regular")
-    ck("unique_id is still last", list(sig)[-1] == "unique_id",
+    ck("hidden inputs close the signature (unique_id, extra_pnginfo)", list(sig)[-2:] == ["unique_id", "extra_pnginfo"],
        str(list(sig)[-3:]))
 
     print("\nthe table: every row names real widgets and legal values")

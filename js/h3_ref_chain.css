@@ -544,8 +544,6 @@
 }
 
 .h3e-beat { width: 100%; background: var(--h3-sunken); }
-/* pin_mech=hand_tie: the previs line under each beat. */
-.h3e-moment { margin-top: 4px; border-left: 2px solid var(--h3-accent, #6aa0ff); font-style: italic; }
 
 /* A7: the beat's word count against the band for its length. Tabular so the
  * number does not shuffle the label while it is being typed, and faint unless
@@ -1552,18 +1550,6 @@ video.h3e-trim-media {
     white-space: nowrap;
     text-align: left;
 }
-/* A10: the hand-tie previs warning. Amber, because the film rendered -- this
- * is "look here", not "it failed". */
-.h3e-warnchip {
-    flex: 0 0 auto;
-    padding: 0 5px;
-    border-radius: var(--h3-radius-sm);
-    color: var(--h3-warn);
-    background: color-mix(in srgb, var(--h3-warn) 18%, transparent);
-    cursor: help;
-    white-space: nowrap;
-}
-
 /* A4: the ⚙ RUN control. Not a tab -- it is not in the tab strip's flex, so
  * it keeps its own width and never competes with a label for a quarter. */
 .h3e-root .h3e-runbtn {
@@ -2188,28 +2174,6 @@ video.h3e-trim-media {
 .h3e-tl-block.h3e-tl-locked { border-color: color-mix(in srgb, var(--h3-accent) 60%, transparent); }
 .h3e-tl-block.h3e-tl-restart { border-left: 3px solid var(--h3-warn); }
 
-/* A9: the block that opens a hand-tie section. A thin accent edge on the LEFT,
- * where a restart's warning-coloured edge already sits, so the two read as the
- * same kind of fact (something starts here) in two colours. The restart edge is
- * amber because a cut is a fault; this one is accent because a new previs is
- * ordinary -- it is what the "+ extend" button is for. */
-.h3e-tl-block.h3e-tl-newprevis { border-left: 3px solid var(--h3-accent); }
-/* A9: the same boundary on the seam row, where the joins actually are. */
-.h3e-tl-cutpoint {
-    position: absolute;
-    color: var(--h3-accent);
-    font-size: var(--h3-fs-xs);
-    cursor: help;
-}
-/* A10: a previs cut, at the frame it happens. Amber like a restart because the
- * film has a fault in it -- this one is not a planned cut, it is a take that
- * broke. */
-.h3e-tl-previswarn {
-    position: absolute;
-    color: var(--h3-warn);
-    font-size: var(--h3-fs-xs);
-    cursor: help;
-}
 .h3e-tl-bhead { display: flex; align-items: center; gap: 3px; }
 .h3e-tl-no { font-weight: 700; margin-right: auto; }
 .h3e-root .h3e-tl-mini { padding: 0 4px; font-size: var(--h3-fs-xs); line-height: 14px; }

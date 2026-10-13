@@ -870,7 +870,8 @@ def hand_tie_rules(duration=None):
 
     Each one cost a render to learn (chain_00153-00161, 2026-10-10/11), and the
     general length table contradicts two of them: it asks for ~20 spoken words in
-    8 s, where hand-tie keeps a hop's first and last 0.9 s for its windows.
+    8 s, where a hand-tie hop opens on 0.9 s of the hop before it and settles onto
+    its still in its last second.
     """
     try:
         from .h3_ref_chain import DURATION_FRAMES  # noqa: PLC0415
@@ -879,9 +880,9 @@ def hand_tie_rules(duration=None):
         frames = 0
     budget = _ht.line_budget(frames) if frames else _ht.line_budget(192)
     return "\n".join([
-        "This chain is HAND-TIED: one preview render sets every hop's first and "
-        "last second, and the hops are cut together there. These rules replace "
-        "the spoken-word targets of the length table:",
+        "This chain is HAND-TIED: every hop opens on the last second of the hop "
+        "before it and ends on a still of how its own beat ends. These rules "
+        "replace the spoken-word targets of the length table:",
         "1. One place. The whole film stays in one continuous location under one "
         "light. New things come INTO frame (a stall, a musician, a doorway); the "
         "scene never relocates, and the light does not change unless the brief "
@@ -1627,11 +1628,10 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
             secs = 0
         if secs:
             lines.append(
-                "This chain will be hand-tied: one previs per section covers "
-                f"up to {_ht.max_hops(int(secs * 24))} hops of "
-                f"{secs:.0f}s, and a longer chain splits evenly into sections "
-                "that continue each other without a cut. Say where each "
-                "section starts.")
+                "This chain will be hand-tied: each hop opens on the real last "
+                "second of the hop before it and ends on a still of how its own "
+                "beat ends, so say how each beat ends -- a pose, where the person "
+                "is, what they hold.")
             lines += ["", hand_tie_rules(duration)]
     if pinned:
         lines += ["",

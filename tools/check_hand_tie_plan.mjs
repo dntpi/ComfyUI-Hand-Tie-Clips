@@ -43,8 +43,8 @@ ck("an unset moment is not written", !("moment" in back.shots[0]) && !("moment_e
 once[0].beat = "edited";
 const edited = JSON.parse(planToJson(once));
 ck("editing another card keeps them", edited.shots[1].moment && edited.shots[2].moment_end);
-ck("the card shows a moment box only under pin_mech=hand_tie",
-   src.includes('widgetByName(node, "pin_mech")?.value || "") === "hand_tie"'));
+ck("the card no longer shows moment boxes (the previs fields are round-tripped, not edited)",
+   !src.includes("momentBox") && !src.includes("h3e-moment"));
 
 console.log(fails ? `\n${fails} FAILED` : "\nall ok");
 process.exit(fails ? 1 : 0);

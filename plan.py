@@ -45,8 +45,8 @@ TAG = "HandTieClips"
 # dropping it on save was how the field died the first time.
 _SHOT_KEYS = {"id", "beat", "directives", "prose",
               "seed", "steps", "duration", "locked", "tone", "anchor", "refs",
-              # pin_mech=hand_tie only: the frame at the start of this hop, and
-              # (last shot) at the end of it. See hand_tie.compile_previs.
+              # The old hand-tie previs fields. run() no longer reads them;
+              # kept so a plan that has them round-trips unchanged.
               "moment", "moment_end"}
 
 
@@ -69,11 +69,9 @@ TONE_VALUES = ("", "free", "rebase")
 # It is a CUT, by construction: the hop opens on the reference photograph's
 # pose, not where the previous hop ended.
 #
-# "extend" is what the TIMELINE's "+ extend" writes. Under pin_mech=hand_tie it
-# opens a CHAINED section: a new previs pinned on the frames the hop before it
-# actually rendered, so the hops already rendered keep their previs and their
-# cache and only the new hops render. No cut. Every other pin mechanism reads
-# it as "" (an ordinary continuation).
+# "extend" is what the TIMELINE's "+ extend" writes: a shot that continues the
+# film. Every pin mechanism, hand_tie included, reads it as "" (an ordinary
+# continuation), so the hops already rendered keep their keys.
 ANCHOR_VALUES = ("", "restart", "extend")
 
 

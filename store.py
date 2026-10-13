@@ -116,10 +116,11 @@ def as_stored(imgs, wav):
     """`imgs` and `wav` exactly as `HopStore.get` will hand them back.
 
     A render goes on with these after `put`, so a fresh hop and its cache hit
-    are the same bytes. Hand-tie keys every hop on digests of previs frames:
-    the decoder's float frames on the render, their 16-bit copy on the hit, so
-    the run after a finished one missed every hop. Frames are rewritten in
-    place when they are cpu float32, so a 362-frame previs is not held twice.
+    are the same bytes. Hand-tie keys every hop on a digest of its storyboard
+    still: the decoder's float frame on the render, its 16-bit copy on the hit,
+    so the run after a finished one would miss every hop (it did, 2026-10-12,
+    under the old previs). Frames are rewritten in place when they are cpu
+    float32, so a clip is not held twice.
     """
     out = (imgs if imgs.dtype == torch.float32 and imgs.device.type == "cpu"
            and imgs.is_contiguous() else torch.empty(imgs.shape, dtype=torch.float32))

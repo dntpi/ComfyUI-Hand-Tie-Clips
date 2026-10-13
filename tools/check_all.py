@@ -32,7 +32,6 @@ CHECKS = [
     ("check_templates.py", []),
     ("check_ui.py", []),
     ("llm_stream_test.py", []),
-    ("check_previs_warn.py", []),
     ("check_swap_boundary.py", []),
     ("check_swap_instruct.py", []),
     ("check_unreachable.py", []),

@@ -327,8 +327,8 @@ def main():
     ck("audio is silent, not None", out[1]["waveform"].abs().max() == 0)
     ck("info carries every compiled prompt", out[2].count("===== hop") == 8)
     ck("contact sheet is built on a dry run", out[3].shape[1] > 100)
-    # pin_mech=hand_tie: every hop compiled as a start, sections logged, and the
-    # refusals that have to fire on the queue before anything samples.
+    # pin_mech=hand_tie: every hop compiled as a start, the storyboard announced,
+    # and the refusals that have to fire on the queue before anything samples.
     ht_plan = {"shots": [
         {"beat": "She chops herbs. She sets the knife down.", "duration": "8 s"},
         {"beat": "She leans on the sill.", "duration": "8 s",
@@ -337,26 +337,18 @@ def main():
         {"beat": "She chops again.", "duration": "8 s", "moment_end": "She chops, smiling."}]}
     oh, log_h = run(shot_plan=json.dumps(ht_plan), pin_mech="hand_tie", duration="8 s")
     ck("hand_tie: dry run compiles every hop", oh[2].count("===== hop") == 4)
-    # (A restart opens a second section; the geometry of that is pinned in
-    # check_hand_tie.py. Here a restart would also need a start image or refs.)
-    ck("hand_tie: the section is logged with its previs geometry",
-       "hand-tie section 1: hops 1-4, previs 294f, windows at [0, 68, 136, 204, 272]" in log_h,
-       log_h[-600:])
-    oh7, log7 = run(shot_plan=json.dumps({"shots": [{"beat": "x %d" % k, "duration": "8 s"}
-                                                     for k in range(7)]}),
-                    pin_mech="hand_tie", duration="8 s")
-    ck("hand_tie: 7 x 8 s chain into two even sections (4 + 3), the second continuing hop 4",
-       "hand-tie section 2: hops 5-7, previs 226f, windows at [0, 68, 136, 204], continuing hop 4's last frames" in log7,
-       log7[-600:])
+    ck("hand_tie: the storyboard is announced, and there are no previs sections",
+       "each hop ends on its storyboard still" in log_h and "hand-tie section" not in log_h
+       and "previs" not in log_h, log_h[-600:])
     ck("hand_tie: no hop is assembled as a continuation (no next-beat airlock)",
        "next-beat assembled" not in log_h)
+    _h2 = oh[2].split("===== hop 2 prompt =====")[1].split("===== hop 3 prompt =====")[0]
+    ck("hand_tie: an old plan's `moment` reaches no prompt (the previs field is not read)",
+       "The snow again" not in oh[2], _h2[:200])
     for label, kw, needle in (
             ("needs overlap 0.9 s", {"overlap": "0.2 s"}, "needs overlap 0.9 s"),
             ("refuses last_frame_guide", {"last_frame_guide": "before_restart"}, "last_frame_guide"),
-            ("refuses master_audio_file", {"master_audio_file": "x.wav"}, "master_audio_file"),
-            ("refuses anchor=extend on shot 1",
-             {"shot_plan": json.dumps({"shots": [{"beat": "x", "duration": "8 s", "anchor": "extend"},
-                                                 {"beat": "y", "duration": "8 s"}]})}, "anchor=extend")):
+            ("refuses master_audio_file", {"master_audio_file": "x.wav"}, "master_audio_file")):
         try:
             run(**dict({"shot_plan": json.dumps(ht_plan), "pin_mech": "hand_tie",
                         "duration": "8 s"}, **kw))
@@ -372,18 +364,7 @@ def main():
         ck("dry_run=previs is refused without pin_mech=hand_tie", False, "accepted")
     except ValueError as e:
         ck("dry_run=previs is refused without pin_mech=hand_tie", "pin_mech=hand_tie" in str(e), str(e)[:70])
-    oc, _ = run(shot_plan=json.dumps({"shots": [
-        {"beat": "She chops.", "duration": "8 s"},
-        {"beat": "She leans on the sill.", "duration": "8 s",
-         "moment": "She turns and (S1) says, <d>[English] I keep thinking the snow will stop by noon.</d>"}]}),
-        pin_mech="hand_tie", duration="8 s")
-    _h1 = oc[2].split("===== hop 1 prompt =====")[1].split("===== hop 2 prompt =====")[0]
-    _h2 = oc[2].split("===== hop 2 prompt =====")[1]
-    ck("hand_tie: hop 1's prompt ends the crossing line with <|cutoff|>",
-       "<d>[English] I keep thinking the snow will stop<|cutoff|></d>" in _h1, _h1[-120:])
-    ck("hand_tie: hop 2's prompt finishes the same sentence, from after the window",
-       "finishes the same sentence, <d>[English] by noon.</d>" in _h2, _h2[:200])
-    ck("plan keeps moment / moment_end only when written",
+    ck("plan keeps moment / moment_end only when written (round-tripped, not read)",
        "moment" in P.parse_plan(json.dumps(ht_plan))[1]
        and "moment" not in P.parse_plan(json.dumps(ht_plan))[0]
        and "moment_end" in P.parse_plan(json.dumps(ht_plan))[3])

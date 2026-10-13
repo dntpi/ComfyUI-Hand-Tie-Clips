@@ -12,74 +12,19 @@
  *   - a locked hop still in the cache is served by pointer, so it never
  *     re-renders and the hop after it keys from that unchanged render.
  *
- * Under pin_mech=hand_tie (`tie`) hops do not chain, but every hop of a section
- * is tied to that section's ONE previs, whose text and length come from all of
- * its shots. So a change to any hop of a section -- an edit, a reorder, an
- * appended shot -- re-renders the whole section. A CHAINED section (anchor=
- * extend, or a run too long for one previs) is pinned on the frames of the hop
- * before it, so a section that moves moves the chained one after it; a restart
- * stops it. `tieSections` mirrors hand_tie.sections(). The one exception is a
- * shot's own `seed`: the previs reads the run seed, so a seed-only edit retakes
- * that hop alone -- and, at a section's end, the chained section pinned on it.
+ * pin_mech=hand_tie keys like any chain: each hop opens on the previous hop's
+ * latent (prev_key), and its storyboard still follows from the stills before it,
+ * so a change runs on exactly as above.
  *
  * Anything this cannot see -- a LoRA swapped on the MODEL wire, a reference
  * file replaced on disk under the same name -- the run itself will catch.
  */
 
-/* hand_tie.py's geometry: PREVIS_MAX, WINDOW, the 68-per-192 spacing on the
- * 17-frame grid, and DURATION_FRAMES as a formula (exact for all 26 labels). */
-const HT_PREVIS_MAX = 362, HT_WINDOW = 22, HT_GRID = 17;
+/* DURATION_FRAMES as a formula (exact for all 26 labels). */
 export function framesOf(label) {
     const s = parseFloat(String(label || ""));
     return Number.isFinite(s) ? 17 * Math.round((24 * s - 5) / 17) + 5 : 192;
 }
-const htSpacing = (f) => Math.max(34, Math.max(1, Math.round(f * 68 / 192 / HT_GRID)) * HT_GRID);
-
-/** [[index...], ...] and whether each is chained, as hand_tie.sections/chained. */
-export function tieSections(shots, frames) {
-    const out = [];
-    let cur = null, previs = 0, last = 0;
-    shots.forEach((s, i) => {
-        const a = s?.anchor || "";
-        const f = frames[i] ?? 192;
-        const grown = cur ? previs - HT_WINDOW + htSpacing(last) + HT_WINDOW : 0;
-        if (!cur || a === "restart" || a === "extend" || grown > HT_PREVIS_MAX) {
-            cur = { hops: [], chained: i > 0 && a !== "restart",
-                    auto: !!cur && a !== "restart" && a !== "extend" };
-            out.push(cur);
-            previs = HT_WINDOW;
-        } else {
-            previs = grown;
-        }
-        cur.hops.push(i);
-        last = f;
-    });
-    // As hand_tie.sections: a run split by previs size alone is split evenly
-    // into the same number of sections (10 x 8 s: 5 + 5, not 6 + 4).
-    const fits = (hops) => hops.length > 0 && hops.slice(0, -1).reduce(
-        (p, h) => p + htSpacing(frames[h] ?? 192), HT_WINDOW) <= HT_PREVIS_MAX;
-    const even = [];
-    for (let s = 0; s < out.length;) {
-        let e = s + 1;
-        while (e < out.length && out[e].auto) e += 1;
-        const hops = out.slice(s, e).flatMap((x) => x.hops);
-        const k = e - s, n = hops.length;
-        const cut = [];
-        for (let j = 0, pos = 0; j < k; j += 1) {
-            const z = Math.floor(n / k) + (j < n % k ? 1 : 0);
-            cut.push(hops.slice(pos, pos + z));
-            pos += z;
-        }
-        if (k > 1 && cut.every(fits)) {
-            cut.forEach((h, j) => even.push({ hops: h, chained: j > 0 || out[s].chained }));
-        } else {
-            out.slice(s, e).forEach((x) => even.push({ hops: x.hops, chained: x.chained }));
-        }
-        s = e;
-    }
-    return even;
-}
-
 /* Widgets whose value moves no hop key. Everything else that changes between
  * the last run and now is read as a chain-wide change. */
 export const NOT_KEYED = new Set([
@@ -98,15 +43,6 @@ export const CONTINUE_ONLY = new Set([
 export function shotSig(shot) {
     const { locked, id, ...rest } = shot || {};
     return JSON.stringify(rest);
-}
-
-/* The snapshot signature `was` and the shot now differ only in `seed`. */
-function seedOnly(was, shot) {
-    const then = parseJson(was);
-    if (!then) return false;
-    const { seed: a, ...restThen } = then;
-    const { seed: b, ...restNow } = parseJson(shotSig(shot)) || {};
-    return JSON.stringify(restThen) === JSON.stringify(restNow);
 }
 
 export function parseJson(text) {
@@ -131,19 +67,12 @@ export function parseJson(text) {
  *          one nobody generated.
  */
 export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
-                               seedCtl = "fixed", refsNow = [], tie = false,
-                               frames = [] }) {
+                               seedCtl = "fixed", refsNow = [] }) {
     const snap = rec?.snapshot || null;
     const n = shots.length;
     const isStart = (i) => i === 0 || shots[i]?.anchor === "restart";
     const why = new Map();   // hop index -> reason it moves on its own
-    const alone = new Set(); // hand-tie: hops whose only reason is their own seed
-    const note = (i, text, own = false) => {
-        if (own) {
-            if (!why.has(i)) { why.set(i, text); alone.add(i); }
-            return;
-        }
-        if (alone.delete(i)) why.delete(i);
+    const note = (i, text) => {
         if (!why.has(i)) why.set(i, text);
     };
 
@@ -188,10 +117,7 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
             if (continueWide && !isStart(i)) { note(i, `${continueWide} changed`); continue; }
             if (!snap) continue;
             if (snap.ids?.[i] !== id) { note(i, "shots reordered"); continue; }
-            if (snap.shots?.[id] !== shotSig(s)) {
-                if (!(tie && seedOnly(snap.shots?.[id], s))) { note(i, `shot ${i + 1} edited`); continue; }
-                note(i, "seed changed", true);
-            }
+            if (snap.shots?.[id] !== shotSig(s)) { note(i, `shot ${i + 1} edited`); continue; }
             if (seedMoves && (s.seed == null || s.seed === "")) {
                 note(i, seedCtl !== "fixed"
                     ? `seed is set to ${seedCtl} each queue`
@@ -205,23 +131,6 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         }
         for (const tag of changedRefs) {
             for (const i of ridesHops(tag)) if (i < n) note(i, `@${tag} changed`);
-        }
-    }
-
-    if (tie) {
-        // One previs per section: what moves one hop moves the section, and a
-        // chained section follows the one before it (it is pinned on its frames).
-        let prevMoved = false;
-        for (const sec of tieSections(shots, frames)) {
-            let hit = sec.hops.find((k) => why.has(k) && !alone.has(k));
-            let cause = hit !== undefined ? why.get(hit) : null;
-            // The previs seed is the run seed, even where every shot has its own.
-            if (cause === null && seedMoves) cause = "the run seed changed";
-            if (cause === null && sec.chained && prevMoved) cause = "the section before it moved";
-            if (cause !== null) {
-                for (const k of sec.hops) note(k, `the section's previs changes (${cause})`);
-            }
-            prevMoved = cause !== null || alone.has(sec.hops[sec.hops.length - 1]);
         }
     }
 
@@ -239,8 +148,7 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         } else if (why.has(i)) {
             m = true;
             c = why.get(i);
-        } else if (!tie && i > 0 && moved[i - 1] && !isStart(i)) {
-            // (Hand-tie hops do not chain: the sections above already ran it on.)
+        } else if (i > 0 && moved[i - 1] && !isStart(i)) {
             m = true;
             c = cause[i - 1];
         }

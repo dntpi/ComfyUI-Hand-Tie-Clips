@@ -65,9 +65,9 @@ export function parsePlan(text) {
         refs: Array.isArray(s.refs)
             ? s.refs.map((t) => String(t).replace(/^@/, "").trim()).filter(Boolean)
             : null,
-        // pin_mech=hand_tie's previs fields. Round-tripped for the same reason
-        // as tone/anchor/refs: a field this list drops is deleted by the next
-        // edit of any card.
+        // The old hand-tie previs fields, no longer read by run(). Round-tripped
+        // for the same reason as tone/anchor/refs: a field this list drops is
+        // deleted by the next edit of any card, and a plan should not lose text.
         moment: String(s.moment || ""),
         moment_end: String(s.moment_end || ""),
     }));
@@ -649,8 +649,8 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
         const shot = blankShot(shots.length);
         shot.id = freeId();
         if (shots.length) shot.directives = { join: "continuous" };
-        // "+ extend" after a render: under hand-tie this shot opens its own
-        // previs, continuing the film, so nothing already rendered moves.
+        // "+ extend" after a render: a shot that continues the film. Every
+        // hop before it keeps its key, so only the new hop renders.
         if (shots.length && extend) shot.anchor = "extend";
         shots.push(shot);
         commit();
@@ -955,7 +955,7 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
             const anchorL = el("label", "h3e-field");
             anchorL.appendChild(el("span", null, "anchor"));
             const anchorS = el("select", "h3e-input");
-            for (const [v, label] of [["", "relay (default)"], ["restart", "restart"], ["extend", "extend (hand-tie: own previs)"]]) {
+            for (const [v, label] of [["", "relay (default)"], ["restart", "restart"], ["extend", "extend"]]) {
                 const o = el("option", null, label);
                 o.value = v;
                 anchorS.appendChild(o);
@@ -1021,37 +1021,6 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
         prose.addEventListener("input", () => { shot.prose = prose.value; writeWidget(); });
         prose.addEventListener("change", () => { writeWidget(); onChange?.(); });
         adv.appendChild(prose);
-
-        // pin_mech=hand_tie only, and optional: blank, the previs uses each
-        // beat's first sentence, so a normal plan needs nothing here. In
-        // `advanced` because hand-tie must not ask for more input than any
-        // other plan (user 2026-10-09). A written value is kept in every mode.
-        if (String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie") {
-            const momentBox = (key, placeholder, hint) => {
-                const t = el("textarea", "h3e-beat h3e-moment");
-                t.rows = 2;
-                t.value = shot[key] || "";
-                t.placeholder = placeholder;
-                t.title = hint;
-                t.addEventListener("input", () => { shot[key] = t.value; writeWidget(); });
-                t.addEventListener("change", () => { writeWidget(); onChange?.(); });
-                return t;
-            };
-            adv.appendChild(momentBox("moment",
-                index === 0
-                    ? "moment: the film's first frame (blank = the beat's first sentence)"
-                    : "moment: what is on screen as this hop starts (blank = the beat's first sentence)",
-                "hand-tie: the previs shows this at the start of this hop, and this hop and the one "
-                + "before it are tied to it. A pose and a place, one sentence. A spoken line that "
-                + "crosses the join goes here, once, as <d>[English] ...</d> -- the node splits it "
-                + "between the two hops. Do not repeat it in the beat."));
-            if (index === shots.length - 1) {
-                adv.appendChild(momentBox("moment_end",
-                    "moment end: what is on screen as the film ends (blank = the beat's last sentence)",
-                    "hand-tie: the previs ends on this, and the last hop is tied to it. A line here "
-                    + "is spoken so that it ends with the film."));
-            }
-        }
 
         body.appendChild(adv);
         card.appendChild(body);
@@ -1363,11 +1332,9 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
      * unavailable rather than claiming nothing re-renders. */
     let getRefPlan = null;
     let getForecast = null;
-    let getTieSections = null;
-    function setForecastSources({ refPlan, forecast, tieSections: ties } = {}) {
+    function setForecastSources({ refPlan, forecast } = {}) {
         if (refPlan !== undefined) getRefPlan = refPlan;
         if (forecast !== undefined) getForecast = forecast;
-        if (ties !== undefined) getTieSections = ties;
     }
 
     function refPlanSafe() {

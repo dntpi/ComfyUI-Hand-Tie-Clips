@@ -2,10 +2,10 @@ r"""A rendered hop and its cache hit must be the same bytes -- no ComfyUI, no GP
 
     D:\ComfyUI\venv\Scripts\python.exe tools\check_store_roundtrip.py
 
-Hand-tie keys every hop on digests of its previs windows. The first run cut
-them from the decoder's float frames; a re-queue loaded the previs from the
-cache, a 16-bit copy, so every digest moved and every hop of a finished native
-run rendered again (2026-10-12, upsample switched off and re-queued at once).
+Hand-tie keys every hop on a digest of its storyboard still. A render takes it
+from the decoder's float frames; a re-queue loads it from the cache, a 16-bit
+copy, so without this every digest moved and every hop of a finished native
+run rendered again (2026-10-12, under the old previs).
 `store.as_stored` hands the render the bytes a hit returns; this holds it to
 `HopStore.get` through a real FFV1 write and read, and holds `run()` to calling
 it after both puts that feed a hand-tie key.
@@ -81,11 +81,11 @@ def main():
 
     with open(os.path.join(HERE, "h3_ref_chain.py"), encoding="utf-8") as fh:
         src = fh.read()
-    p_put = src.find("hop_store.put(_p_key,")
-    p_win = src.find("pics.append(_p_imgs[w:w + _ht.WINDOW]")
-    p_as = src.find("_p_imgs, _p_wav = _store.as_stored(_p_imgs, _p_wav)", p_put)
-    ck("run(): the previs goes on as stored, before its windows are cut",
-       -1 not in (p_put, p_win, p_as) and p_put < p_as < p_win)
+    s_put = src.find("hop_store.put(s_key, _si, _sw,")
+    s_as = src.find("_si, _sw = _store.as_stored(_si, _sw)", s_put)
+    s_take = src.find("ht_stills[i] = _si[-1:].clone()", s_put)
+    ck("run(): a storyboard still goes on as stored, before it keys and guides a hop",
+       -1 not in (s_put, s_as, s_take) and s_put < s_as < s_take)
     h_put = src.find("hop_store.put(hop_key, imgs, wav, sr,")
     h_as = src.find("imgs, wav = _store.as_stored(imgs, wav)", h_put)
     h_tone = src.find("# Tone compensation, at the one point both the render and the", h_put)

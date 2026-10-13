@@ -215,7 +215,6 @@ function mountEditor(node) {
     editor.setForecastSources({
         refPlan: () => rail.getPlan?.() || null,
         forecast: () => timeline?.forecastNow?.(editor.shots()) || null,
-        tieSections: (shots, frames) => timeline?.sections?.() || [],
     });
 
     const runPanel = createRunPanel(node, {
@@ -390,28 +389,6 @@ function mountEditor(node) {
     const statusBar = el("div", "h3e-statusbar");
     const statusText = runPanel.digestEl;
     statusBar.appendChild(statusText);
-    // A10's warning chip. Hidden unless run() reported something; see the
-    // ht_previs_warn field in the preview payload.
-    const warnChip = el("span", "h3e-warnchip");
-    warnChip.hidden = true;
-    statusBar.appendChild(warnChip);
-    node._h3Warn = {
-        // `warns` is [{label, frame}] from the run. Keep the first few: a chip
-        // is a pointer, not a log, and four is already more than fits.
-        show(warns) {
-            if (!warns || !warns.length) {
-                warnChip.hidden = true;
-                warnChip.textContent = "";
-                warnChip.title = "";
-                return;
-            }
-            warnChip.hidden = false;
-            warnChip.textContent = `⚠ ${warns.length} previs cut`
-                + (warns.length === 1 ? "" : "s");
-            warnChip.title = warns.map((w) => w.label).join("\n");
-        },
-    };
-
     // A4: RUN is its own surface rather than a <details> stacked under every
     // tab. That stacking is why the Script tab measured about 3,600px: the
     // authoring surface and all 65 dials were in one column, and the height

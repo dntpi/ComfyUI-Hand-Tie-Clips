@@ -66,7 +66,7 @@ def test_prev_key_meta():
 def test_run_records_and_compares():
     src = open(os.path.join(HERE, "h3_ref_chain.py"), encoding="utf-8").read()
     ck("run() stores prev_key with every cached hop",
-       '"prev_key": None if (hop_restart or ht) else prev_key' in src)
+       '"prev_key": None if hop_restart else prev_key' in src)
     ck("the locked branch compares it against this run's predecessor",
        '_pm["prev_key"] != prev_key' in src and "unpaired_joins.append(i + 1)" in src)
     ck("info names the unpaired joins", '"unpaired joins: "' in src)

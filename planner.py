@@ -890,12 +890,13 @@ def hand_tie_rules(duration=None):
         + (f" (the {duration} hop's budget)" if duration else "")
         + ". The node starts it one second in; a longer line runs into the cut "
         "and is lost.",
-        "3. After the line, give the speaker a closed-mouth action and name the "
-        "sound: \"She smiles with her lips closed. Traffic hum, footsteps.\" A "
-        "hop that runs out of words fills the rest with mouthing.",
+        "3. After the line, give the speaker an action and name the sound: "
+        "\"She smiles at the camera. Traffic hum, footsteps.\" Never write "
+        "closed or pressed lips on a hop with a line: the mouth closes over the "
+        "words.",
         "4. One mouth action per hop. A bite, sip, lick or drink gets its OWN hop "
-        "with no line, lips closed and its sound named; the line goes in the hop "
-        "before. Speaking and eating in one hop plays the line over the eating.",
+        "with no line and its sound named; the line goes in the hop before. "
+        "Speaking and eating in one hop plays the line over the eating.",
         "5. Open each hop on an action and its sound, then the line. Do not name "
         "talking as an action (\"talking into the phone\"): the line is the talking.",
     ])

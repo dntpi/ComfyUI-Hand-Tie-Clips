@@ -471,7 +471,7 @@ ck("the vlog's 16-word line is linted at 8 s, a 9-word one is not (cap 14)",
    len(HT.line_lints([_vlog], [192])) == 1
    and HT.line_lints([{"beat": "(S1) says, <d>[English] One two three four five six seven eight nine.</d>"}], [192]) == [])
 ck("run() stamps lines (with the hop lengths) before splitting crossing lines, and lints after",
-   "_ht.split_crossing(_ht.time_lines(_ht.quiet_sounds(shots)," in src
+   "_ht.split_crossing(_ht.time_lines(" in src and "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames))]" in src
    and "hop_frames=_tl_frames))]" in src
    and "_ht.line_lints(shots, lengths)" in src)
 _c = HT.time_lines([{"beat": _b}], hop_frames=[192])[0]["beat"]
@@ -602,7 +602,7 @@ ck("the input shots are not modified", "chatter" in _car[0]["beat"])
 _lv = [w for w in HT.line_lints(_car, [192] * 5) if "names a voice" in w]
 ck("the lint names each voice it leaves out", len(_lv) == 2 and "the vendor calling out orders" in _lv[1], _lv)
 ck("run() compiles the hops from quiet_sounds",
-   "_ht.time_lines(_ht.quiet_sounds(shots)," in src)
+   "_ht.open_lips(_ht.quiet_sounds(shots))," in src)
 
 print("\na fresh section's first hop opens free (hop 1's closed mouth, its f171 cut)")
 ck("hop 1 of a fresh section, no start image: free",
@@ -696,6 +696,30 @@ ck("run() sizes each section's previs with previs_canvas",
 _hs = open(os.path.join(HERE, "hear.py"), encoding="utf-8").read()
 ck("hear.py never downloads: local cache only, on the CPU",
    "local_files_only=True" in _hs and "device=-1" in _hs and "snapshot_download(repo," in _hs)
+
+print("\nclosed lips leave a hop that speaks (the push run: 'Today...' said with lips closed)")
+_ol = HT.open_lips([
+    {"beat": "@c walks. @c says, <d>[English] Hi there.</d> She grins with her lips closed and "
+             "glances at the crowd. Footsteps."},
+    {"beat": "@c chews slowly with her lips closed, eyes shut. The crunch of the skewer."},
+    {"beat": "@c says, <d>[English] Yes.</d> She gives a thumbs up with her lips pressed together "
+             "in a smile. She smiles at the camera, lips closed."},
+])
+ck("a speaking hop loses 'with her lips closed'",
+   _ol[0]["beat"].endswith("She grins and glances at the crowd. Footsteps."), _ol[0]["beat"])
+ck("a quiet hop keeps it (chewing with lips closed is the picture)",
+   "chews slowly with her lips closed" in _ol[1]["beat"])
+ck("'lips pressed together in a smile' and a bare ', lips closed' go too",
+   _ol[2]["beat"].endswith("She gives a thumbs up. She smiles at the camera.")
+   and "lips" not in _ol[2]["beat"], _ol[2]["beat"])
+_psrc = open(os.path.join(HERE, "planner.py"), encoding="utf-8").read()
+_rules = _psrc[_psrc.find("def hand_tie_rules"):_psrc.find("# A music video renders over the song")]
+_lint = " ".join(HT.line_lints([{"beat": "@a says, <d>[English] " + "word " * 30 + "</d>"}], [192]))
+ck("the writer no longer asks for closed lips after a line, nor does the lint",
+   "lips closed" not in _rules and "closed-mouth" not in _rules and "def hand_tie_rules" in _rules
+   and "closed-mouth" not in _lint and "fills the rest with mouthing" in _lint, _lint)
+ck("run() compiles the hops through open_lips",
+   "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames))]" in src)
 
 print("\nthe module stays ComfyUI-free")
 tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read())

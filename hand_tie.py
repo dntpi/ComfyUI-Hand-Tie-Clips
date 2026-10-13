@@ -356,6 +356,31 @@ def _trailing_sound(beat):
     return b[:cut], last
 
 
+# Closed lips on a hop that speaks. Under cfg 1.0 the phrase is not timed: it pulls
+# on the whole hop, and the mouth closes over the line. The Carolyn push run
+# (2026-10-13) said "What's up, everybody, welcome back to the channel" with a
+# moving mouth and "Today is all about street food" with lips closed, under "She
+# grins with her lips closed" stamped after the line. The writing rule that asked
+# for it is gone; this takes it out of plans already written that way.
+_LIPS = re.compile(
+    r",?\s*(?:with\s+)?(?:(?:her|his|their|its)\s+)?lips\s+(?:closed|shut|pressed\s+together)"
+    r"(?:\s+in\s+a\s+smile)?", re.I)
+
+
+def open_lips(shots):
+    """Shots with closed-lips phrases taken out of every beat that has a line.
+    A quiet hop keeps them (chewing with lips closed is what it should show).
+    Returns copies."""
+    out = []
+    for sh in shots or []:
+        s = dict(sh or {})
+        b = str(s.get("beat") or "")
+        if _D.search(b) and _LIPS.search(b):
+            s["beat"] = re.sub(r"\s+([.,!?])", r"\1", _LIPS.sub("", b))
+        out.append(s)
+    return out
+
+
 def quiet_sounds(shots):
     """Shots with the voices taken out of each beat's trailing sound sentence.
     Returns copies; a beat without one, or without a voice in it, is unchanged."""
@@ -761,8 +786,8 @@ def line_lints(shots, hop_frames, fps=FPS):
             warn.append("hand-tie: shot %d speaks %d words; about %d fit between its windows "
                         "(%.1f s at %.1f words a second). The rest runs into the join, where "
                         "the film drops it. Cut the line or give the shot a longer duration. "
-                        "After the line, give the shot a closed-mouth action and a sound: a "
-                        "hop that runs out of words fills the rest with mouthing."
+                        "After the line, give the shot an action and a sound: a hop that "
+                        "runs out of words fills the rest with mouthing."
                         % (k + 1, words, room, room / LINE_WPS, LINE_WPS))
     return warn
 

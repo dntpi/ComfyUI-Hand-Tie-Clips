@@ -3215,8 +3215,8 @@ class HandTieClips:
                 _tl_frames = [align_frame_count(_duration_frames((s or {}).get("duration") or duration))
                               for s in shots]
                 blocks = [_d.compile_shot(s, 0, establish)
-                          for s in _ht.split_crossing(_ht.time_lines(_ht.quiet_sounds(shots),
-                                                                     hop_frames=_tl_frames))]
+                          for s in _ht.split_crossing(_ht.time_lines(
+                              _ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames))]
                 for _w in _ht.crossing_lints(shots):
                     print(f"[{TAG}] note: {_w}", flush=True)
             unique = len(shots)

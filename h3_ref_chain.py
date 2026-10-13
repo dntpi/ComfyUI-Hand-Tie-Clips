@@ -2729,9 +2729,9 @@ class HandTieClips:
                     "default": "auto",
                     "tooltip": ("How hops are joined. auto uses Motion-Context when available, AddGuide "
                                 "otherwise. Forcing one fails rather than falling back. hand_tie renders a "
-                                "storyboard still per hop first: each hop opens on the real end of the hop "
-                                "before it and ends on its still, so quality does not drift (needs a shot "
-                                "plan, overlap 0.9 s)."),
+                                "22-frame window per hop first: the hop ends on that window and the next hop "
+                                "opens on the window's latent, not on the hop before it (needs a shot plan, "
+                                "overlap 0.9 s, Motion-Context)."),
                 }),
                 # APPENDED, never inserted -- see the note above `pin_mech`.
                 "tone_anchor_ref": (["hop1", "still"], {
@@ -3348,6 +3348,11 @@ class HandTieClips:
                     "drawn from the shots' beats. Switch the editor to Shots, or use "
                     "pin_mech=auto.")
             _ht_errors = _ht.settings_errors(overlap_n, last_frame_guide, master_audio_file)
+            _ht_errors += _ht.hop_fit_errors(lengths)
+            if _motion_context_cls() is None:
+                _ht_errors.append(
+                    "pin_mech=hand_tie needs ComfyUI-H3-Motion-Context: the join "
+                    "is a window latent, and there is no pixel-pin fallback.")
             if _ht_errors:
                 raise ValueError(f"{TAG}: " + " ".join(_ht_errors))
         if str(pin_mech) == "motion_context":
@@ -4125,30 +4130,33 @@ class HandTieClips:
                   + _tone.anchor_note(anchor_ref), flush=True)
         sheet_rows = []
 
-        # pin_mech=hand_tie: a storyboard of stills and hops that carry each
-        # other's real frames. Each hop opens on the previous hop's sampler latent
-        # (Motion-Context, written back exactly after sampling) and ends on its
-        # own still, rendered first. See hand_tie.py.
+        # pin_mech=hand_tie: each hop ends on its own 22-frame window and the
+        # next hop opens on that window's latent. Neither hop reads the other's
+        # finished sampler latent. See hand_tie.py.
         ht = str(pin_mech) == "hand_tie"
-        ht_stills = {}       # hop index -> its still, [1, H, W, 3]
+        ht_stills = {}       # hop index -> its still, the window's last frame [1, H, W, 3]
+        ht_clips = {}        # hop index -> the 22-frame window, for the end guide
+        ht_latents = {}      # hop index -> the window's sampler latent
         ht_still_info = []   # (hop, seed, cached, block) for info
         ht_heard = []        # (hop, verdict) from the sound check
         if ht:
             for _w in _ht.line_lints(shots, lengths):
                 print(f"[{TAG}] note: {_w}", flush=True)
-            print(f"[{TAG}] hand-tie: each hop ends on its storyboard still "
-                  f"({_ht.STILL_FRAMES}-frame render at {int(width)}x{int(height)}, the "
-                  f"previous still as its place reference) and opens on the real last "
-                  f"{overlap_n} frames of the hop before it; sound check "
+            print(f"[{TAG}] hand-tie: each hop ends on its "
+                  f"{_ht.STILL_FRAMES}-frame window at {int(width)}x{int(height)}, "
+                  f"the next hop opens on that window's latent (video only), and "
+                  f"later windows take still 1 as their place reference; sound check "
                   + (f"by {_hear.available()}" if _hear.available()
                      else "off (no Whisper model in the local cache)"), flush=True)
 
         def _ht_still(i):
-            """Render (or load) hop i's storyboard still: how its beat ends, from
-            the hop's own references and, as a weak_reference picture, the still
-            before it. Called after hop i's prompt is assembled, and assembled the
-            same way from those values (read here at call time). Muted: a still
-            has no sound, and a frozen silent track keeps its mouth at rest."""
+            """Render (or load) hop i's window: a 22-frame clip of how its beat
+            ends. The last frame is the still. Later windows take still 1, never
+            the previous window, as a weak_reference picture. Called after hop i's
+            prompt is assembled, and assembled the same way from those values
+            (read here at call time). Muted: a window has no sound, and a frozen
+            silent track keeps its mouth at rest. The sampler latent is kept;
+            a cached clip with no latent is rendered again rather than re-encoded."""
             _sh = shots[i] or {}
             sblock = _d.compile_shot({"beat": _ht.still_text(_sh),
                                       "directives": {a: v for a, v in (_sh.get("directives") or {}).items()
@@ -4165,10 +4173,10 @@ class HandTieClips:
             if refvid_line and not _d.is_full_h3_prompt(sblock):
                 sblock = sblock.rstrip() + "\n\n" + refvid_line
             s_images = dict(hop_images or {})
-            _prev = ht_stills.get(i - 1)
-            if _prev is not None and len(s_images) < 9:
+            _anchor = ht_stills.get(0) if i > 0 else None
+            if _anchor is not None and len(s_images) < 9:
                 _n = len(s_images) + 1
-                s_images[f"ref_image_{_n}"] = _prev
+                s_images[f"ref_image_{_n}"] = _anchor
                 _line = f"<Picture {_n}> ({_ht.STILL_CONTEXT})."
                 _at = sblock.find("retention_analysis:\n")
                 if _at >= 0:
@@ -4197,10 +4205,17 @@ class HandTieClips:
                     "start": _store.tensor_digest(start_image) if i == 0 else None,
                 })
                 _hit = hop_store.get(s_key)
-                if _hit is not None:
+                if _hit is not None and _hit[3] is None:
+                    print(f"[{TAG}] hop {i + 1}: storyboard window cached without "
+                          f"its latent (key {s_key[:8]}); rendering it again",
+                          flush=True)
+                    _hit = None
+                if _hit is not None and _hit[3] is not None:
+                    ht_clips[i] = _hit[0]
+                    ht_latents[i] = _hit[3]
                     ht_stills[i] = _hit[0][-1:].clone()
                     ht_still_info.append((i + 1, s_seed, True, sblock))
-                    print(f"[{TAG}] hop {i + 1}: storyboard still loaded from cache "
+                    print(f"[{TAG}] hop {i + 1}: storyboard window loaded from cache "
                           f"(key {s_key[:8]})", flush=True)
                     return ht_stills[i]
             print(f"[{TAG}] hop {i + 1}: storyboard still ({s_len}f, seed {s_seed}): "
@@ -4243,26 +4258,57 @@ class HandTieClips:
             _si, _sa = _decode_av(vae, audio_vae, _ss)
             _si = _si.contiguous().cpu()
             _sw = _sa["waveform"].contiguous().cpu()
+            _win = _latent_cpu(_ss)
             del _sc, _sl, _ss
             if hop_store is not None:
                 hop_store.put(s_key, _si, _sw, int(_sa["sample_rate"]),
-                              {"still": i + 1, "block": sblock[:400]})
+                              {"still": i + 1, "block": sblock[:400]},
+                              latent=_win)
                 _si, _sw = _store.as_stored(_si, _sw)
+            ht_clips[i] = _si
+            ht_latents[i] = _win
             ht_stills[i] = _si[-1:].clone()
             ht_still_info.append((i + 1, s_seed, False, sblock))
             return ht_stills[i]
 
-        def _ht_write_back(lat):
-            """The first overlap_rows of this hop's latent replaced by the previous
-            hop's last: both sides of the join are then one latent."""
-            parts = _latents.from_dict(lat)
-            prev = _latents.from_dict(prev_sampled)
-            if not parts or not prev or len(parts) < 2 or len(prev) < 2:
-                return lat
-            parts[0] = _ht.write_back(parts[0], prev[0], _ht.overlap_rows(overlap_n))
-            out = dict(lat)
-            out["samples"] = _latents.rebuild(lat["samples"], parts)
-            return out
+        def _ht_digest(lat):
+            parts = _latents.from_dict(lat) if lat is not None else None
+            if not parts:
+                return None
+            return _store.tensor_digest(parts[0])
+
+        def _ht_apply_windows(lat):
+            """Write this hop's window over its last 7 video steps, and the
+            opening window over its first 7. Audio is not touched. Both sides
+            of a join are then that window's own latent."""
+            def _one(lat, src, tail):
+                parts = _latents.from_dict(lat)
+                prev = _latents.from_dict(src)
+                if not parts or not prev or len(parts) < 1 or len(prev) < 1:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: the window latent could not be "
+                        "written onto the hop.")
+                spliced = _ht.write_rows(
+                    parts[0], prev[0], _ht.overlap_rows(overlap_n), tail=tail)
+                if spliced is parts[0]:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1}: the window does not match this "
+                        "hop's latent, so it was not written.")
+                parts[0] = spliced
+                out = dict(lat)
+                out["samples"] = _latents.rebuild(lat["samples"], parts)
+                return out
+            if ht_latents.get(i) is None:
+                raise RuntimeError(
+                    f"{TAG}: hop {i + 1} has no window latent to write onto its end.")
+            lat = _one(lat, ht_latents[i], True)
+            if i > 0 and not hop_restart:
+                if ht_latents.get(i - 1) is None:
+                    raise RuntimeError(
+                        f"{TAG}: hop {i + 1} has no opening window to write "
+                        "onto its start.")
+                lat = _one(lat, ht_latents[i - 1], False)
+            return lat
 
         assembled = []
         for i, block in enumerate(blocks):
@@ -4709,12 +4755,15 @@ class HandTieClips:
 
             _still = _ht_still(i) if ht else None
             if previs_only:
+                # Previs shows the still. The clip existed for this hop's end guide.
+                if ht:
+                    ht_clips.pop(i, None)
                 pbar.update(1)
                 continue
 
-            # Key this hop. prev_key makes the key chained, so editing shot 1
-            # invalidates every hop after it -- correct, and the reason the UI
-            # must show staleness before queuing or it reads as a bug.
+            # Key this hop. A chain keys from the previous hop, so editing shot 1
+            # invalidates every hop after it. hand_tie does not: its key carries
+            # the two windows, and the timeline forecast shows that before the queue.
             hop_key = None
             cached = None
             locked_served = False
@@ -4722,9 +4771,14 @@ class HandTieClips:
             # there is no mechanism left to pick. Asking for motion_context on
             # a restart hop is not a contradiction to raise on, it is a setting
             # that does not reach this hop.
-            pin_mech_pred = ("none" if hop_restart
-                             else _pin_mech_for(i, overlap_n, prev_sampled,
-                                                mode="auto" if ht else str(pin_mech)))
+            if ht:
+                # The opening pin is the previous hop's window, or nothing on
+                # a start. It does not depend on that hop's sampled latent.
+                pin_mech_pred = "none" if (i == 0 or hop_restart) else "window"
+            else:
+                pin_mech_pred = ("none" if hop_restart
+                                 else _pin_mech_for(i, overlap_n, prev_sampled,
+                                                    mode=str(pin_mech)))
             pin_mech_used = pin_mech_pred
             if hop_store is not None:
                 # `None`, not prev_key, on a restart: the hop genuinely does
@@ -4876,13 +4930,17 @@ class HandTieClips:
                     hop_payload["boost"] = [
                         [[nm, round(s, 4)] for nm, s in boost_loras],
                         BOOST_EXTEND, BOOST_SPLIT]
+                _open_digest = None
                 if ht:
-                    # The still this hop ends on. The pin is the previous hop's
-                    # latent, already in the key through prev_key.
-                    hop_payload["hand_tie"] = ["storyboard", _store.tensor_digest(_still),
-                                               _ht.overlap_rows(overlap_n)]
+                    # The sampled neighbour is not an input. The opening window
+                    # and this hop's own end window are.
+                    _open_digest = (None if (i == 0 or hop_restart)
+                                    else _ht_digest(ht_latents.get(i - 1)))
+                    hop_payload["hand_tie"] = [
+                        "window", _open_digest, _ht_digest(ht_latents.get(i)),
+                        _ht.overlap_rows(overlap_n)]
                 hop_key = _store.hop_key(
-                    None if hop_restart else prev_key, hop_payload)
+                    None if (hop_restart or ht) else prev_key, hop_payload)
                 # A locked shot reuses its last render even though its inputs
                 # changed -- that is the point of locking. The content key would
                 # have moved, so the pointer is what finds it.
@@ -4900,7 +4958,15 @@ class HandTieClips:
                         # brightness, not its content. Entries written before
                         # `prev_key` was recorded are not judged.
                         _pm = hop_store.meta(pinned) or {}
-                        if (not hop_restart and "prev_key" in _pm
+                        if (ht and not hop_restart and i > 0
+                                and _pm.get("window_open") != _open_digest):
+                            unpaired_joins.append(i + 1)
+                            print(f"[{TAG}] WARNING: hop {i + 1} is locked, but "
+                                  f"its opening window is not the one this run "
+                                  f"rendered. The hop {i}|{i + 1} join was never "
+                                  f"generated together. Unlock hop {i + 1}.",
+                                  flush=True)
+                        elif (not ht and not hop_restart and "prev_key" in _pm
                                 and _pm["prev_key"] != prev_key):
                             unpaired_joins.append(i + 1)
                             print(f"[{TAG}] WARNING: hop {i + 1} is locked, but "
@@ -4996,6 +5062,10 @@ class HandTieClips:
                       f"({int(imgs.shape[0])}f, key {hop_key[:8]}"
                       f"{'' if cached_latent is not None else ', no latent'})",
                       flush=True)
+                if ht:
+                    # The cached hop was written when it rendered. The clip is
+                    # not the next hop's pin; that pin is the latent, which stays.
+                    ht_clips.pop(i, None)
                 if upsample_on:
                     # A cached hop kept its latent but not its conditioning;
                     # the upsampler's re-draw wants the one that made it.
@@ -5027,6 +5097,39 @@ class HandTieClips:
                         vae=vae, audio_vae=None,
                         image=start_image[:1], audio=None,
                     ))[0]
+                elif ht and i > 0 and not hop_restart:
+                    _wlat = ht_latents.get(i - 1)
+                    mc = _motion_context_cls()
+                    if mc is None or _wlat is None:
+                        raise RuntimeError(
+                            f"{TAG}: hop {i + 1}: hand-tie opens on window {i}'s "
+                            "latent, and that latent is not available. "
+                            "ComfyUI-H3-Motion-Context has to be installed, and "
+                            "the window has to have been rendered.")
+                    try:
+                        cond, _trim = mc().apply(
+                            conditioning=cond, vae=vae, latent=latent,
+                            context_length=str(overlap_n),
+                            audio_context_length=int(audio_ctx),
+                            context_latent=_wlat,
+                        )
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"{TAG}: hop {i + 1}: hand-tie could not pin window "
+                            f"{i}'s latent ({e!r})."
+                        ) from e
+                    _stripped = []
+                    for _emb, _extra in cond:
+                        _d = dict(_extra)
+                        if _d.get("minimax_keyframes"):
+                            _d["minimax_keyframes"] = _ht.video_only_keyframes(
+                                _d["minimax_keyframes"])
+                        _stripped.append([_emb, _d])
+                    cond = _stripped
+                    pin_mech_used = "window"
+                    print(f"[{TAG}] hop {i + 1}: hand-tie opens on window {i}'s "
+                          f"latent ({overlap_n}f picture, video only, trim {_trim})",
+                          flush=True)
                 elif i > 0 and not hop_restart:
                     pin_latent = prev_sampled
                     if pin_latent is not None:
@@ -5037,7 +5140,7 @@ class HandTieClips:
                     cond, pin_mech_used = _pin_continue(
                         cond, latent, vae, audio_vae, overlap_n,
                         pin_latent, prev_imgs, prev_audio,
-                        audio_ctx=audio_ctx, mode="auto" if ht else str(pin_mech),
+                        audio_ctx=audio_ctx, mode=str(pin_mech),
                     )
 
                 if (_guides_last_frame(last_frame_guide, i, shots)
@@ -5060,19 +5163,25 @@ class HandTieClips:
                           f"(still at pixel frame_idx={_end})",
                           flush=True)
 
-                if ht and _still is not None:
-                    # The hop ends on its storyboard still: a clean target at the
-                    # last pixel frame, through H3's keyframe input. After the pin,
-                    # so both keyframes sit on `cond`.
+                if ht:
+                    _clip = ht_clips.get(i)
+                    if _clip is None:
+                        raise RuntimeError(
+                            f"{TAG}: hop {i + 1} has no window frames to end on.")
+                    # The hop ends on its window: the 22 frames anchored at
+                    # frame -22, image only. After the opening pin, so both
+                    # sit on `cond`. The write after sampling replaces the
+                    # denoised tail with the window's own latent; this guide
+                    # is what the body aims at while it denoises.
                     cond = _result(_core_call(
-                        MiniMaxH3AddGuide, "the storyboard still",
-                        positive=cond, latent=latent, frame_idx=_last_pixel_guide_idx(),
-                        vae=vae, audio_vae=None, image=_still, audio=None,
+                        MiniMaxH3AddGuide, "the storyboard window",
+                        positive=cond, latent=latent, frame_idx=-_ht.OVERLAP,
+                        vae=vae, audio_vae=None, image=_clip, audio=None,
                     ))[0]
                     print(f"[{TAG}] hop {i + 1}: hand-tie, "
-                          + (f"opens on hop {i}'s last {overlap_n} frames ({pin_mech_used}), "
-                             if pin_mech_used not in (None, "none") else "opens free, ")
-                          + "ends on its storyboard still", flush=True)
+                          + (f"opens on window {i}'s latent (video only), "
+                             if pin_mech_used == "window" else "opens free, ")
+                          + f"ends on its {overlap_n}-frame window", flush=True)
 
                 if locked is not None:
                     # AFTER the pin: Motion-Context may rewrite this hop's
@@ -5256,11 +5365,11 @@ class HandTieClips:
                             refined_for_pin = _latent_cpu(_ref)
                         del _ref
 
-                if ht and pin_mech_used == "motion_context" and prev_sampled is not None:
-                    # The overlap is the previous hop's own latent again, so the
-                    # decoder reads one sequence across the join (OBVPM's masked
-                    # join, H3_Longshot's written-back tail).
-                    sampled = _ht_write_back(sampled)
+                if ht:
+                    # The join is the window's latent, not whatever the sampler
+                    # regenerated beside the pin. Head and tail, before decode.
+                    sampled = _ht_apply_windows(sampled)
+                    ht_clips.pop(i, None)
                 imgs, audio = _decode_av(vae, audio_vae, sampled)
                 imgs = imgs.contiguous().cpu()
                 wav = audio["waveform"].contiguous().cpu()
@@ -5282,8 +5391,7 @@ class HandTieClips:
                             SamplerCustomAdvanced, "the hop retake sampler",
                             noise=_n2, guider=guider, sampler=sampler,
                             sigmas=hop_sigmas, latent_image=latent))[0]
-                        if pin_mech_used == "motion_context" and prev_sampled is not None:
-                            _s2 = _ht_write_back(_s2)
+                        _s2 = _ht_apply_windows(_s2)
                         _i2, _a2 = _decode_av(vae, audio_vae, _s2)
                         _i2 = _i2.contiguous().cpu()
                         _c2 = _ht.hard_cuts(_i2)
@@ -5348,10 +5456,12 @@ class HandTieClips:
                     # `prev_key` is the hop this one was generated against.
                     # A locked hop is served by pointer whatever its key, so
                     # this is the only record of which join it belongs to.
-                    hop_store.put(hop_key, imgs, wav, sr,
-                                  {"hop": i + 1, "of": n, "block": block[:400],
-                                   "pin_mech": pin_mech_used,
-                                   "prev_key": None if hop_restart else prev_key},
+                    _meta = {"hop": i + 1, "of": n, "block": block[:400],
+                             "pin_mech": pin_mech_used,
+                             "prev_key": None if hop_restart else prev_key}
+                    if ht:
+                        _meta["window_open"] = _open_digest
+                    hop_store.put(hop_key, imgs, wav, sr, _meta,
                                   latent=this_sampled)
                     hop_store.set_pointer(
                         str(shot.get("id") or f"shot{i + 1}"), hop_key)

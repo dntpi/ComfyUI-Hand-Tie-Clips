@@ -28,7 +28,7 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import { el, button, widgetByName, findNodeByQualifiedId } from "./widget_utils.js";
-import { NOT_KEYED, forecastPlan, framesOf, parseJson, shotSig } from "./timeline_model.js";
+import { NOT_KEYED, contentSig, forecastPlan, framesOf, parseJson, shotSig } from "./timeline_model.js";
 
 const RUN_PROP = "h3_timeline_run";
 const PENDING_PROP = "h3_timeline_pending";
@@ -146,6 +146,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         return {
             ids: shots.map((s) => String(s.id || "")),
             shots: Object.fromEntries(shots.map((s) => [String(s.id || ""), shotSig(s)])),
+            content: Object.fromEntries(shots.map((s) => [String(s.id || ""), contentSig(s)])),
             refs: Object.fromEntries((refs.refs || []).map(
                 (r) => [String(r.tag || ""), JSON.stringify(r)])),
             subjects: JSON.stringify(refs.subjects || {}),

@@ -1,29 +1,15 @@
-"""Hand-tie: a storyboard of stills, and hops that carry each other's real frames.
+"""Hand-tie: each hop ends on its own clean window, and the next hop opens on it.
 
-Every hop opens on the last 22 frames of the hop before it -- its real sampler
-latent, through Motion-Context, and written back exactly after sampling so both
-sides of the join decode the same latent -- and ends on its own STILL: one clean,
-full-resolution frame of how its beat ends, rendered first as a short H3 clip from
-the shot's references and the previous still. The middle of every hop is free.
+W_k is the 22-frame clip rendered for hop k. Its last frame is the still. The
+join between hop k and hop k+1 is W_k's sampler latent, rendered from the refs
+and still 1, never from hop k: hop k is guided onto those frames and then
+overwritten with them, and hop k+1 is pinned to them and then overwritten with
+them. Neither hop reads the other's finished latent, so texture does not
+ratchet, and both sides of the join decode one latent, so the seam stays.
 
-Why (2026-10-13, after the previs version failed the Carolyn runs): a chain that
-only continues drifts, because nothing pulls it back; the previs gave every hop a
-target, but a dirty one -- a 15 s render squeezed five beats into, which cut like
-a montage, invented speech, caught mouths mid-chew, and at a lower resolution made
-every join flash. Three independent H3 projects converged on the same three
-answers, and this is them:
-  * the join carries the neighbour's real latent, so nothing is rendered twice and
-    there is no seam to repair (OBVPM timeline: masked joins, repairs off by
-    default; H3_Longshot: the end pin's old tail written back exactly);
-  * a clean, high-resolution END target, through H3's keyframe input, holds the
-    quality over many extensions (martinerous: 10-20; Murky: 8 with storyboard
-    keyframes);
-  * place through references, the previous frame as a `weak_reference` picture,
-    which takes the surroundings without opening on the frame (H3_Longshot's
-    Context join).
-H3 renders sheet-quality stills (silveroxides' turnaround sheets), so the
-storyboard needs no second model. Nothing is bigger than one hop: a still is 22
-frames.
+Later windows take still 1 as a weak_reference picture. They do not take the
+previous window, so the storyboard does not chain either. W_k is muted; the
+pin is video only, and each hop keeps its own audio.
 
 This module is the text and the arithmetic, with no ComfyUI imports, so
 tools/check_hand_tie.py runs without a server.
@@ -33,7 +19,8 @@ import re
 
 FPS = 24
 OVERLAP = 22                # frames each hop shares with the one before (17 + 5: one token group + 2)
-STILL_FRAMES = 22           # the clip a still is taken from; its last frame is the still
+MIN_HOP_FRAMES = 56         # 17*3+5: shortest hop whose 22-frame head and tail do not share frames
+STILL_FRAMES = 22           # the clip a window is rendered at; its last frame is the still
 STILL_SEED_OFFSET = 7919    # a still's seed = the hop's seed + this
 STILL_CONTEXT = ("the frame the shot before ends on: weak_reference - the place, the light "
                  "and the surroundings carry over; the shot does not open on it")
@@ -52,19 +39,66 @@ def overlap_rows(frames=OVERLAP):
     return 2 if f <= 5 else ((f - 5) // 17) * 5 + 2
 
 
-def write_back(video, prev_video, rows):
-    """`video` with its first `rows` latent steps replaced by `prev_video`'s last
-    `rows`: the join is then the previous hop's own latent, and the decoder sees
-    one sequence across it. [B, C, T, H, W] tensors; returns a new tensor."""
+def write_rows(video, src, rows, tail=False):
+    """Copy `rows` latent steps from `src` onto `video`. [B, C, T, H, W].
+
+    Head (`tail` false): video's first `rows` become src's last `rows`.
+    Tail: video's last `rows` become src's first `rows`. A window is exactly
+    `rows` long, so either slice is the whole window. Returns `video` itself
+    when the splice would be the wrong shape, and never writes that tensor
+    in place.
+    """
     rows = int(rows)
-    if rows <= 0 or int(prev_video.shape[2]) < rows or int(video.shape[2]) <= rows:
+    if rows <= 0 or int(src.shape[2]) < rows or int(video.shape[2]) <= rows:
         return video
-    if tuple(prev_video.shape[:2]) != tuple(video.shape[:2]) \
-            or tuple(prev_video.shape[3:]) != tuple(video.shape[3:]):
+    if tuple(src.shape[:2]) != tuple(video.shape[:2]) \
+            or tuple(src.shape[3:]) != tuple(video.shape[3:]):
         return video
     out = video.clone()
-    out[:, :, :rows] = prev_video[:, :, -rows:].to(device=out.device, dtype=out.dtype)
+    taken = src[:, :, :rows] if tail else src[:, :, -rows:]
+    taken = taken.to(device=out.device, dtype=out.dtype)
+    if tail:
+        out[:, :, -rows:] = taken
+    else:
+        out[:, :, :rows] = taken
     return out
+
+
+def write_back(video, prev_video, rows):
+    """`video` with its first `rows` latent steps replaced by `prev_video`'s last
+    `rows`. The chain's head splice; a hand-tie join uses `write_rows`."""
+    return write_rows(video, prev_video, rows, tail=False)
+
+
+def video_only_keyframes(keyframes):
+    """Drop audio-only keyframes. A keyframe that also carries video stays.
+
+    Motion-Context has no video-only switch: a wired latent always appends an
+    audio keyframe, and a muted window's audio is silence. `None` and `[]`
+    pass through.
+    """
+    if not keyframes:
+        return keyframes
+    return [kf for kf in keyframes
+            if kf.get("latent") is not None or kf.get("audio_latent") is None]
+
+
+def hop_fit_errors(lengths):
+    """Hops too short for a 22-frame head pin and a 22-frame tail window.
+
+    Motion-Context drops any anchor that lands inside the pinned head, so a
+    hop under 44 frames would lose the end of its own window. 56 is the
+    shortest 17n+5 length past that.
+    """
+    err = []
+    for i, n in enumerate(lengths or []):
+        n = int(n)
+        if n < MIN_HOP_FRAMES:
+            err.append(
+                "pin_mech=hand_tie hop %d is %d frames; the 22-frame opening "
+                "pin and the 22-frame end window need at least %d so they do "
+                "not share frames." % (i + 1, n, MIN_HOP_FRAMES))
+    return err
 
 
 # --- the text ---------------------------------------------------------------------
@@ -475,8 +509,8 @@ def settings_errors(overlap_n, last_frame_guide, master_audio=""):
     """What hand-tie refuses before anything samples."""
     err = []
     if int(overlap_n) != OVERLAP:
-        err.append("pin_mech=hand_tie needs overlap 0.9 s (22 frames): each hop opens on "
-                   "the last 22 frames of the hop before it, %d were asked for." % int(overlap_n))
+        err.append("pin_mech=hand_tie needs overlap 0.9 s (22 frames): the join "
+                   "window is 22 frames, %d were asked for." % int(overlap_n))
     if str(last_frame_guide or "off") != "off":
         err.append("pin_mech=hand_tie ends every hop on its own storyboard still; "
                    "last_frame_guide=%s would put a second end guide on the same frame. "

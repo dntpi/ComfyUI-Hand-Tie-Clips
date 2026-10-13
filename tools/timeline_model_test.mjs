@@ -1,5 +1,5 @@
 // The timeline forecast's rules, under Node. Run by tools/check_timeline.py.
-import { forecastPlan, shotSig, framesOf } from "../js/editor/timeline_model.js";
+import { contentSig, forecastPlan, shotSig, framesOf } from "../js/editor/timeline_model.js";
 
 let failed = 0;
 const ck = (name, ok, detail = "") => {
@@ -103,11 +103,6 @@ fc = forecastPlan({ shots: unseededExt, rec: recU, now: snapOf(unseededExt), see
 ck("extend under a moving seed re-renders every unseeded shot",
    fc.state.every((st) => st === "render"), fc.state.join());
 
-// Hand-tie keys like any chain since the storyboard (2026-10-13): each hop opens
-// on the previous hop's latent, so a change runs on from where it is made.
-fc = forecastPlan({ shots: edited, rec, now: snapOf(edited) });
-ck("an edit to shot 2 re-renders shots 2-4 and keeps shot 1 (the chain rule hand-tie keys by)",
-   fc.state.join() === "keeps,render,render,render", fc.state.join());
 ck("the old section tie is gone from the model (no `tie` input, no tieSections)",
    !/tie\s*=/.test(String(forecastPlan)) && !String(forecastPlan).includes("tieSections"));
 
@@ -122,6 +117,68 @@ ck("+ extend (anchor=extend) renders only the new shot",
 const reseed = base.map((s, i) => (i === 2 ? { ...s, seed: 99 } : s));
 fc = forecastPlan({ shots: reseed, rec, now: snapOf(reseed) });
 ck("a new seed on shot 3 re-renders shots 3-4 and keeps 1-2",
+   fc.state.join() === "keeps,keeps,render,render", fc.state.join());
+
+// hand_tie: windows cite still 1, and a shot seed does not move a window.
+const htSnap = (shots, extra = {}) => snapOf(shots, {
+    widgets: { steps: 8, overlap: "22 f", pin_mech: "hand_tie" },
+    content: Object.fromEntries(shots.map((s) => [s.id, contentSig(s)])),
+    ...extra,
+});
+const htRec = (shots) => recOf(shots, htSnap(shots));
+const beat = (shots, index, text) => shots.map((s, i) => (i === index ? { ...s, beat: text } : s));
+
+const htEdit2 = beat(base, 1, "b2");
+fc = forecastPlan({ shots: htEdit2, rec: htRec(base), now: htSnap(htEdit2) });
+ck("hand_tie: editing shot 2 re-renders 2 and 3 and keeps 1 and 4",
+   fc.state.join() === "keeps,render,render,keeps"
+   && fc.cause[1] === "shot 2 edited" && fc.cause[2] === "shot 2 edited" && fc.cause[3] == null,
+   fc.state.join() + " " + String(fc.cause));
+
+const htEdit1 = beat(base, 0, "a2");
+fc = forecastPlan({ shots: htEdit1, rec: htRec(base), now: htSnap(htEdit1) });
+ck("hand_tie: editing shot 1 re-renders the film",
+   fc.state.join() === "render,render,render,render" && fc.cause[3] === "shot 1 edited",
+   fc.state.join());
+
+const htRestart = base.map((s, i) => (i === 2 ? { ...s, anchor: "restart" } : s));
+fc = forecastPlan({
+    shots: beat(htRestart, 0, "a2"), rec: htRec(htRestart), now: htSnap(beat(htRestart, 0, "a2")),
+});
+ck("hand_tie: editing shot 1 runs through a restart",
+   fc.state.join() === "render,render,render,render", fc.state.join());
+fc = forecastPlan({
+    shots: beat(htRestart, 1, "b2"), rec: htRec(htRestart), now: htSnap(beat(htRestart, 1, "b2")),
+});
+ck("hand_tie: a later edit does not cross a restart",
+   fc.state.join() === "keeps,render,keeps,keeps", fc.state.join());
+
+const htSeed = base.map((s, i) => (i === 2 ? { ...s, seed: 99 } : s));
+fc = forecastPlan({ shots: htSeed, rec: htRec(base), now: htSnap(htSeed) });
+ck("hand_tie: a shot seed retakes that hop only",
+   fc.state.join() === "keeps,keeps,render,keeps", fc.state.join());
+
+fc = forecastPlan({ shots: base, rec: htRec(base), now: htSnap(base, { seed: 6 }) });
+ck("hand_tie: a run-seed change re-renders every hop",
+   fc.state.every((s) => s === "render"), fc.state.join());
+fc = forecastPlan({ shots: base, rec: htRec(base), now: htSnap(base), seedCtl: "randomize" });
+ck("hand_tie: a moving run seed re-renders hops that have their own seed",
+   fc.state.every((s) => s === "render"), fc.state.join());
+
+const htLockedBeat = htEdit2.map((s, i) => (i === 2 ? { ...s, locked: true } : s));
+fc = forecastPlan({ shots: htLockedBeat, rec: htRec(base), now: htSnap(htLockedBeat) });
+ck("hand_tie: a locked hop after a beat edit is unpaired, and the hop after it keeps",
+   fc.state.join() === "keeps,render,locked,keeps" && fc.unpaired.join() === "2",
+   fc.state.join() + " unpaired " + fc.unpaired.join());
+const htLockedSeed = base.map((s, i) => (i === 1 ? { ...s, seed: 99 } : i === 2 ? { ...s, locked: true } : s));
+fc = forecastPlan({ shots: htLockedSeed, rec: htRec(base), now: htSnap(htLockedSeed) });
+ck("hand_tie: a locked hop after a seed retake is not unpaired",
+   fc.state.join() === "keeps,render,locked,keeps" && fc.unpaired.length === 0,
+   fc.state.join() + " unpaired " + fc.unpaired.join());
+
+const oldSnap = snapOf(base, { widgets: { steps: 8, overlap: "22 f", pin_mech: "hand_tie" } });
+fc = forecastPlan({ shots: htSeed, rec: recOf(base, oldSnap), now: htSnap(htSeed) });
+ck("hand_tie: a snapshot without a content map treats a seed retake as content",
    fc.state.join() === "keeps,keeps,render,render", fc.state.join());
 
 process.exit(failed ? 1 : 0);

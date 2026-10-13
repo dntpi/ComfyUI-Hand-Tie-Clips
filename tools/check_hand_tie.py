@@ -2,22 +2,22 @@ r"""Offline checks for hand_tie.py and its wiring in run() -- no GPU, no server.
 
     D:\ComfyUI\venv\Scripts\python.exe tools\check_hand_tie.py
 
-Hand-tie, since 2026-10-13, is a storyboard: each hop ends on a still of how
-its beat ends, rendered first, and opens on the real last 22 frames of the hop
-before it (Motion-Context), with the overlap written back so both sides of the
-join are one latent. What is checked here:
+Hand-tie shares a clean 22-frame window at each join. The window is rendered
+from the refs and still 1, never from a neighbour. Hop k ends on that window,
+hop k+1 opens on its latent (video only), and both delivered sides are written
+with it. What is checked here:
 
 * the text: a still shows the beat's opening and ending with no line, no talking
   cue and no sound; voices leave the sound sentences; closed lips leave a hop
   that speaks; a line sits after the overlap and fits the hop;
-* the arithmetic: 22 frames are 7 latent steps, and the last 7 of a 17k+5 hop
-  start on a token group, so the write-back is the previous hop's own latent;
+* the arithmetic: 22 frames are 7 latent steps, a legal hop is at least 56
+  frames, and the tail write is not the head write;
+* audio-only keyframes are dropped and a mixed keyframe stays;
 * the cut detector on synthetic motion and a synthetic cut;
 * the sound check's verdict;
-* run(): the still is rendered first, muted, on the run seed, with the previous
-  still as a weak_reference picture, cached; the hop keys like a chain plus the
-  still; the end guide sits after the pin and before the sampler; the write-back
-  sits before the decode, and on the retake; nothing of the previs is left.
+* run(): still 1 is the picture ref, the window latent is cached, the hop key
+  does not chain, the end guide is at -22 after the pin, and both writes sit
+  before the decode, including the retake.
 """
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ _hs = open(os.path.join(HERE, "hear.py"), encoding="utf-8").read()
 ck("hear.py never downloads: local cache only, on the CPU",
    "local_files_only=True" in _hs and "device=-1" in _hs and "snapshot_download(repo," in _hs)
 
-print("\nthe join: 22 frames are the previous hop's own last 7 latent steps")
+print("\nthe join: 22 frames are 7 latent steps, written at the head or the tail")
 
 
 def _latent_t(f):   # core's video_latent_t (comfy_extras/nodes_minimax_h3.py), restated
@@ -165,8 +165,15 @@ def _latent_t(f):   # core's video_latent_t (comfy_extras/nodes_minimax_h3.py), 
 
 ck("22 frames are 7 steps; 5 are 2; 39 are 12 (core's arithmetic)",
    [HT.overlap_rows(f) for f in (22, 5, 39)] == [7, 2, 12] == [_latent_t(f) for f in (22, 5, 39)])
-ck("a 17k+5 hop's last 7 steps start on a token group (so they ARE a hop's first 7)",
-   all((_latent_t(f) - HT.overlap_rows()) % 5 == 0 for f in (124, 192, 243, 362)))
+ck("a legal hop's last 7 steps open on a key token",
+   all((_latent_t(f) - 7) % 5 == 0 for f in (56, 124, 192, 243, 362)))
+ck("that window is not the hop's first step, and step 1 is off the token grid",
+   all((_latent_t(f) - 7) != 0 and (1 % 5) != 0 for f in (56, 124, 192)))
+ck("a hop under 56 frames is refused, and 56 is not",
+   HT.hop_fit_errors([39]) and HT.hop_fit_errors([56, 124]) == []
+   and not HT.hop_fit_errors([56]))
+ck("the short-hop error names the hop and the minimum",
+   "hop 2" in HT.hop_fit_errors([124, 39])[0] and "56" in HT.hop_fit_errors([39])[0])
 _prev = torch.randn(1, 24, 57, 4, 6)
 _new = torch.randn(1, 24, 57, 4, 6)
 _wb = HT.write_back(_new, _prev, 7)
@@ -175,6 +182,21 @@ ck("write_back puts the previous hop's last 7 steps at this hop's start, exactly
 ck("...and leaves its input alone", not torch.equal(_new[:, :, :7], _prev[:, :, -7:]))
 ck("a canvas mismatch or no rows: unchanged (never a wrong splice)",
    HT.write_back(_new, torch.randn(1, 24, 57, 4, 8), 7) is _new and HT.write_back(_new, _prev, 0) is _new)
+_tail = HT.write_rows(_new, _prev, 7, tail=True)
+ck("the tail write puts the window's first 7 steps at this hop's end",
+   torch.equal(_tail[:, :, -7:], _prev[:, :, :7]) and torch.equal(_tail[:, :, :-7], _new[:, :, :-7]))
+ck("the head write is not the tail write",
+   not torch.equal(HT.write_rows(_new, _prev, 7, tail=False)[:, :, :7], _prev[:, :, :7]))
+_short = torch.randn(1, 24, 3, 4, 6)
+ck("a short window, or a hop no longer than it, is returned unchanged",
+   HT.write_rows(_new, _short, 7, tail=True) is _new
+   and HT.write_rows(_short, _prev, 7) is _short)
+ck("audio-only keyframes are dropped and a mixed one stays",
+   HT.video_only_keyframes([
+       {"audio_latent": 1}, {"latent": 2, "audio_latent": 3}, {"latent": 4},
+   ]) == [{"latent": 2, "audio_latent": 3}, {"latent": 4}])
+ck("no keyframes passes through",
+   HT.video_only_keyframes(None) is None and HT.video_only_keyframes([]) == [])
 
 print("\nthe cut detector (a hop that cuts to reach its still)")
 g = torch.Generator().manual_seed(5)
@@ -196,12 +218,12 @@ ck("last_frame_guide is refused (the still is the end guide)",
 ck("master_audio_file is refused", any("master_audio_file" in e for e in HT.settings_errors(22, "off", "x.wav")))
 ck("22 frames, guide off, no master audio: nothing refused", HT.settings_errors(22, "off", "") == [])
 
-print("\nrun(): the storyboard")
+print("\nrun(): the window")
 _st0 = run_src.find("        def _ht_still(i):")
-_st1 = run_src.find("        def _ht_write_back(lat):")
+_st1 = run_src.find("        def _ht_digest(lat):")
 _still_src = run_src[_st0:_st1]
 ck("_ht_still is defined in run()", _st0 > 0 and _st1 > _st0)
-ck("the still is a STILL_FRAMES clip on the hop canvas, and its last frame is kept",
+ck("the window is a STILL_FRAMES clip on the hop canvas, and its last frame is kept",
    "s_len = align_frame_count(_ht.STILL_FRAMES)" in _still_src
    and "width=int(width), height=int(height), length=s_len," in _still_src
    and "ht_stills[i] = _si[-1:].clone()" in _still_src)
@@ -211,40 +233,76 @@ ck("its text is still_text; its seed the run seed, never a shot's",
    and '_sh.get("seed")' not in _still_src)
 ck("it is muted: frozen silence spliced into its latent, no voice",
    "_sl = _splice_locked_audio(_sl, _encode_locked_slice(" in _still_src and "ref_audios=None" in _still_src)
-ck("the previous still rides as the next <Picture N> with a weak_reference line",
-   "_prev = ht_stills.get(i - 1)" in _still_src and 's_images[f"ref_image_{_n}"] = _prev' in _still_src
+ck("later windows take still 1, never the previous window",
+   "ht_stills.get(0) if i > 0" in _still_src
+   and 's_images[f"ref_image_{_n}"] = _anchor' in _still_src
    and '_line = f"<Picture {_n}> ({_ht.STILL_CONTEXT})."' in _still_src
-   and "weak_reference" in HT.STILL_CONTEXT)
+   and "weak_reference" in HT.STILL_CONTEXT
+   and "_prev = ht_stills.get(i - 1)" not in run_src)
+ck("the window cache stores the sampler latent, and a hit without one re-renders",
+   "latent=_win" in _still_src
+   and "if _hit is not None and _hit[3] is None:" in _still_src
+   and "if _hit is not None and _hit[3] is not None:" in _still_src
+   and "_si, _sw = _store.as_stored(_si, _sw)" in _still_src)
 ck("it is cached: keyed on its text, refs, seed and length, and served by key",
    "s_key = _store.hop_key(None, {" in _still_src and '"still": sblock' in _still_src
    and "_hit = hop_store.get(s_key)" in _still_src and "hop_store.put(s_key, _si, _sw," in _still_src)
-ck("run() renders the still before the hop keys (the key carries its digest)",
-   0 < run_src.find("_still = _ht_still(i) if ht else None")
-   < run_src.find('hop_payload["hand_tie"] = ["storyboard", _store.tensor_digest(_still),'))
+_key_at = run_src.find('hop_payload["hand_tie"] = [')
+ck("run() renders the window before the hop key", 
+   0 < run_src.find("_still = _ht_still(i) if ht else None") < _key_at)
+ck("the key records the two window digests, not the old storyboard still",
+   '"window", _open_digest, _ht_digest(ht_latents.get(i)),' in run_src
+   and '"hand_tie": ["storyboard"' not in run_src
+   and "tensor_digest(_still)" not in run_src)
 
 print("\nrun(): the hop")
-ck("a hand-tie hop keys like a chain (prev_key), plus its still",
-   "None if hop_restart else prev_key, hop_payload)" in run_src
-   and "None if (hop_restart or ht)" not in run_src)
-ck("its pin is the chain's: Motion-Context on auto",
-   'mode="auto" if ht else str(pin_mech)))' in run_src
-   and 'audio_ctx=audio_ctx, mode="auto" if ht else str(pin_mech),' in run_src)
-_eg = run_src.find('MiniMaxH3AddGuide, "the storyboard still",')
-_pin = run_src.find("cond, pin_mech_used = _pin_continue(")
+ck("a hand-tie hop does not chain prev_key", 
+   "None if (hop_restart or ht) else prev_key, hop_payload)" in run_src
+   and "None if hop_restart else prev_key, hop_payload)" not in run_src)
+ck("the cache meta still records prev_key for the other pin modes",
+   '"prev_key": None if hop_restart else prev_key' in run_src)
+ck("the opening pin is the previous window, and there is no auto pixel fallback",
+   "context_latent=_wlat" in run_src
+   and "ht_latents.get(i - 1)" in run_src
+   and "_ht.video_only_keyframes(" in run_src
+   and 'pin_mech_used = "window"' in run_src
+   and 'mode="auto" if ht' not in run_src)
+ck("a continuation is the window; a restart opens free",
+   'pin_mech_pred = "none" if (i == 0 or hop_restart) else "window"' in run_src)
+_eg = run_src.find('MiniMaxH3AddGuide, "the storyboard window",')
+_pin = run_src.find("context_latent=_wlat")
 _smp = run_src.find('SamplerCustomAdvanced, "the sampler",')
-ck("the end guide is the still at the last pixel frame, after the pin, before the sampler",
+ck("the end guide is the 22-frame window after the pin and before the sampler",
    -1 not in (_eg, _pin, _smp) and _pin < _eg < _smp
-   and "frame_idx=_last_pixel_guide_idx()" in run_src[_eg:_eg + 300])
-_wb0 = run_src.find("sampled = _ht_write_back(sampled)")
+   and "frame_idx=-_ht.OVERLAP" in run_src[_eg:_eg + 400]
+   and "frame_idx=_last_pixel_guide_idx()" not in run_src[_eg:_eg + 400]
+   and "audio=None" in run_src[_eg:_eg + 400])
+_wb0 = run_src.find("sampled = _ht_apply_windows(sampled)")
 _dec = run_src.find("imgs, audio = _decode_av(vae, audio_vae, sampled)")
-ck("the write-back runs before the decode, and only on a Motion-Context pin",
+ck("the window write runs before the decode, and not after it",
    -1 not in (_wb0, _dec) and _wb0 < _dec
-   and 'if ht and pin_mech_used == "motion_context" and prev_sampled is not None:' in run_src)
-ck("the cut retake is written back too, and uses the cut detector",
-   "_s2 = _ht_write_back(_s2)" in run_src and "_hcuts = _ht.hard_cuts(imgs)" in run_src
+   and run_src.find("sampled = _ht_apply_windows(sampled)", _dec) == -1
+   and 'if ht and pin_mech_used == "motion_context" and prev_sampled is not None:' not in run_src)
+_rt = run_src.find("_s2 = _ht_apply_windows(_s2)")
+_rtd = run_src.find("_i2, _a2 = _decode_av(vae, audio_vae, _s2)")
+ck("the cut retake is written before its decode, and uses the cut detector",
+   -1 not in (_rt, _rtd) and _rt < _rtd
+   and "_s2 = _ht_write_back(_s2)" not in run_src
+   and "_hcuts = _ht.hard_cuts(imgs)" in run_src
    and "_c2 = _ht.hard_cuts(_i2)" in run_src and "_ht.HOP_RETRY_STRIDE" in run_src)
-ck("the write-back uses overlap_rows of the run's overlap",
-   "parts[0] = _ht.write_back(parts[0], prev[0], _ht.overlap_rows(overlap_n))" in run_src)
+_ap = run_src.find("        def _ht_apply_windows(lat):")
+_ap_src = run_src[_ap:run_src.find("\n        assembled = []", _ap)]
+ck("the write uses overlap_rows, video only, and a restart has no head write",
+   "_ht.write_rows(" in _ap_src and "_ht.overlap_rows(overlap_n)" in _ap_src
+   and "parts[0] = spliced" in _ap_src and "parts[1]" not in _ap_src
+   and "if i > 0 and not hop_restart:" in _ap_src
+   and "parts[0] = _ht.write_back(" not in run_src)
+ck("a locked hand-tie hop is unpaired on its opening window",
+   '_pm.get("window_open") != _open_digest' in run_src
+   and '_meta["window_open"] = _open_digest' in run_src)
+ck("a short hop and a missing Motion-Context fail the queue",
+   "_ht.hop_fit_errors(lengths)" in run_src
+   and "there is no pixel-pin fallback." in run_src)
 ck("the sound check is a verdict on the kept part, logged and in info",
    "_txt = _hear.transcribe(wav[..., _cut:], sr, _ht.hop_language(block))" in run_src
    and "ht_heard.append((i + 1," in run_src and 'info += chr(10) + f"hop {_h} sound: {_v}"' in run_src)
@@ -256,9 +314,10 @@ ck("the compile path is time_lines over open_lips over quiet_sounds",
 ck("nothing of the previs or the sound drafts is left in run()",
    not re.search(r"ht_previs|ht_windows|ht_pos\b|_ht_previs|sound_first|compile_previs|"
                  r"hand-tie section|split_crossing|free_head", src))
-ck("dry_run=previs outputs the storyboard",
+ck("dry_run=previs outputs the stills, and the clips are dropped once unused",
    'head = (f"STORYBOARD ONLY - {int(_imgs.shape[0])} still(s) at "' in run_src
-   and "_imgs = torch.cat([ht_stills[k] for k in sorted(ht_stills)], dim=0)" in run_src)
+   and "_imgs = torch.cat([ht_stills[k] for k in sorted(ht_stills)], dim=0)" in run_src
+   and run_src.count("ht_clips.pop(i, None)") >= 3)
 
 print("\nthe voice rides a hand-tie hop only where it speaks")
 _vt = ast.parse(src)

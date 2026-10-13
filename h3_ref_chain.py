@@ -4151,8 +4151,11 @@ class HandTieClips:
 
         def _ht_still(i):
             """Render (or load) hop i's window: a 22-frame clip of how its beat
-            ends. The last frame is the still. Later windows take still 1, never
-            the previous window, as a weak_reference picture. Called after hop i's
+            ends. The last frame is the still. A continuation's window takes the
+            previous window's still as a weak_reference picture, so consecutive
+            windows share a place and the hop between them can travel without a
+            cut; a restart's window takes still 1. Only a picture passes between
+            windows, never a latent. Called after hop i's
             prompt is assembled, and assembled the same way from those values
             (read here at call time). Muted: a window has no sound, and a frozen
             silent track keeps its mouth at rest. The sampler latent is kept;
@@ -4173,7 +4176,15 @@ class HandTieClips:
             if refvid_line and not _d.is_full_h3_prompt(sblock):
                 sblock = sblock.rstrip() + "\n\n" + refvid_line
             s_images = dict(hop_images or {})
-            _anchor = ht_stills.get(0) if i > 0 else None
+            # Still 1 alone left consecutive windows in different places, and the
+            # hop between them cut to get there (Storyboard4, 2026-10-14: hop 2
+            # cut on both seeds). The previous still carries where she got to.
+            if i == 0:
+                _anchor = None
+            elif str(_sh.get("anchor") or "") == "restart":
+                _anchor = ht_stills.get(0)
+            else:
+                _anchor = ht_stills.get(i - 1)
             if _anchor is not None and len(s_images) < 9:
                 _n = len(s_images) + 1
                 s_images[f"ref_image_{_n}"] = _anchor
@@ -4975,6 +4986,18 @@ class HandTieClips:
                                   f"generated together. Unlock hop {i + 1}, or "
                                   f"pin hop {i}'s ending with last_frame_guide "
                                   f"or anchor=restart.", flush=True)
+                        # Windows are linked, so an edit before a locked hop
+                        # moves its END window too. Its frames end on the old
+                        # one; the next hop opens on the new one.
+                        if (ht and i + 1 < n and "window_end" in _pm
+                                and str((shots[i + 1] or {}).get("anchor") or "") != "restart"
+                                and _pm["window_end"] != _ht_digest(ht_latents.get(i))):
+                            unpaired_joins.append(i + 2)
+                            print(f"[{TAG}] WARNING: hop {i + 1} is locked, but "
+                                  f"its end window is not the one this run "
+                                  f"rendered. The hop {i + 1}|{i + 2} join was "
+                                  f"never generated together. Unlock hop {i + 1}.",
+                                  flush=True)
                         hop_key = pinned
                         locked_served = True
                     else:
@@ -5461,6 +5484,7 @@ class HandTieClips:
                              "prev_key": None if hop_restart else prev_key}
                     if ht:
                         _meta["window_open"] = _open_digest
+                        _meta["window_end"] = _ht_digest(ht_latents.get(i))
                     hop_store.put(hop_key, imgs, wav, sr, _meta,
                                   latent=this_sampled)
                     hop_store.set_pointer(
@@ -5816,7 +5840,7 @@ class HandTieClips:
             info += chr(10) + "seams: " + ", ".join(str(f) for f in seam_marks)
         if unpaired_joins:
             info += chr(10) + "unpaired joins: " + ", ".join(
-                f"{h - 1}|{h}" for h in unpaired_joins)
+                f"{h - 1}|{h}" for h in sorted(set(unpaired_joins)))
         if upsample_note:
             info += chr(10) + upsample_note
         for _h, _v in ht_heard:

@@ -12,11 +12,13 @@
  *   - a locked hop still in the cache is served by pointer, so it never
  *     re-renders and the hop after it keys from that unchanged render.
  *
- * pin_mech=hand_tie does not chain. A hop's key carries its opening window and
- * its own end window. Window 1 is what every later window cites, so a content
- * edit there runs through the film, restarts included. A later content edit
- * re-renders that hop and the next continuation only. A shot seed retakes that
- * hop alone. The run seed is every window's seed, so it re-renders the film.
+ * pin_mech=hand_tie does not chain hops, but its windows chain by picture. A
+ * hop's key carries its opening window and its own end window; a
+ * continuation's window cites the previous window's still, a restart's cites
+ * still 1. So a content edit moves that hop's window and every window after it
+ * up to the next restart, and hop 1's runs through restarts too. A shot seed
+ * retakes that hop alone. The run seed is every window's seed, so it
+ * re-renders the film.
  *
  * Anything this cannot see -- a LoRA swapped on the MODEL wire, a reference
  * file replaced on disk under the same name -- the run itself will catch.
@@ -161,6 +163,23 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         }
     }
 
+    // hand_tie: which windows move, and the edit that moves each.
+    const windowMoved = [];
+    const windowCause = [];
+    for (let i = 0; i < n; i++) {
+        const src = i === 0 ? -1 : (isStart(i) ? 0 : i - 1);
+        if (contentChanged[i]) {
+            windowMoved.push(true);
+            windowCause.push(why.get(i));
+        } else if (src >= 0 && windowMoved[src]) {
+            windowMoved.push(true);
+            windowCause.push(windowCause[src]);
+        } else {
+            windowMoved.push(false);
+            windowCause.push(null);
+        }
+    }
+
     const { from = 0, through = 0 } = range;
     const state = [];
     const moved = [];
@@ -175,12 +194,9 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         } else if (why.has(i)) {
             m = true;
             c = why.get(i);
-        } else if (handTie && contentChanged[0]) {
+        } else if (handTie && windowMoved[i]) {
             m = true;
-            c = why.get(0);
-        } else if (handTie && i > 0 && contentChanged[i - 1] && !isStart(i)) {
-            m = true;
-            c = why.get(i - 1);
+            c = windowCause[i];
         } else if (!handTie && i > 0 && moved[i - 1] && !isStart(i)) {
             m = true;
             c = cause[i - 1];
@@ -192,13 +208,20 @@ export function forecastPlan({ shots, rec, now, range = {}, missing = new Set(),
         else if (from && i + 1 < from) st = m ? "replay-miss" : "replay";
         state.push(st);
     }
-    const unpaired = [];
+    const unpaired = new Set();
     for (let i = 1; i < n; i++) {
         if (state[i] !== "locked" || isStart(i) || state[i - 1] === "skip") continue;
-        const openingMoved = handTie
-            ? Boolean(contentChanged[0] || contentChanged[i - 1])
-            : moved[i - 1];
-        if (openingMoved) unpaired.push(i);
+        const openingMoved = handTie ? windowMoved[i - 1] : moved[i - 1];
+        if (openingMoved) unpaired.add(i);
     }
-    return { state, cause, unpaired };
+    // hand_tie: a locked hop's frames end on the window it was rendered with.
+    // When that window moves, the next hop opens on a different one.
+    if (handTie) {
+        for (let i = 0; i + 1 < n; i++) {
+            if (state[i] !== "locked" || !windowMoved[i] || isStart(i + 1)
+                || state[i + 1] === "skip") continue;
+            unpaired.add(i + 1);
+        }
+    }
+    return { state, cause, unpaired: [...unpaired].sort((a, b) => a - b) };
 }

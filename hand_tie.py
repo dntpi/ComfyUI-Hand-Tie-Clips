@@ -2,14 +2,16 @@
 
 W_k is the 22-frame clip rendered for hop k. Its last frame is the still. The
 join between hop k and hop k+1 is W_k's sampler latent, rendered from the refs
-and still 1, never from hop k: hop k is guided onto those frames and then
+and a still, never from hop k: hop k is guided onto those frames and then
 overwritten with them, and hop k+1 is pinned to them and then overwritten with
 them. Neither hop reads the other's finished latent, so texture does not
 ratchet, and both sides of the join decode one latent, so the seam stays.
 
-Later windows take still 1 as a weak_reference picture. They do not take the
-previous window, so the storyboard does not chain either. W_k is muted; the
-pin is video only, and each hop keeps its own audio.
+A continuation's window takes the previous window's still as a weak_reference
+picture; a restart's takes still 1. With still 1 alone, consecutive windows sat
+in different places and the hop between them slid or cut to get there. Only a
+picture passes from window to window, never a latent. W_k is muted; the pin is
+video only, and each hop keeps its own audio.
 
 This module is the text and the arithmetic, with no ComfyUI imports, so
 tools/check_hand_tie.py runs without a server.

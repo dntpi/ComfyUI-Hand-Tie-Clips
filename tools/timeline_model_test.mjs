@@ -119,7 +119,8 @@ fc = forecastPlan({ shots: reseed, rec, now: snapOf(reseed) });
 ck("a new seed on shot 3 re-renders shots 3-4 and keeps 1-2",
    fc.state.join() === "keeps,keeps,render,render", fc.state.join());
 
-// hand_tie: windows cite still 1, and a shot seed does not move a window.
+// hand_tie: a continuation's window cites the previous window's still, a
+// restart's cites still 1, and a shot seed does not move a window.
 const htSnap = (shots, extra = {}) => snapOf(shots, {
     widgets: { steps: 8, overlap: "22 f", pin_mech: "hand_tie" },
     content: Object.fromEntries(shots.map((s) => [s.id, contentSig(s)])),
@@ -130,9 +131,9 @@ const beat = (shots, index, text) => shots.map((s, i) => (i === index ? { ...s, 
 
 const htEdit2 = beat(base, 1, "b2");
 fc = forecastPlan({ shots: htEdit2, rec: htRec(base), now: htSnap(htEdit2) });
-ck("hand_tie: editing shot 2 re-renders 2 and 3 and keeps 1 and 4",
-   fc.state.join() === "keeps,render,render,keeps"
-   && fc.cause[1] === "shot 2 edited" && fc.cause[2] === "shot 2 edited" && fc.cause[3] == null,
+ck("hand_tie: editing shot 2 re-renders 2 onward (the windows chain) and keeps 1",
+   fc.state.join() === "keeps,render,render,render"
+   && fc.cause[1] === "shot 2 edited" && fc.cause[3] === "shot 2 edited" && fc.cause[0] == null,
    fc.state.join() + " " + String(fc.cause));
 
 const htEdit1 = beat(base, 0, "a2");
@@ -167,7 +168,13 @@ ck("hand_tie: a moving run seed re-renders hops that have their own seed",
 
 const htLockedBeat = htEdit2.map((s, i) => (i === 2 ? { ...s, locked: true } : s));
 fc = forecastPlan({ shots: htLockedBeat, rec: htRec(base), now: htSnap(htLockedBeat) });
-ck("hand_tie: a locked hop after a beat edit is unpaired, and the hop after it keeps",
+ck("hand_tie: a locked hop after a beat edit is unpaired on both joins; the hop after renders",
+   fc.state.join() === "keeps,render,locked,render" && fc.unpaired.join() === "2,3",
+   fc.state.join() + " unpaired " + fc.unpaired.join());
+const htLockedRestart = htLockedBeat.map((s, i) => (i === 3 ? { ...s, anchor: "restart" } : s));
+fc = forecastPlan({ shots: htLockedRestart, rec: htRec(htLockedRestart.map((s) => ({ ...s, beat: s.id === "s2" ? base[1].beat : s.beat }))),
+                    now: htSnap(htLockedRestart) });
+ck("hand_tie: a restart after the locked hop is not unpaired, and keeps",
    fc.state.join() === "keeps,render,locked,keeps" && fc.unpaired.join() === "2",
    fc.state.join() + " unpaired " + fc.unpaired.join());
 const htLockedSeed = base.map((s, i) => (i === 1 ? { ...s, seed: 99 } : i === 2 ? { ...s, locked: true } : s));

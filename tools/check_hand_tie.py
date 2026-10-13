@@ -3,7 +3,7 @@ r"""Offline checks for hand_tie.py and its wiring in run() -- no GPU, no server.
     D:\ComfyUI\venv\Scripts\python.exe tools\check_hand_tie.py
 
 Hand-tie shares a clean 22-frame window at each join. The window is rendered
-from the refs and still 1, never from a neighbour. Hop k ends on that window,
+from the refs and the previous window's still, never from a hop. Hop k ends on that window,
 hop k+1 opens on its latent (video only), and both delivered sides are written
 with it. What is checked here:
 
@@ -15,9 +15,9 @@ with it. What is checked here:
 * audio-only keyframes are dropped and a mixed keyframe stays;
 * the cut detector on synthetic motion and a synthetic cut;
 * the sound check's verdict;
-* run(): still 1 is the picture ref, the window latent is cached, the hop key
-  does not chain, the end guide is at -22 after the pin, and both writes sit
-  before the decode, including the retake.
+* run(): the previous still is the picture ref (still 1 on a restart), the window
+  latent is cached, the hop key does not chain, the end guide is at -22 after the
+  pin, and both writes sit before the decode, including the retake.
 """
 from __future__ import annotations
 
@@ -235,12 +235,24 @@ ck("its text is still_text; its seed the run seed, never a shot's",
    and '_sh.get("seed")' not in _still_src)
 ck("it is muted: frozen silence spliced into its latent, no voice",
    "_sl = _splice_locked_audio(_sl, _encode_locked_slice(" in _still_src and "ref_audios=None" in _still_src)
-ck("later windows take still 1, never the previous window",
-   "ht_stills.get(0) if i > 0" in _still_src
+ck("a continuation's window takes the previous still; a restart's takes still 1; hop 1's none",
+   "if i == 0:\n                _anchor = None" in _still_src
+   and 'elif str(_sh.get("anchor") or "") == "restart":\n                _anchor = ht_stills.get(0)'
+   in _still_src
+   and "else:\n                _anchor = ht_stills.get(i - 1)" in _still_src
    and 's_images[f"ref_image_{_n}"] = _anchor' in _still_src
    and '_line = f"<Picture {_n}> ({_ht.STILL_CONTEXT})."' in _still_src
-   and "weak_reference" in HT.STILL_CONTEXT
-   and "_prev = ht_stills.get(i - 1)" not in run_src)
+   and "weak_reference" in HT.STILL_CONTEXT)
+ck("only a picture passes between windows: no window latent reaches another window",
+   "ht_latents" not in _still_src.split("packed = _core_call(")[1].split("_sl = _splice_locked_audio")[0]
+   and "context_latent" not in _still_src)
+ck("a locked hop whose end window moved marks the next join unpaired (not across a restart)",
+   '_meta["window_end"] = _ht_digest(ht_latents.get(i))' in run_src
+   and '_pm["window_end"] != _ht_digest(ht_latents.get(i))' in run_src
+   and "unpaired_joins.append(i + 2)" in run_src
+   and 'sorted(set(unpaired_joins))' in run_src)
+ck("the place reference is in the window key (refs are digested)",
+   '"refs": {k: _store.tensor_digest(t) for k, t in sorted(s_images.items())}' in _still_src)
 ck("the window cache stores the sampler latent, and a hit without one re-renders",
    "latent=_win" in _still_src
    and "if _hit is not None and _hit[3] is None:" in _still_src

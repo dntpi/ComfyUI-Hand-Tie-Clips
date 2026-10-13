@@ -1361,6 +1361,136 @@ def main():
            got["server_url"] == "http://127.0.0.1:4321", got["server_url"])
         ck("and is read as lmstudio", got["backend"] == "lmstudio", got["backend"])
 
+        # --- a file that NAMES a backend it has no bank for.
+        #
+        # The seeding above exists for legacy files: no `backend` key and one
+        # flat pair that belonged to LM Studio. It must NOT run for a file that
+        # names a backend, because there the flat keys belong to whichever
+        # server was last set up -- and inheriting them hands the named backend
+        # the OTHER one's address AND its model name.
+        #
+        # The failure is silent and points at the wrong machine: the panel says
+        # nInfer, the address is LM Studio's :1234, and the model dropdown
+        # lists whatever answers on :1234. A model the other server has never
+        # heard of is a name this one will not answer to either.
+        with open(_tmp, "w", encoding="utf-8") as fh:
+            _json.dump({"backend": "ninfer",
+                        "server_url": "http://127.0.0.1:1234",
+                        "model": "lm-studio-model",
+                        "servers": {"lmstudio": {"server_url": "http://127.0.0.1:1234",
+                                                 "model": "lm-studio-model"}}}, fh)
+        got = LM.load_conn()
+        ck("a named backend with no bank does not inherit the flat pair",
+           got["server_url"] == "http://127.0.0.1:8080", got["server_url"])
+        ck("and does not inherit its model either",
+           got["model"] == "", repr(got["model"]))
+        # The panel posts only {backend} on a dropdown change, so the switch is
+        # the case that actually reaches the user. Away and back, because a
+        # bare switch from ninfer to ninfer is a no-op and would prove nothing.
+        LM.save_conn({"backend": "lmstudio"})
+        LM.save_conn({"backend": "ninfer"})
+        got = LM.load_conn()
+        ck("nor does switching away and back to it",
+           got["server_url"] == "http://127.0.0.1:8080", got["server_url"])
+        ck("with an empty model", got["model"] == "", repr(got["model"]))
+
+        # CASE A, kept deliberately. The legacy file is the case the seeding
+        # EXISTS for: no `backend` and no `servers`, one flat pair. It must
+        # still hand that pair to lmstudio and still reach nInfer's own default
+        # on a switch. If this goes red, the fix has broken the reason the
+        # seeding was written -- which is the check that stops a correct fix
+        # from being an over-broad one.
+        with open(_tmp, "w", encoding="utf-8") as fh:
+            _json.dump({"server_url": "http://127.0.0.1:1234",
+                        "model": "legacy-model"}, fh)
+        got = LM.load_conn()
+        ck("a legacy file still seeds lmstudio from its flat pair",
+           (got.get("servers") or {}).get("lmstudio", {}).get("model") == "legacy-model",
+           repr((got.get("servers") or {}).get("lmstudio")))
+        ck("and is still read as lmstudio", got["backend"] == "lmstudio",
+           got["backend"])
+        LM.save_conn({"backend": "ninfer"})
+        got = LM.load_conn()
+        ck("and a legacy file still reaches nInfer's own default",
+           got["server_url"] == "http://127.0.0.1:8080", got["server_url"])
+
+        # --- the file that is actually out there.
+        #
+        # A fixture, never the user's own htc_llm.json: that file is gitignored
+        # (it is a machine property, not a release) and a checker that reads or
+        # rewrites it is a checker nobody should run. Same shape, no machine
+        # paths.
+        _fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "fixtures", "htc_llm_poisoned.json")
+        ck("the poisoned fixture is present",
+           os.path.isfile(_fixture), _fixture)
+        with open(_tmp, "w", encoding="utf-8") as fh:
+            with open(_fixture, encoding="utf-8") as src:
+                fh.write(src.read())
+        got = LM.load_conn()
+        ck("a bank copied from another backend is reset, not inherited",
+           got["server_url"] == "http://127.0.0.1:1234", got["server_url"])
+        ck("LM Studio's own bank is untouched",
+           (got.get("servers") or {}).get("lmstudio", {}).get("model")
+           == "lm-studio-model",
+           repr((got.get("servers") or {}).get("lmstudio")))
+        ck("and the copied backend is no longer in the bank table",
+           "ninfer" not in (got.get("servers") or {}),
+           repr(sorted((got.get("servers") or {}).keys())))
+        # Now the switch the user actually makes. This is the reported bug.
+        LM.save_conn({"backend": "ninfer"})
+        got = LM.load_conn()
+        ck("so switching to it reaches nInfer's own address",
+           got["server_url"] == "http://127.0.0.1:8080", got["server_url"])
+        ck("and no longer the other server's model",
+           got["model"] == "", repr(got["model"]))
+
+        # The over-healing guard. A user who put nInfer on their own port with
+        # their own model has configured it, and must not be reset by a rule
+        # about corruption -- especially not one keyed on the port, which is
+        # the obvious but wrong way to spot this.
+        with open(_tmp, "w", encoding="utf-8") as fh:
+            _json.dump({"backend": "ninfer",
+                        "server_url": "http://127.0.0.1:9000",
+                        "model": "qwen3.8-27b-nvfp4",
+                        "servers": {
+                            "lmstudio": {"server_url": "http://127.0.0.1:1234",
+                                         "model": "lm-studio-model"},
+                            "ninfer": {"server_url": "http://127.0.0.1:9000",
+                                       "model": "qwen3.8-27b-nvfp4"}}}, fh)
+        got = LM.load_conn()
+        ck("a hand-configured backend on its own port survives",
+           got["server_url"] == "http://127.0.0.1:9000", got["server_url"])
+        ck("with its own model intact",
+           got["model"] == "qwen3.8-27b-nvfp4", repr(got["model"]))
+        # Two backends deliberately sharing one server, different model names.
+        # The address matches, so a port-only rule would eat this; both
+        # conditions are required and this is why.
+        with open(_tmp, "w", encoding="utf-8") as fh:
+            _json.dump({"backend": "ninfer",
+                        "server_url": "http://127.0.0.1:1234",
+                        "model": "shared-server-other-model",
+                        "servers": {
+                            "lmstudio": {"server_url": "http://127.0.0.1:1234",
+                                         "model": "lm-studio-model"},
+                            "ninfer": {"server_url": "http://127.0.0.1:1234",
+                                       "model": "shared-server-other-model"}}}, fh)
+        got = LM.load_conn()
+        ck("two backends on one server with different models are left alone",
+           got["server_url"] == "http://127.0.0.1:1234", got["server_url"])
+        ck("and keep their own model",
+           got["model"] == "shared-server-other-model", repr(got["model"]))
+
+        # Leave CONN as the legacy case above left it. `free_for_render` below
+        # reads the live server_url, so a block that ends pointing at :1234
+        # would make that check exercise "unload the writer" instead of "the
+        # writer is somewhere else" -- a real failure caused by nothing but
+        # test order.
+        with open(_tmp, "w", encoding="utf-8") as fh:
+            _json.dump({"server_url": "http://127.0.0.1:4321",
+                        "model": "old-model"}, fh)
+        LM.load_conn()
+
         # A backend with no unload route can only be freed by ending it, and
         # saying so is the whole point: reporting a success that freed nothing
         # is how a 27B stays resident through a render and OOMs it.

@@ -1,0 +1,19 @@
+{
+  "backend": "lmstudio",
+  "server_url": "http://127.0.0.1:1234",
+  "model": "lm-studio-model",
+  "servers": {
+    "lmstudio": {
+      "server_url": "http://127.0.0.1:1234",
+      "model": "lm-studio-model"
+    },
+    "ninfer": {
+      "server_url": "http://127.0.0.1:1234",
+      "model": "lm-studio-model"
+    }
+  },
+  "temperature": 0.35,
+  "keep_warm": true,
+  "unload_on_run": true,
+  "vram_settle_s": 5.0
+}

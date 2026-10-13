@@ -963,5 +963,120 @@ console.log("\nmount: D1i clear repaints the dropdown");
   }
 }
 
+/* -- the backend switch must not race itself ------------------------------- */
+
+console.log("\nmount: backend switch race");
+
+/*
+ * `loadConn` is not exported, so this drives the real path a user drives: the
+ * backend dropdown. Two changes in quick succession is exactly what happens when
+ * someone tries both servers, and the panel must end up on the LAST one chosen.
+ *
+ * Without a request token the winner is whichever response resolves LAST, so the
+ * fetches are resolved DELIBERATELY OUT OF ORDER here -- the older one last --
+ * which is the only arrangement that can catch it.
+ */
+{
+  const pump = () => new Promise((r) => setTimeout(r, 0));
+  const savedFetch = globalThis.fetch;
+  const queue = [];
+  // Only the writer's own route is intercepted. The panel fetches /vocab and
+  // /files while mounting, and stealing those would test nothing about the
+  // switch -- it would just break the mount this block depends on.
+  globalThis.fetch = (url, opts) => {
+    if (String(url) !== "/h3_ref_chain/llm") return savedFetch(url, opts);
+    const rec = { url, method: (opts && opts.method) || "GET", resolve: null };
+    queue.push(rec);
+    return new Promise((res) => { rec.resolve = res; });
+  };
+  const settle = (rec, body) => rec.resolve({ json: async () => body });
+  const backends = [
+    { id: "lmstudio", label: "LM Studio", program: false },
+    { id: "ninfer", label: "nInfer", program: true },
+  ];
+  const payload = (id, label, url, model) => ({
+    ok: true, backend: id, backend_label: label, model_optional: id !== "ninfer",
+    server_url: url, model, models: [{ id: model, loaded: true }],
+    backends, server_paths: {}, running: false, online: true,
+    any_loaded: true, keep_warm: true,
+  });
+
+  try {
+    const rnode = mountFresh({ plan: planJSON(3) });
+    const root = rnode.domWidgets[0];
+    const findAll = (cls) => {
+      const out = [];
+      const walk = (e) => {
+        if (!e) return;
+        if (e.classList?.contains(cls)) out.push(e);
+        (e.children || []).forEach(walk);
+      };
+      walk(root);
+      return out;
+    };
+    const sel = findAll("h3e-writer-backend")[0];
+    ck("the backend dropdown exists", !!sel);
+
+    sel.value = "ninfer";
+    sel.fire("change", {});
+    await pump();
+    settle(queue.find((q) => q.method === "POST"), { ok: true, saved: true });
+    await pump();
+    const getA = queue.filter((q) => q.method === "GET").at(-1);
+
+    sel.value = "lmstudio";
+    sel.fire("change", {});
+    await pump();
+    settle(queue.filter((q) => q.method === "POST").at(-1), { ok: true, saved: true });
+    await pump();
+    const getB = queue.filter((q) => q.method === "GET").at(-1);
+
+    // In order: the NEWER answer first, then the older one straggling in.
+    settle(getB, payload("lmstudio", "LM Studio", "http://127.0.0.1:1234", "lm-model"));
+    await pump();
+    settle(getA, payload("ninfer", "nInfer", "http://127.0.0.1:8080", "ninfer-model"));
+    await pump();
+
+    ck("the newer backend wins even when the older reply arrives last",
+       sel.value === "lmstudio", `dropdown shows ${sel.value}`);
+    const urlIn = findAll("h3e-writer-url")[0];
+    ck("and its own address is on screen",
+       urlIn && urlIn.value === "http://127.0.0.1:1234",
+       urlIn ? urlIn.value : "(no address field)");
+    const modelSel = findAll("h3e-writer-model")[0];
+    const opts = modelSel ? modelSel.children.map((o) => o.value) : [];
+    ck("and its model list, not the late one",
+       opts.includes("lm-model") && !opts.includes("ninfer-model"),
+       JSON.stringify(opts));
+    // The badge is the h3e-count inside the WRITE summary. `h3e-count` on its own
+    // is used in ten places across this panel, so a bare lookup would land on an
+    // unrelated tally and report green no matter what -- a check that passes on
+    // nothing. Selected by the sibling title instead.
+    const badgeEl = (function () {
+      let found = null;
+      const walk = (e) => {
+        if (!e || found) return;
+        const title = (e.children || []).find(
+          (c) => c.classList?.contains("h3e-title"));
+        if (title && String(title.textContent) === "WRITE"
+            && (e.children || []).some((c) => c.classList?.contains("h3e-count"))) {
+          found = (e.children || []).find((c) => c.classList?.contains("h3e-count"));
+          return;
+        }
+        (e.children || []).forEach(walk);
+      };
+      walk(root);
+      return found;
+    })();
+    ck("the WRITE badge is found, and not some other tally", !!badgeEl);
+    ck("the straggler did not leave the badge naming the other server's model",
+       !!badgeEl && !String(badgeEl.textContent).includes("ninfer-model"),
+       badgeEl ? String(badgeEl.textContent) : "(no badge)");
+    void rnode;
+  } finally {
+    globalThis.fetch = savedFetch;
+  }
+}
+
 console.log("");
 process.exit(failed ? 1 : 0);

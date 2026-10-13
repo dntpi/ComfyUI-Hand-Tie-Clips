@@ -281,7 +281,7 @@ function writeThread(t) {
         // with the address, and switching with a half-typed address would
         // bank that half-typed address under the new name.
         await postConn({ backend: backend.value });
-        loadConn(true);
+        await loadConn(true);
     });
     backRow.appendChild(backend);
     cog.appendChild(backRow);
@@ -438,6 +438,13 @@ function writeThread(t) {
     /* -- state --------------------------------------------------------- */
     let busy = false;
     let conn = null;
+    // Bumped by every loadConn. A response that is no longer the current one
+    // must not paint. Without it the winner is whichever request happens to
+    // resolve LAST, and the backend dropdown fires two of these back to back
+    // when a user tries both servers -- so the panel could end up showing the
+    // first one's address and model list under the second one's name, which
+    // reads as "this backend is showing the wrong models" and is not.
+    let connToken = 0;
     let pending = null;     // {shot, ref} waiting on Accept, or null
 
     /* Everything in this section is DOM, and the panel is mounted with
@@ -692,14 +699,21 @@ function writeThread(t) {
     }
 
     async function loadConn(announce) {
+        const token = ++connToken;
+        let payload = null;
         try {
             const r = await fetch(LLM_URL);
-            conn = await r.json();
+            payload = await r.json();
         } catch (e) {
+            // Superseded: a newer loadConn owns the panel. Saying "offline"
+            // here would blank a screen that is about to be filled correctly.
+            if (token !== connToken) return;
             badge.textContent = "offline";
             if (announce) say(`Could not reach ComfyUI: ${e}`, "error");
             return;
         }
+        if (token !== connToken) return;
+        conn = payload;
         if (!conn?.ok) {
             badge.textContent = "offline";
             if (announce) say(conn?.error || "settings unavailable", "error");
@@ -801,6 +815,7 @@ if (!list.length) {
                     body: JSON.stringify({ model: adopted }),
                 });
                 const j = await r.json();
+                if (token !== connToken) return;
                 if (j?.ok) conn.model = j.model || adopted;
                 if (j?.saved === false) {
                     console.warn("[HandTieClips] model set for this session "
@@ -813,6 +828,7 @@ if (!list.length) {
             }
         }
 
+        if (token !== connToken) return;
         badge.textContent = conn.online
             ? (conn.model || "no model") : "offline";
         // Green when the server answers and nothing says its model is

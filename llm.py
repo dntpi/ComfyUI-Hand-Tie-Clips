@@ -607,6 +607,61 @@ def _conn_path():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), CONN_FILE)
 
 
+_HEALED = set()
+
+
+def _heal_copied_banks(servers):
+    """Drop a bank that is a verbatim copy of another backend's, and say so.
+
+    A bank that holds another backend's default address AND the same model name
+    is not a configuration -- it is the fingerprint of the seeding bug this
+    module used to have, which filled a missing bank from the flat keys. Those
+    keys belong to whichever server was set up last, so a backend named in the
+    file inherited the *other* one's address and model. A bare switch then
+    restored that pair, and the panel showed an nInfer dropdown over LM Studio's
+    :1234, listing whatever models answered there.
+
+    Two conditions, both required, and the pair is the point:
+
+    - the address is another backend's `default_base`, so a deliberate custom
+      port is never touched; and
+    - the address AND the model match that other backend's own bank, so two
+      backends a user has genuinely pointed at the same server with the same
+      model -- which is legal, if odd -- are left alone.
+
+    Dropping the whole entry, not just the URL: the model name came from the
+    other server too, so keeping it would leave the same wrong name in place by
+    another route. The backend then falls back to its own default and an empty
+    model, which is the honest "not configured yet" state and is what a fresh
+    install looks like.
+    """
+    defaults = {n: normalise_base(v["default_base"]) for n, v in BACKENDS.items()}
+    for name in list(servers.keys()):
+        if name not in defaults:
+            continue
+        entry = servers.get(name) or {}
+        url = normalise_base(entry.get("server_url"))
+        # Unset, or already its own default: nothing to heal.
+        if not url or url == defaults[name]:
+            continue
+        for other, other_url in defaults.items():
+            if other == name or url != other_url:
+                continue
+            other_entry = servers.get(other) or {}
+            if (normalise_base(other_entry.get("server_url")) != url
+                    or str(entry.get("model") or "").strip()
+                    != str(other_entry.get("model") or "").strip()):
+                continue
+            servers.pop(name, None)
+            if name not in _HEALED:
+                _HEALED.add(name)
+                print(f"[{TAG}] writer: the {BACKENDS[name]['label']} settings "
+                      f"were a copy of {BACKENDS[other]['label']}'s; reset to "
+                      f"{BACKENDS[name]['label']}'s defaults.", flush=True)
+            break
+    return servers
+
+
 def load_conn():
     """Read the saved settings. A missing or broken file is not an error --
     the defaults are a working LM Studio install."""
@@ -621,6 +676,9 @@ def load_conn():
             print(f"[{TAG}] {CONN_FILE} unreadable, using defaults: {exc}",
                   flush=True)
             saved = {}
+    # A legacy file is one with no `backend` key at all. Captured here because
+    # the seeding below needs it and the branch that detects it is 8 lines up.
+    legacy = False
     if isinstance(saved, dict):
         for k in _CONN_KEYS:
             if k in saved:
@@ -633,6 +691,7 @@ def load_conn():
         # happened earlier in the process. The file is the source of truth for
         # what is saved; a key it does not have is a default, not an absence.
         if "backend" not in saved:
+            legacy = True
             CONN["backend"] = DEFAULT_BACKEND
             CONN["servers"] = {} if not isinstance(saved.get("servers"), dict) \
                 else saved.get("servers")
@@ -641,11 +700,28 @@ def load_conn():
     # key and one flat pair. That pair belongs to LM Studio, which is what it
     # was written for -- so seed the per-backend table from it rather than
     # dropping the user's address on the floor.
+    #
+    # LEGACY FILES ONLY. A file that DOES name a backend must never take its
+    # bank from the flat keys, because there those keys belong to whichever
+    # server was set up last -- not to the backend being named. Inheriting them
+    # hands that backend the other one's address AND its model name, and the
+    # result points at the wrong machine while the panel says otherwise: the
+    # dropdown claims nInfer, the address is LM Studio's :1234, and the model
+    # list is whatever answers there.
+    #
+    # Nothing is lost by not seeding. A backend with no bank falls through to
+    # its own `default_base` and an empty model below, which is the correct
+    # "not configured yet" state -- and it is reachable, because picking a
+    # backend from the dropdown is a bare switch, which restores the bank when
+    # there is one and falls back to the default when there is not.
     servers = CONN.get("servers")
     if not isinstance(servers, dict):
         servers = {}
+    # Before the seeding, so a healed backend cannot be re-seeded straight back
+    # into the same wrong pair from the flat keys.
+    servers = _heal_copied_banks(servers)
     name = backend_name(CONN.get("backend"))
-    if name not in servers and CONN.get("server_url"):
+    if legacy and name not in servers and CONN.get("server_url"):
         servers[name] = {"server_url": CONN["server_url"],
                          "model": CONN.get("model") or ""}
     CONN["servers"] = servers

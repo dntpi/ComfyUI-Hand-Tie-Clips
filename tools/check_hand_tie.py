@@ -117,13 +117,15 @@ ck("the writer's hand-tie rules ask for no closed lips and describe the storyboa
    and "ends on a still" in _rules and "preview render" not in _rules)
 
 print("\na hop's line sits after the overlap and fits the hop")
-ck("8 s fits 14 words (LINE_WPS 2.4 over 8 s less the overlap and the last second)",
-   HT.line_budget(192) == 14, HT.line_budget(192))
+ck("8 s fits 13 words (LINE_WPS 2.4 over 8 s less the line start and the overlap)",
+   HT.line_budget(192) == 13, HT.line_budget(192))
+ck("the line starts past the dropped overlap with margin (Storyboard4 hop 3 spoke at ~0.6 s)",
+   HT.LINE_START_S >= 1.5, HT.LINE_START_S)
 _w14 = " ".join("w%d" % k for k in range(14))
 _tl = HT.time_lines([{"beat": "@a walks. @a says, <d>[English] %s</d> She smiles. Footsteps." % _w14}],
                     hop_frames=[192])[0]["beat"]
-ck("the opening at 0, the line at 1 s, the sentence after it where a 3 wps line ends",
-   _tl.startswith("At 00:00.000 @a walks. At 00:01.000 @a says,") and "At 00:05.700 She smiles." in _tl, _tl)
+ck("the opening at 0, the line at 1.5 s, the sentence after it where a 3 wps line ends",
+   _tl.startswith("At 00:00.000 @a walks. At 00:01.500 @a says,") and "At 00:06.200 She smiles." in _tl, _tl)
 _long = " ".join("w%d" % k for k in range(30))
 ck("an over-long line is linted, with no closed-mouth advice",
    any("speaks 30 words" in w and "closed-mouth" not in w

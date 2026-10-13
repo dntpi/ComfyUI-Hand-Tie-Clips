@@ -73,7 +73,7 @@ plain = PL.build_user_turn("a vlog", 3, ["x.png"], duration="8 s")
 ht = PL.build_user_turn("a vlog", 3, ["x.png"], duration="8 s", pin_mech="hand_tie")
 ck("a plain plan keeps its spoken-word target", "Speech runs about" in plain and "HAND-TIED" not in plain)
 ck("a hand-tied plan swaps it for the rules", "Speech runs about" not in ht and "HAND-TIED" in ht)
-ck("the 8 s budget is the node's (14 words)", "ONE line of 14 words or fewer" in ht, ht[-1500:])
+ck("the 8 s budget is the node's (13 words)", "ONE line of 13 words or fewer" in ht, ht[-1500:])
 ck("all five rules are there", all(s in ht for s in ("One place", "ONE line", "Never write closed or pressed lips", "One mouth action", "Open each hop")))
 
 print("\nvalidate")

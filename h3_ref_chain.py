@@ -1632,6 +1632,31 @@ def _xfade_audio(left, right, sr, ms=40):
     seam = left[..., -k:] * fade_out + right[..., :k] * fade_in
     return torch.cat([left[..., :-k], seam, right[..., k:]], dim=-1)
 
+def _xfade_keep(left, right_full, head_n, sr, ms=40):
+    """Blend the seam inside the dropped head and keep the soundtrack's length.
+
+    `_xfade_audio` overlaps 40 ms, so each join shortens the master by 40 ms.
+    Here the fade sits on the last `k` samples of `right_full`'s first `head_n`
+    samples. The rest of that head is discarded. The length is
+    `len(left) + len(right_full) - head_n`.
+    """
+    left = _batch_wav(left)
+    right_full = _batch_wav(right_full)
+    head_n = max(0, min(int(head_n), int(right_full.shape[-1])))
+    n = max(1, int(sr * ms / 1000.0))
+    k = min(n, head_n, int(left.shape[-1]))
+    if k < 8:
+        return torch.cat([left, right_full[..., head_n:]], dim=-1)
+    t = torch.linspace(0, 1, k, dtype=left.dtype, device=left.device)
+    fade_out = torch.cos(t * math.pi / 2)
+    fade_in = torch.sin(t * math.pi / 2)
+    while fade_out.ndim < left.ndim:
+        fade_out = fade_out.unsqueeze(0)
+        fade_in = fade_in.unsqueeze(0)
+    seam = (left[..., -k:] * fade_out
+            + right_full[..., head_n - k:head_n] * fade_in)
+    return torch.cat([left[..., :-k], seam, right_full[..., head_n:]], dim=-1)
+
 
 def _frame_to_jpeg_b64(frame, max_side=512, quality=80):
     from PIL import Image
@@ -5705,10 +5730,25 @@ class HandTieClips:
                 if i == 0:
                     master_wav = wav
                 else:
-                    # A cut, but 40 ms of xfade still kills the click at the
-                    # sample boundary. Nothing is trimmed: this hop does not
-                    # overlap the previous one.
-                    master_wav = _xfade_audio(master_wav, wav, sr)
+                    # A cut. The last 5 ms of the master fades out and the
+                    # first 5 ms of this hop fades in, then the two are
+                    # concatenated with no overlap, so the soundtrack keeps
+                    # its length.
+                    _mw = _batch_wav(master_wav)
+                    _nw = _batch_wav(wav)
+                    _m = min(int(sr * 0.005), int(_mw.shape[-1]), int(_nw.shape[-1]))
+                    if _m >= 1:
+                        _t = torch.linspace(0, 1, _m, dtype=_mw.dtype, device=_mw.device)
+                        _fo = torch.cos(_t * math.pi / 2)
+                        _fi = torch.sin(_t * math.pi / 2)
+                        while _fo.ndim < _mw.ndim:
+                            _fo = _fo.unsqueeze(0)
+                            _fi = _fi.unsqueeze(0)
+                        master_wav = torch.cat([
+                            _mw[..., :-_m], _mw[..., -_m:] * _fo,
+                            _nw[..., :_m] * _fi, _nw[..., _m:]], dim=-1)
+                    else:
+                        master_wav = torch.cat([_mw, _nw], dim=-1)
                     print(
                         f"[{TAG}] hop {i + 1}: restart, wrote all {keep_n} "
                         f"frames (no overlap trim)",
@@ -5777,13 +5817,14 @@ class HandTieClips:
                 seam_marks.append(int(write_pos))
                 master_imgs[write_pos:write_pos + keep_n] = imgs[overlap_n:]
                 write_pos += keep_n
-                trimmed, dropped = _trim_audio_head(audio, overlap_n)
-                master_wav = _xfade_audio(master_wav, trimmed["waveform"], sr)
+                head_n = _audio_samples(overlap_n, sr)
+                master_wav = _xfade_keep(
+                    master_wav, _batch_wav(audio["waveform"]), head_n, sr)
+                dropped = head_n
                 print(
                     f"[{TAG}] hop {i + 1}: dropped {overlap_n} frames / {dropped} audio samples",
                     flush=True,
                 )
-                del trimmed
 
             if upsample_on:
                 _up = _latents.from_dict(up_latent) if up_latent is not None else None

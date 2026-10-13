@@ -267,6 +267,8 @@ ck("the opening pin is the previous window, and there is no auto pixel fallback"
    and "_ht.video_only_keyframes(" in run_src
    and 'pin_mech_used = "window"' in run_src
    and 'mode="auto" if ht' not in run_src)
+ck("the keyframe strip does not reuse the directives name",
+   "_d = " not in run_src and "_kf = dict(_extra)" in run_src)
 ck("a continuation is the window; a restart opens free",
    'pin_mech_pred = "none" if (i == 0 or hop_restart) else "window"' in run_src)
 _eg = run_src.find('MiniMaxH3AddGuide, "the storyboard window",')

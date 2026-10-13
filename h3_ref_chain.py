@@ -5120,11 +5120,11 @@ class HandTieClips:
                         ) from e
                     _stripped = []
                     for _emb, _extra in cond:
-                        _d = dict(_extra)
-                        if _d.get("minimax_keyframes"):
-                            _d["minimax_keyframes"] = _ht.video_only_keyframes(
-                                _d["minimax_keyframes"])
-                        _stripped.append([_emb, _d])
+                        _kf = dict(_extra)
+                        if _kf.get("minimax_keyframes"):
+                            _kf["minimax_keyframes"] = _ht.video_only_keyframes(
+                                _kf["minimax_keyframes"])
+                        _stripped.append([_emb, _kf])
                     cond = _stripped
                     pin_mech_used = "window"
                     print(f"[{TAG}] hop {i + 1}: hand-tie opens on window {i}'s "

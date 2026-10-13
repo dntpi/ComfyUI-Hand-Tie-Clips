@@ -335,10 +335,22 @@ def main():
          "moment": "She turns to the window and (S1) says, <d>[English] The snow again.</d>"},
         {"beat": "She sips from the mug.", "duration": "8 s"},
         {"beat": "She chops again.", "duration": "8 s", "moment_end": "She chops, smiling."}]}
+    # The bench has no Motion-Context pack, and hand_tie has no pixel-pin
+    # fallback, so it must refuse here. Then stand a class in for the dry runs:
+    # a dry run never instantiates it.
+    try:
+        run(shot_plan=json.dumps(ht_plan), pin_mech="hand_tie", duration="8 s")
+        ck("hand_tie: refused without Motion-Context", False, "accepted")
+    except ValueError as e:
+        ck("hand_tie: refused without Motion-Context",
+           "ComfyUI-H3-Motion-Context" in str(e), str(e)[:90])
+    _mc_cls = H3._motion_context_cls
+    H3._motion_context_cls = lambda: Trap
     oh, log_h = run(shot_plan=json.dumps(ht_plan), pin_mech="hand_tie", duration="8 s")
     ck("hand_tie: dry run compiles every hop", oh[2].count("===== hop") == 4)
-    ck("hand_tie: the storyboard is announced, and there are no previs sections",
-       "each hop ends on its storyboard still" in log_h and "hand-tie section" not in log_h
+    ck("hand_tie: the window join is announced, and there are no previs sections",
+       "-frame window at" in log_h and "opens on that window's latent" in log_h
+       and "hand-tie section" not in log_h
        and "previs" not in log_h, log_h[-600:])
     ck("hand_tie: no hop is assembled as a continuation (no next-beat airlock)",
        "next-beat assembled" not in log_h)
@@ -355,6 +367,7 @@ def main():
             ck("hand_tie: " + label, False, "accepted")
         except ValueError as e:
             ck("hand_tie: " + label, needle in str(e), str(e)[:90])
+    H3._motion_context_cls = _mc_cls
     ck("hand_tie is the last pin_mech option (appended, never inserted)",
        H3.HandTieClips.INPUT_TYPES()["required"]["pin_mech"][0][-1] == "hand_tie"
        if "pin_mech" in H3.HandTieClips.INPUT_TYPES()["required"]

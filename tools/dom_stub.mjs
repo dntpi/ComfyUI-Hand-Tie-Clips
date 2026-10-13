@@ -197,6 +197,13 @@ export function installDom() {
     querySelectorAll: () => [],
     getElementById: () => null,
     addEventListener() {}, removeEventListener() {},
+    // The panel guards several writes with `document.activeElement !== area` so
+    // it does not overwrite the box the caret is in. Without this the guard
+    // reads `undefined !== area` -- which is true, so the code under test ran a
+    // branch it would never take in a browser, and no test could have caught
+    // the difference. Null means "nothing focused", which is what a headless
+    // mount actually is; a test that needs focus sets it and restores it.
+    activeElement: null,
   };
   const g = globalThis;
   const saved = {

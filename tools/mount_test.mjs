@@ -295,7 +295,7 @@ console.log("\nmount: D2 filmstrip");
      `got ${posters(rSmall)}`);
   ck("19 shots draws 20 posters", posters(rBig) === 20, `got ${posters(rBig)}`);
 
-  // The whole point of §9.2: ONE card in the detail pane at any shot count.
+  // The whole point of Â§9.2: ONE card in the detail pane at any shot count.
   ck("6 shots shows exactly one card in the detail pane",
      detailCards(rSmall) === 1, `got ${detailCards(rSmall)}`);
   ck("19 shots shows exactly one card in the detail pane",
@@ -506,12 +506,12 @@ console.log("\nmount: D1b the RUN frame");
   const run = find("h3e-run")[0];
   const runBtns = find("h3e-runbtn");
 
-  ck("the ⚙ exists", runBtns.length === 1);
+  ck("the âš™ exists", runBtns.length === 1);
   // D1c reversed D1b. The gear goes BACK in the tab strip: it was moved to the
   // 26px status bar and became so hard to find the user had to look for a
   // minute ("i never asked to move the gear away"). It is also where a control
   // belongs -- beside the tabs, not buried in a status line.
-  ck("the ⚙ is back in the TAB STRIP",
+  ck("the âš™ is back in the TAB STRIP",
      runBtns.length === 1 && runBtns[0].parentNode === strip,
      runBtns.length ? "parent is not the tab strip" : "no button");
 
@@ -519,14 +519,14 @@ console.log("\nmount: D1b the RUN frame");
   ck("on Script the tab strip is visible", strip && strip.hidden === false);
   ck("on Script RUN is hidden", run && run.hidden === true);
 
-  // Click the ⚙ -- RUN is its own PAGE, and the chrome STAYS.
+  // Click the âš™ -- RUN is its own PAGE, and the chrome STAYS.
   runBtns[0].click();
-  ck("clicking the ⚙ shows RUN", run.hidden === false, `hidden=${run.hidden}`);
+  ck("clicking the âš™ shows RUN", run.hidden === false, `hidden=${run.hidden}`);
   ck("RUN keeps the tab strip -- it is a page, not a covering panel",
      strip.hidden === false, "the tab strip disappeared; D1c says it stays");
   ck("and the tab bodies are hidden",
      find("h3e-scroll")[0].hidden === true);
-  ck("the ⚙ is marked pressed while RUN is up",
+  ck("the âš™ is marked pressed while RUN is up",
      runBtns[0].classList.contains("h3e-on"));
 
   // Row 3 on the RUN page is its own: a tally and a way back.
@@ -920,7 +920,7 @@ console.log("\nmount: D1i clear repaints the dropdown");
   const sel = findAll("h3e-pickfile")[0];
   ck("the picker dropdown exists", !!sel);
   // With no /files response the list is empty, but paintList still runs on the
-  // fallback path and must land on "— none —" once the widget is empty.
+  // fallback path and must land on "â€” none â€”" once the widget is empty.
   //
   // The FIRST pickfile and the FIRST thumb-x belong to the FIRST slot
   // (start_image_file), which is the one holding a name here. Scoping matters:
@@ -1075,6 +1075,168 @@ console.log("\nmount: backend switch race");
     void rnode;
   } finally {
     globalThis.fetch = savedFetch;
+  }
+}
+
+/* -- the detail card must never outlive the shots it was built from ------- */
+
+console.log("\nmount: the detail card and a replaced plan");
+
+/*
+ * Every case here is one shape: something replaces `shots` with NEW objects
+ * that carry the SAME ids, and the guard that stops the detail card being
+ * rebuilt cannot tell. `parsePlan` mints s1, s2, ... whatever it was given, so
+ * the ids always collide -- which is what makes this certain rather than
+ * intermittent, and what a test built on a fixture with different ids would
+ * have missed.
+ *
+ * The card closes over its `shot`, and writeWidget() serialises the live array,
+ * so once the card is stale every keystroke is written into an object nothing
+ * reads. The symptom is a script box that accepts typing and never reaches the
+ * JSON -- silent, and it costs the user their writing on save.
+ */
+{
+  const findIn = (root, cls) => {
+    const out = [];
+    const walk = (e) => {
+      if (!e) return;
+      if (e.classList?.contains(cls)) out.push(e);
+      (e.children || []).forEach(walk);
+    };
+    walk(root);
+    return out;
+  };
+  // Same ids, different beats -- the shape every one of these replacements has.
+  const rewritten = JSON.stringify([
+    { id: "s1", beat: "WRITER shot one, a different plan entirely.", directives: {}, seed: 11, duration: 192 },
+    { id: "s2", beat: "WRITER shot two, a different plan entirely.", directives: {}, seed: 12, duration: 192 },
+    { id: "s3", beat: "WRITER shot three, a different plan entirely.", directives: {}, seed: 13, duration: 192 },
+  ]);
+  const detailBeat = (root) => findIn(root, "h3e-detail")
+    .flatMap((d) => findIn(d, "h3e-beat"))[0];
+  const shotPlan = (node) => node.widgets.find((w) => w.name === "shot_plan");
+
+  /* 1 + 2: the writer Accept path. */
+  {
+    const node = mountFresh({ plan: planJSON(3) });
+    const root = node.domWidgets[0];
+    const ed = node._h3Editor.editor;
+    ck("the detail card starts on shot 1", ed.selected() === 0, `at ${ed.selected()}`);
+
+    shotPlan(node).value = rewritten;
+    ed.reload();
+    // The strip is rebuilt from the new array on every render; the detail card
+    // is not, because the guard says nothing changed. That disagreement is the
+    // bug, and it is visible before a single keystroke.
+    const posterText = findIn(root, "h3e-poster-beat")[0];
+    const cardBeat = detailBeat(root);
+    ck("the filmstrip shows the new plan's first shot",
+       String(posterText && posterText.textContent).includes("WRITER shot one"),
+       String(posterText && posterText.textContent).slice(0, 80));
+    ck("and the card shows it too, rather than the plan it was built from",
+       cardBeat && String(cardBeat.value).includes("WRITER shot one"),
+       cardBeat ? String(cardBeat.value).slice(0, 80) : "(no beat box)");
+
+    if (cardBeat) {
+      cardBeat.value = "MANUALLY TYPED after the writer";
+      cardBeat.fire("input", {});
+      ck("typing in the card reaches shot_plan -- the reported bug",
+         String(shotPlan(node).value).includes("MANUALLY TYPED"),
+         String(shotPlan(node).value).slice(0, 140));
+    }
+  }
+
+  /* 3: SWAP's Accept writes the same widget through a different callback. */
+  {
+    const node = mountFresh({ plan: planJSON(3) });
+    const shotW = shotPlan(node);
+    // Exactly what video_swap's onWritten does, then the same refresh.
+    shotW.value = rewritten;
+    node.properties.h3_editor_mode = "shots";
+    node._h3Editor.refresh();
+    const cardBeat = detailBeat(node.domWidgets[0]);
+    ck("SWAP's Accept rebuilds the card too",
+       cardBeat && String(cardBeat.value).includes("WRITER shot one"),
+       cardBeat ? String(cardBeat.value).slice(0, 80) : "(no beat box)");
+    if (cardBeat) {
+      cardBeat.value = "MANUALLY TYPED after swap";
+      cardBeat.fire("input", {});
+      ck("and typing reaches shot_plan after SWAP as well",
+         String(shotW.value).includes("MANUALLY TYPED"),
+         String(shotW.value).slice(0, 140));
+    }
+  }
+
+  /* 4: the JSON box replaces `shots` by the same route. */
+  {
+    const node = mountFresh({ plan: planJSON(3) });
+    const root = node.domWidgets[0];
+    const json = findIn(root, "h3e-json")[0];
+    ck("the JSON box exists", !!json);
+    if (json) {
+      json.value = rewritten;
+      json.fire("input", {});
+      const cardBeat = detailBeat(root);
+      ck("a plan typed into the JSON box reaches the card",
+         cardBeat && String(cardBeat.value).includes("WRITER shot one"),
+         cardBeat ? String(cardBeat.value).slice(0, 80) : "(no beat box)");
+      if (cardBeat) {
+        cardBeat.value = "MANUALLY TYPED after a JSON edit";
+        cardBeat.fire("input", {});
+        ck("and typing after that reaches shot_plan",
+           String(shotPlan(node).value).includes("MANUALLY TYPED"),
+           String(shotPlan(node).value).slice(0, 140));
+      }
+    }
+  }
+
+  /* 5: a reorder must rebuild, because the card's buttons capture `index`.
+   *
+   * This is a guard on the FIX rather than a reproduction: the same object can
+   * sit at a new index after a drag, so a guard keyed on the object alone would
+   * keep a card whose lock and delete buttons act on the wrong row. It must go
+   * red against that variant. */
+  {
+    const node = mountFresh({ plan: planJSON(3) });
+    const root = node.domWidgets[0];
+    const ed = node._h3Editor.editor;
+    const second = ed.shots()[1].id;
+    const detail = findIn(root, "h3e-detail")[0];
+    const card = detail ? findIn(detail, "h3e-card")[0] : null;
+    ck("the detail card is there to drop onto", !!card);
+    if (card) {
+      // The card's own drop handler: drag index 1 onto index 0.
+      card.fire("drop", { dataTransfer: { getData: () => "1" } });
+      ck("the drop moved the shot to index 0",
+         ed.shots()[0].id === second, `index 0 is ${ed.shots()[0].id}`);
+      const lock = findIn(root, "h3e-lock")[0];
+      ck("and left a lock button on the rebuilt card", !!lock);
+      if (lock) {
+        lock.click();
+        ck("which locks the shot now at index 0, not the one it was built for",
+           ed.shots()[0].locked === true && ed.shots()[1].locked !== true,
+           `id0=${ed.shots()[0].id} locked0=${ed.shots()[0].locked} `
+           + `id1=${ed.shots()[1].id} locked1=${ed.shots()[1].locked}`);
+      }
+    }
+  }
+
+  /* 6: a broken plan must not leave an editable card behind. */
+  {
+    const node = mountFresh({ plan: planJSON(3) });
+    const root = node.domWidgets[0];
+    const json = findIn(root, "h3e-json")[0];
+    // Control first. Without it, "no card is mounted" also passes on a mount
+    // that never drew one, which would make the assertion below meaningless.
+    ck("a card IS mounted while the plan is valid", !!detailBeat(root));
+    node.widgets.find((w) => w.name === "shot_plan").value = "{ not json";
+    node._h3Editor.editor.reload();
+    ck("no editable card is mounted over a broken plan",
+       detailBeat(root) === undefined,
+       detailBeat(root) ? "a beat box is still editable" : "");
+    ck("and the invalid text the user typed survives",
+       String(json && json.value).includes("{ not json"),
+       String(json && json.value).slice(0, 80));
   }
 }
 

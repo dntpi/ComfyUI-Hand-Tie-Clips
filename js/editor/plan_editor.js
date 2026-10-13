@@ -1496,34 +1496,53 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
 
     /* The detail pane is the selected shot's card -- the same renderCard() the
      * old list used. Not rebuilt while the caret is inside it, because a
-     * re-render under a live textarea eats the selection and the undo stack. */
+     * re-render under a live textarea eats the selection and the undo stack.
+     *
+     * What it must NOT do is keep a card whose shot is no longer the one in the
+     * array. Every card handler closes over the `shot` it was built from, while
+     * writeWidget() serialises the live array -- so a stale card takes the
+     * user's typing into an object nothing reads, and the JSON never moves.
+     *
+     * Keyed on the shot OBJECT and its index, which together are exactly what
+     * renderCard(shot, index) captured: the field handlers need the object to
+     * still be live, and the delete/solo/lock buttons need the index to still
+     * be the same row. A drag can move one object to another index, so keying
+     * on the object alone would leave those buttons acting on the wrong shot --
+     * silent corruption where the old bug was only silent loss. */
     function renderDetail() {
-        if (detailIsCurrent()) return;
-        detail.textContent = "";
-        const i = selected();
+        // Before the guard, and for both of them: a card left over from a
+        // different state is editable, and typing in it calls writeWidget(),
+        // which would overwrite exactly what the user is trying to repair.
         if (broken) {
+            detail.textContent = "";
+            detailKey = null;
             detail.appendChild(el("div", "h3e-note h3e-note-error",
                 "shot_plan is not valid JSON. Fix it in the JSON section below."));
             return;
         }
         if (!shots.length) {
+            detail.textContent = "";
+            detailKey = null;
             detail.appendChild(el("div", "h3e-empty",
                 "No shots yet. The + at the end of the strip adds shot 1."));
             return;
         }
+        if (detailIsCurrent()) return;
+        detail.textContent = "";
+        const i = selected();
         if (!shots[i]) { setSelected(0); return renderDetail(); }
         const card = renderCard(shots[i], i);
         card.classList.remove("h3e-collapsed");
         // The detail card is always open; its own fold control would have
         // nothing to expand, since there is exactly one card down here.
         detail.appendChild(card);
-        detailKey = shotKeyOf(shots[i], i);
+        detailKey = { shot: shots[i], i };
     }
     let detailKey = null;
-    function shotKeyOf(shot, i) { return `${shot.id || "s" + (i + 1)}:${selected()}`; }
     function detailIsCurrent() {
         if (!detailKey) return false;
-        return detailKey === shotKeyOf(shots[selected()] || {}, selected());
+        const i = selected();
+        return detailKey.i === i && detailKey.shot === shots[i];
     }
 
     function renderCards() {
@@ -1570,6 +1589,13 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
             const note = el("div", "h3e-note h3e-note-error",
                 "shot_plan is not valid JSON. Fix it in the JSON section below and the cards will come back.");
             list.appendChild(note);
+            // This branch returns before renderDetail() is reached, so the
+            // detail card has to be retired here too. Left mounted it stays
+            // editable, and typing in it calls writeWidget() -- which would
+            // overwrite the invalid text the user is trying to repair with
+            // planToJson() of the last good plan.
+            detail.textContent = "";
+            detailKey = null;
             return;
         }
         if (!shots.length) {

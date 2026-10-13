@@ -1088,6 +1088,34 @@ def settings_errors(overlap_frames, last_frame_guide="off", shots=None, hop_fram
     return err
 
 
+PREVIS_MIN_SHORT = 320   # px: below this the previs is too small to hold a face's layout
+
+
+def previs_canvas(width, height, hop_frames, previs_frames, cap=None):
+    """(w, h) the previs renders at: never more pixels x frames than one hop.
+
+    A previs is up to PREVIS_MAX frames (15 s); at the hop canvas that is more
+    than most cards can render (user 2026-10-13: most of the community can barely
+    do 10 s). So its canvas is the hop's, shrunk until canvas x previs frames fits
+    in canvas x the section's longest hop -- whoever can render a hop can render
+    its previs -- and never above `cap` (the PREVIS_RESOLUTION tier). Same aspect,
+    on the 32 px grid, no short edge under PREVIS_MIN_SHORT.
+    """
+    w, h = int(width), int(height)
+    budget = w * h * max(int(f) for f in hop_frames) / float(max(1, int(previs_frames)))
+    if cap is not None and int(cap[0]) * int(cap[1]) < w * h:
+        budget = min(budget, float(int(cap[0]) * int(cap[1])))
+    if w * h <= budget:
+        return w, h
+    s = (budget / float(w * h)) ** 0.5
+    nw, nh = max(32, int(w * s) // 32 * 32), max(32, int(h * s) // 32 * 32)
+    short = min(nw, nh)
+    if short < PREVIS_MIN_SHORT:
+        f = PREVIS_MIN_SHORT / float(short)
+        nw, nh = -(-int(nw * f) // 32) * 32, -(-int(nh * f) // 32) * 32
+    return min(nw, w), min(nh, h)
+
+
 def free_head(k, chained, start_image=False):
     """Whether hop k of a section opens untied: the first hop of a section that
     starts fresh (hop 1, a restart) with no start image.

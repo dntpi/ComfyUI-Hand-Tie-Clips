@@ -4146,19 +4146,18 @@ class HandTieClips:
         ht_previs_info = []
         ht_previs_media = []
         ht_previs_warn = []     # (section, seed, cuts) of a previs that cut on every try
-        # The previs renders at PREVIS_RESOLUTION when that is smaller than the
-        # hop canvas; each hop drafts its sound first unless something else owns
-        # the audio (master_audio_file is refused here; the boost's DisableNoise
-        # stage would break a frozen track, as it does for master audio).
-        pv_w, pv_h = int(width), int(height)
+        # Each section's previs renders no bigger than one of its hops, and no
+        # bigger than the PREVIS_RESOLUTION tier (hand_tie.previs_canvas); each
+        # hop drafts its sound first unless something else owns the audio
+        # (master_audio_file is refused here; the boost's DisableNoise stage
+        # would break a frozen track, as it does for master audio).
+        ht_pv = []           # section -> (previs width, height)
         sound_first = False
         if ht:
-            _pw, _ph = _canvas(_ht.PREVIS_RESOLUTION, aspect)
-            if _pw * _ph < pv_w * pv_h:
-                pv_w, pv_h = _pw, _ph
+            pv_cap = _canvas(_ht.PREVIS_RESOLUTION, aspect)
             sound_first = bool(_ht.SOUND_FIRST) and locked is None and boost_model is None
             sd_w, sd_h = _canvas(_ht.SOUND_DRAFT_RESOLUTION, aspect)
-            print(f"[{TAG}] hand-tie: previs at {pv_w}x{pv_h}"
+            print(f"[{TAG}] hand-tie: previs no bigger than one hop"
                   + (", muted where no window speaks" if _ht.PREVIS_MUTE else "")
                   + (f"; each hop drafts its sound at {sd_w}x{sd_h} first ("
                      + (f"checked by {_hear.available()})" if _hear.available()
@@ -4182,11 +4181,13 @@ class HandTieClips:
                 ht_previs_raw.append(_d.compile_shot({"beat": _text, "directives": _dirs},
                                                      0, establish))
                 ht_layouts.append(_lay)
+                ht_pv.append(_ht.previs_canvas(width, height, _frames, _lay["previs"], pv_cap))
                 ht_speaks.append(_ht.window_speaks([shots[j] for j in _sec], len(_lay["windows"])))
                 for _k, _j in enumerate(_sec):
                     ht_pos[_j] = (_si, _k)
                 print(f"[{TAG}] hand-tie section {_si + 1}: hops {_sec[0] + 1}-{_sec[-1] + 1}, "
-                      f"previs {_lay['previs']}f, windows at {_lay['windows']}"
+                      f"previs {_lay['previs']}f at {ht_pv[-1][0]}x{ht_pv[-1][1]}, "
+                      f"windows at {_lay['windows']}"
                       + (f", continuing hop {_sec[0]}'s last frames" if ht_chained[-1] else ""),
                       flush=True)
             if tone_on or anchor_on:
@@ -4257,6 +4258,7 @@ class HandTieClips:
             _last_cuts = []
             # Muted unless a window speaks: that window carries the previs's words.
             _mute = bool(_ht.PREVIS_MUTE) and not any(ht_speaks[_si])
+            pv_w, pv_h = ht_pv[_si]
             for _try in range(_ht.PREVIS_TRIES):
                 _p_seed = _p_seed0 + _try * _ht.PREVIS_RETRY_STRIDE
                 _p_key = None

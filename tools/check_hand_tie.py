@@ -674,6 +674,25 @@ ck("the previs is muted unless a window speaks, keyed on it, and pins no sound w
    and '**({"mute": True} if _mute else {}),' in src
    and "audio=None if _mute else prev_audio" in src
    and "_pl = _splice_locked_audio(_pl, _encode_locked_slice(" in src)
+_pc = HT.previs_canvas
+ck("768p 9:16 hops of 8 s: the previs takes the 512p tier (512x896), under one hop",
+   _pc(768, 1344, [192] * 5, 362, (512, 896)) == (512, 896))
+ck("512p hops of 8 s: the previs shrinks to fit one hop's pixels x frames (352x640)",
+   _pc(512, 896, [192] * 5, 362, (512, 896)) == (352, 640)
+   and 352 * 640 * 362 <= 512 * 896 * 192)
+ck("every previs costs no more than one of its hops (above the floor)",
+   all(pw * ph * pf <= w * h * max(fr) for (w, h) in ((768, 1344), (1344, 768), (640, 1152), (896, 512))
+       for fr, pf in (([192] * 5, 362), ([243] * 4, 362), ([192] * 3, 226), ([124] * 6, 362))
+       for pw, ph in [_pc(w, h, fr, pf, (512, 896) if h > w else (896, 512))]
+       if min(pw, ph) > HT.PREVIS_MIN_SHORT))
+ck("a previs no longer than its hop keeps the hop canvas under no cap",
+   _pc(512, 896, [362], 362) == (512, 896))
+ck("no short edge under the floor, on the 32 px grid",
+   min(_pc(448, 800, [124] * 6, 362, None)) >= HT.PREVIS_MIN_SHORT
+   and all(v % 32 == 0 for v in _pc(448, 800, [124] * 6, 362, None)))
+ck("run() sizes each section's previs with previs_canvas",
+   'ht_pv.append(_ht.previs_canvas(width, height, _frames, _lay["previs"], pv_cap))' in src
+   and "pv_w, pv_h = ht_pv[_si]" in src)
 _hs = open(os.path.join(HERE, "hear.py"), encoding="utf-8").read()
 ck("hear.py never downloads: local cache only, on the CPU",
    "local_files_only=True" in _hs and "device=-1" in _hs and "snapshot_download(repo," in _hs)

@@ -318,7 +318,12 @@ def _axis(size, tile, overlap, floor):
     return starts, extents, seams
 
 
-def tile_grid(h, w, tokens, factor=1, budget=TOKEN_BUDGET):
+def snap_overlap(px):
+    """Tile overlap in px, rounded to the 32 px patch grid, 0..512."""
+    return max(0, min(512, int(round(float(px) / 32.0)) * 32))
+
+
+def tile_grid(h, w, tokens, factor=1, budget=TOKEN_BUDGET, overlap_px=TILE_OVERLAP_PX):
     """The tiles for an (h, w)-cell chunk of `tokens` video steps.
 
     -> list of (r0, c0, rows, cols, seam_top, seam_left, top, left, bottom,
@@ -326,7 +331,8 @@ def tile_grid(h, w, tokens, factor=1, budget=TOKEN_BUDGET):
     largest sequence one tile forward may carry: the recipe's TOKEN_BUDGET
     unless a caller lowers it to fit a smaller card.
     """
-    got = solve_grid(w * SPATIAL, h * SPATIAL, tokens, budget=int(budget), factor=factor)
+    got = solve_grid(w * SPATIAL, h * SPATIAL, tokens, overlap_px=snap_overlap(overlap_px),
+                     budget=int(budget), factor=factor)
     if got is None:
         raise RuntimeError(
             f"{TAG}: no tile grid up to {MAX_GRID_SIDE}x{MAX_GRID_SIDE} keeps "
@@ -709,20 +715,36 @@ def upscale_chunk(video, name, w_px, h_px):
 
 # --- sampling ---------------------------------------------------------------
 
-def recipe_sigmas(model, denoise=DENOISE):
+def recipe_sigmas(model, denoise=DENOISE, steps=STEPS, start_sigma=0.0):
     """One `simple` step at `denoise`, exactly as Core's BasicScheduler.
 
     The recipe's 0.2 is a fraction of the SCHEDULE, not of the noise: under
     H3's video shift (12) the step starts at sigma 0.75. Below it the re-draw
     repaints less; at 0 there is no re-draw and this returns None.
+
+    `start_sigma` > 0 (0.2.0) replaces `denoise`: the `simple` schedule over
+    the model's (shifted) sigmas, cut where it drops to `start_sigma`, then
+    `steps` steps spread evenly down that tail to 0. `steps` 1 with
+    `start_sigma` 0 is the 0.1.0 recipe exactly.
     """
     import comfy.samplers
+    steps = max(1, int(steps))
+    ms = model.get_model_object("model_sampling")
+    if float(start_sigma) > 0.0:
+        full = comfy.samplers.calculate_sigmas(ms, SCHEDULER, 1000).cpu().float()
+        tail = full[full <= float(start_sigma) + 1e-6]
+        if tail.numel() < 2:
+            return None
+        idx = torch.linspace(0, tail.numel() - 1, steps + 1).round().long()
+        idx = torch.unique_consecutive(idx)
+        sig = tail[idx]
+        sig[-1] = 0.0
+        return sig
     if float(denoise) <= 0.0:
         return None
-    total = int(STEPS / float(denoise))
-    sig = comfy.samplers.calculate_sigmas(
-        model.get_model_object("model_sampling"), SCHEDULER, total).cpu()
-    return sig[-(STEPS + 1):]
+    total = int(steps / float(denoise))
+    sig = comfy.samplers.calculate_sigmas(ms, SCHEDULER, total).cpu()
+    return sig[-(steps + 1):]
 
 
 def sample_tile(model, cond, sampler, sigmas, video, audio, noise, seed):
@@ -757,7 +779,7 @@ def sample_tile(model, cond, sampler, sigmas, video, audio, noise, seed):
 
 
 def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed, factor=1,
-                 budget=TOKEN_BUDGET):
+                 budget=TOKEN_BUDGET, overlap_px=TILE_OVERLAP_PX):
     """Every tile stepped together, merged under the feather after each step.
 
     Step 0 hands each tile its slice of one noise field drawn at the chunk's
@@ -768,7 +790,7 @@ def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed, factor=1,
     import comfy.sample
 
     _, _, t, h, w = video.shape
-    tiles, grid = tile_grid(h, w, t, factor, budget)
+    tiles, grid = tile_grid(h, w, t, factor, budget, overlap_px)
     field = comfy.sample.prepare_noise(nt.NestedTensor((video, audio)), seed)
     nv, na = field.tensors[0], field.tensors[1]
     dev, dt = video.device, video.dtype
@@ -785,6 +807,12 @@ def redraw_chunk(model, cond, sampler, sigmas, video, audio, seed, factor=1,
           f"{grid[4]}/{grid[5]}px, {tokens} tokens per "
           f"forward, stepped together", flush=True)
 
+    # Multi-step (0.2.0): every step runs over ALL tiles and is merged under
+    # the feather before the next step starts, so neighbours share one state
+    # at every sigma. Between steps x holds the sampler's output for a CONST
+    # (flow) model, i.e. x_t / (1 - sigma); the next call's zero-noise
+    # noise_scaling multiplies it back by (1 - sigma), so the hand-off is
+    # exact. Only step 0 draws noise, from one full-chunk field.
     x = video
     for step in range(len(sigmas) - 1):
         two = sigmas[step:step + 2]
@@ -851,7 +879,8 @@ def _free(model):
 
 
 def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
-             denoise=DENOISE, guide=None, budget=TOKEN_BUDGET):
+             denoise=DENOISE, guide=None, budget=TOKEN_BUDGET, steps=STEPS,
+             start_sigma=0.0, overlap_px=TILE_OVERLAP_PX):
     """The whole recipe on an H3 AV latent. -> the upsampled AV latent dict.
 
     `conditioning` is one conditioning for the whole clip, or a callable
@@ -889,7 +918,7 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
     else:
         w_px, h_px = target_size(video.shape[4] * SPATIAL, video.shape[3] * SPATIAL,
                                  megapixels)
-    sigmas = recipe_sigmas(model, denoise)
+    sigmas = recipe_sigmas(model, denoise, steps, start_sigma)
     plan = chunks(tv)
     print(f"[{TAG}] {video.shape[4] * SPATIAL}x{video.shape[3] * SPATIAL} -> "
           f"{w_px}x{h_px} ({w_px * h_px / 1048576.0:.2f} MP), {len(plan)} "
@@ -930,7 +959,8 @@ def upsample(model, conditioning, latent, sampler, upscaler, megapixels,
                                    f"needs {want} (steps, rows, cols)")
             ccond = add_guide(ccond, glat.to(cv.device, cv.dtype), factor)
             del glat
-        out_v = redraw_chunk(model, ccond, sampler, sigmas, cv, ca, SEED, factor, budget)
+        out_v = redraw_chunk(model, ccond, sampler, sigmas, cv, ca, SEED, factor, budget,
+                             overlap_px)
         done_v, done_a = join_chunk(done_v, done_a, out_v, ca, k0, f0)
     _free(model)
     return {"samples": nt.NestedTensor((done_v, done_a))}

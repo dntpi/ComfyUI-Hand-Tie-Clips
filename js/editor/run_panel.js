@@ -51,6 +51,9 @@ const GROUPS = [
                     // display only, and INPUT_TYPES appends it last so saved
                     // workflows keep their widget indices.
                     "pin_mech",
+                    // Read only under pin_mech=hand_tie: what a continuing
+                    // hop opens on (recover branch, 2026-10-14).
+                    "ht_seam_source",
                     "audio_pin_frames",
                     // Sits with the pin dials because that is what it is
                     // about: whether the timbre reference keeps riding, or
@@ -182,8 +185,12 @@ function commitWidget(node, w, value, onChange) {
     onChange?.();
 }
 
+// Display names that differ from the widget name with underscores spaced.
+const LABELS = { ht_seam_source: "seam source" };
+
 export function labelFor(w) {
-    return String(w.name || "").replace(/_/g, " ");
+    const n = String(w.name || "");
+    return LABELS[n] || n.replace(/_/g, " ");
 }
 
 function comboField(node, w, onChange) {

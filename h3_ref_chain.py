@@ -3053,7 +3053,7 @@ class HandTieClips:
                 # APPENDED 2026-10-14, LAST (recover branch). hand_tie only.
                 "ht_seam_source": (["prev_hop", "previs"], {
                     "default": "prev_hop",
-                    "tooltip": ("pin_mech=hand_tie: what a continuing hop opens on. prev_hop = "
+                    "tooltip": ("Only applies when pin_mech is hand_tie. What a continuing hop opens on. prev_hop = "
                                 "the previous full-res hop's sampled latent tail via Motion-Context "
                                 "(seam continuity). previs = the old frame-0 AddGuide of the previs "
                                 "window. The end-of-hop previs guide is unchanged either way."),

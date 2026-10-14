@@ -729,5 +729,15 @@ mods = {n.module if isinstance(n, ast.ImportFrom) else a.name
         for a in (n.names if isinstance(n, ast.Import) else [n])}
 ck("imports only stdlib + torch", mods <= {"re", "torch", "torch.nn.functional"}, sorted(m for m in mods if m))
 
+# ht_seam_source is drawn in the RUN panel's join & pin group, labelled SEAM SOURCE.
+import io as _io
+_rp = _io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "js", "editor", "run_panel.js"), encoding="utf-8").read()
+_jp = _rp[_rp.find('["join & pin"'):]
+_jp = _jp[:_jp.find("]]")]
+ck("run_panel.js draws ht_seam_source in join & pin, after pin_mech",
+   '"ht_seam_source"' in _jp and _jp.find('"pin_mech"') < _jp.find('"ht_seam_source"'))
+ck("run_panel.js labels it seam source", 'ht_seam_source: "seam source"' in _rp)
+
 print("\nall ok" if not FAILS else "\n%d FAILED: %s" % (len(FAILS), FAILS))
 sys.exit(1 if FAILS else 0)

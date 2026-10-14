@@ -71,7 +71,7 @@ ck("an authored extend or restart is never moved by the balancing",
 ck("the closing window has no moment: the previs text keeps one stamp per hop",
    HT.compile_previs([{"beat": "@a walks."}, {"beat": "@a sits."}], [192, 192])[0].count("At ") == 2)
 ck("run() ties a hop's end wherever a next window exists (the closing one included)",
-   "[(-_ht.WINDOW, _k + 1)] if _k + 1 < len(_wp)" in src)
+   "[(-(_ht.WINDOW + _xtra), _k + 1)] if _k + 1 < len(_wp)" in src)
 ck("4 x 8 s: a 702-frame film", HT.film_frames([192] * 4) == 702, HT.film_frames([192] * 4))
 ck("the 22-frame window is the node's 0.9 s overlap", OVERLAP_FRAMES["0.9 s"] == HT.WINDOW)
 ck("6 x 8 s fill the budget exactly", HT.layout([192] * 6)["previs"] == HT.PREVIS_MAX == 362)
@@ -472,8 +472,8 @@ ck("the vlog's 16-word line is linted at 8 s, a 9-word one is not (cap 14)",
    len(HT.line_lints([_vlog], [192])) == 1
    and HT.line_lints([{"beat": "(S1) says, <d>[English] One two three four five six seven eight nine.</d>"}], [192]) == [])
 ck("run() stamps lines (with the hop lengths) before splitting crossing lines, and lints after",
-   "_ht.split_crossing(_ht.time_lines(" in src and "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames))]" in src
-   and "hop_frames=_tl_frames))]" in src
+   "_ht.split_crossing(_ht.time_lines(" in src and "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames," in src
+   and "else _ht.LINE_START_S)))]" in src
    and "_ht.line_lints(shots, lengths)" in src)
 _c = HT.time_lines([{"beat": _b}], hop_frames=[192])[0]["beat"]
 ck("the sentence after the line is stamped where the line ends at 3 words/s (00155: mouthing after it)",
@@ -706,8 +706,20 @@ ck("early_words flags only the NEW line inside the overlap",
    == [("hi", 0.5)] and HT.early_words(["hi"], [("Hi", 1.0, 1.2)], 0.917) == [])
 ck("ht_seam_fix is appended last and off by default",
    '"ht_seam_fix": (["off", "on"], {' in src and 'ht_seam_source="prev_hop", ht_seam_fix="off", unique_id=None' in src)
-ck("ht_seam_fix keys hops 2+ only (hop 1 stays cached)",
-   'if _sfix and i > 0:' + chr(10) + '                    hop_payload["ht_seam_fix"]' in src)
+ck("ht_seam_fix v2 keys every hop (hop 1 renders longer and its line moved)",
+   'if _sfix:' + chr(10) + '                    hop_payload["ht_seam_fix"] = [2,' in src)
+# ht_seam_fix v2 (recover, 2026-10-14)
+ck("v2: a 24-frame tail discard keeps 1 + 4k and covers the 22-frame tail",
+   HT.SEAMFIX_TAIL_EXTRA % 4 == 0 and HT.SEAMFIX_TAIL_EXTRA >= HT.WINDOW
+   and "render_length = hop_length + _xtra" in src and "sampled = _drop_latent_tail(sampled, _xtra)" in src)
+ck("v2: the line starts at 1.3 s under seam fix, 1.0 off",
+   HT.SEAMFIX_LINE_START_S == 1.3 and HT.LINE_START_S == 1.0)
+ck("v2: invented_words flags any word after the overlap",
+   HT.invented_words([("so", 0.1, 0.3), ("Thanks", 1.5, 1.8)], 0.917) == [("Thanks", 1.5)]
+   and HT.invented_words([("so", 0.1, 0.3)], 0.917) == [])
+ck("v2: anchor 0.3, off the carried overlap; picture-only Motion-Context; draft continues the carry",
+   HT.SEAMFIX_ANCHOR_STRENGTH_V2 == 0.3 and "skip=(_ht.SEAMFIX_ANCHOR_SKIP if _seam_prev else 0)" in src
+   and "picture_only=_sfix" in src and "_lock_audio_head(_dl, _pp0[1], overlap_n, render_length)" in src)
 ck("a one-hop chain skips the previs and ties to no None window",
    "if n <= 1 and not previs_only:" in src and "if _wp[_w] is not None]" in src)
 import torch as _tt
@@ -744,7 +756,7 @@ ck("the writer no longer asks for closed lips after a line, nor does the lint",
    "lips closed" not in _rules and "closed-mouth" not in _rules and "def hand_tie_rules" in _rules
    and "closed-mouth" not in _lint and "fills the rest with mouthing" in _lint, _lint)
 ck("run() compiles the hops through open_lips",
-   "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames))]" in src)
+   "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames," in src)
 
 print("\nthe module stays ComfyUI-free")
 tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read())

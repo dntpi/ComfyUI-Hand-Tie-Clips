@@ -691,6 +691,16 @@ SEAMFIX_ANCHOR_STRENGTH = 0.75  # share of a hop's per-(channel, 5-latent positi
                                 # offset from hop 1 that is taken out before decode
 SEAMFIX_EARLY_SLACK_S = 0.05    # a new line's first word may start this far inside the overlap
 SEAMFIX_EARLY_PENALTY = 0.5     # score taken off an early draft, so a late one wins if all fail
+# --- ht_seam_fix v2 (recover, 2026-10-14, render seamAB_prev_hop_00003) ----------
+# A hop's last WINDOW frames always render brighter (~10 /255) and griddy. Under seam
+# fix every hop that has a next hop renders SEAMFIX_TAIL_EXTRA frames more and drops
+# them (latent, picture and sound), so what is delivered and handed to the next hop
+# ends on clean frames. 24 = 6 latent steps: >= WINDOW and keeps length 1 + 4k.
+SEAMFIX_TAIL_EXTRA = 24
+SEAMFIX_LINE_START_S = 1.3      # a new line starts after the 0.92 s carried overlap + margin
+SEAMFIX_ANCHOR_STRENGTH_V2 = 0.3  # was 0.75; and never on the carried overlap latents
+SEAMFIX_ANCHOR_SKIP = 6         # latent steps of the 22-frame overlap (frames 0-20)
+SEAMFIX_ANCHOR_RAMP = 2         # latent steps over which the anchor fades in after it
 
 
 def early_words(planned, words, before_s, slack_s=SEAMFIX_EARLY_SLACK_S):
@@ -704,6 +714,17 @@ def early_words(planned, words, before_s, slack_s=SEAMFIX_EARLY_SLACK_S):
         for ww in _words(w):
             if ww in want and float(t0) < float(before_s) - float(slack_s):
                 out.append((ww, float(t0)))
+    return out
+
+
+def invented_words(words, after_s):
+    """ht_seam_fix: heard words that start at or after `after_s` (the carried
+    overlap's end). For a hop with no line any of them is invented speech
+    (seamAB_prev_hop_00003 hop 4: "Thanks for watching!"). -> [(word, start_s)]"""
+    out = []
+    for w, t0, _t1 in words or []:
+        if float(t0) >= float(after_s) and _words(w):
+            out.append((str(w).strip(), float(t0)))
     return out
 # H3's speaking rate is not one number: chain_00153 spoke 14-17 words at about 2.1 a
 # second, chain_00155 spoke 9-10 at about 3, starting 1.2-1.7 s in. A 12-word cap off

@@ -1470,7 +1470,7 @@ def _pin_mech_for(hop_index, overlap_n, prev_sampled, mode="auto"):
 
 def _pin_continue(cond, latent, vae, audio_vae, overlap_n,
                   prev_sampled, prev_imgs, prev_audio, audio_ctx=24,
-                  mode="auto"):
+                  mode="auto", picture_only=False):
     """Hop 2+ motion pin. Latent Motion-Context when possible; AddGuide otherwise.
 
     AddGuide re-encodes decoded pixels and anchors audio forwards from frame 0
@@ -1504,6 +1504,13 @@ def _pin_continue(cond, latent, vae, audio_vae, overlap_n,
                 context_length=ctx_label, audio_context_length=a_ctx,
                 context_latent=prev_sampled,
             )
+            if picture_only:
+                # ht_seam_fix v2: Motion-Context has no off switch for its sound
+                # (audio_context_length=0 means "follow the picture"), so the audio
+                # keyframe it appended is taken back out. The hop's locked track is
+                # then its only soundtrack. Keyframes already on `cond` are kept.
+                cond = _strip_audio_keyframes(cond)
+                a_ctx = 0
             print(
                 f"[{TAG}] Motion-Context pin: previous hop latent "
                 f"({ctx_label}f picture, {a_ctx}f audio, trim {trim})",
@@ -1585,6 +1592,105 @@ def _collect_ref_images(slot_images):
 
 def _audio_samples(frames, sr):
     return max(1, int(round(frames / float(FPS) * int(sr))))
+
+
+def _strip_audio_keyframes(cond):
+    """ht_seam_fix v2: drop every keyframe that carries an `audio_latent` (the
+    Motion-Context timeline audio pin) from a conditioning list."""
+    out = []
+    for emb, extra in cond:
+        d = dict(extra)
+        kfs = d.get("minimax_keyframes")
+        if kfs:
+            d["minimax_keyframes"] = [kf for kf in kfs if "audio_latent" not in kf]
+        out.append([emb, d])
+    return out
+
+
+def _drop_latent_tail(lat, frames):
+    """ht_seam_fix v2 (tail discard): cut the last `frames` pixel frames (a multiple
+    of 4) off an AV latent dict: frames // 4 video steps and the matching 40 Hz audio
+    steps; a noise_mask is cut the same way. -> latent dict"""
+    if lat is None or int(frames) <= 0:
+        return lat
+    parts = _latents.from_dict(lat)
+    if parts is None or len(parts) < 1:
+        return lat
+    parts = list(parts)
+    v = parts[0]
+    vt = int(v.shape[2]) - int(frames) // 4
+    parts[0] = v[:, :, :vt].contiguous()
+    at = None
+    if len(parts) > 1:
+        a = parts[1]
+        at = int(a.shape[-1]) - int(round(int(frames) * _alock.AUDIO_HZ / float(FPS)))
+        parts[1] = a[..., :at].contiguous()
+    out = dict(lat)
+    out["samples"] = _latents.rebuild(lat["samples"], parts)
+    m = lat.get("noise_mask")
+    if m is not None:
+        try:
+            import comfy.nested_tensor as nt
+            ms = list(m.unbind()) if hasattr(m, "unbind") and len(parts) > 1 else [m]
+            if len(ms) == len(parts):
+                cut = []
+                for idx, mm_ in enumerate(ms):
+                    if idx == 0 and mm_.dim() >= 3 and int(mm_.shape[2]) == vt + int(frames) // 4:
+                        mm_ = mm_[:, :, :vt]
+                    elif idx == 1 and at is not None and int(mm_.shape[-1]) > at:
+                        mm_ = mm_[..., :at]
+                    cut.append(mm_.contiguous())
+                out["noise_mask"] = nt.NestedTensor(tuple(cut)) if len(cut) > 1 else cut[0]
+            else:
+                out.pop("noise_mask", None)
+        except Exception:
+            out.pop("noise_mask", None)
+    return out
+
+
+def _lock_audio_head(latent, carry, carry_frames, hop_frames):
+    """ht_seam_fix v2: the sound draft continues the carried sound instead of
+    being overwritten by it later. The draft latent's first `carry_frames` worth
+    of audio steps become the previous hop's last audio steps and are frozen
+    (audio noise_mask 0 there, 1 after it); video stays fully live."""
+    import comfy.nested_tensor as nt
+    parts = _latents.from_dict(latent)
+    if parts is None or len(parts) < 2 or carry is None:
+        return latent, 0
+    video, audio = parts[0], parts[1]
+    a_len = int(audio.shape[-1])
+    k = int(round(int(carry_frames) * a_len / float(max(1, int(hop_frames)))))
+    c = carry.to(device=audio.device, dtype=audio.dtype)
+    while c.dim() > audio.dim():
+        c = c[0]
+    while c.dim() < audio.dim():
+        c = c.unsqueeze(0)
+    k = max(0, min(k, a_len, int(c.shape[-1])))
+    if not k or tuple(c.shape[:-1]) != tuple(audio.shape[:-1]):
+        return latent, 0
+    audio = audio.clone()
+    audio[..., :k] = c[..., -k:]
+    parts = list(parts)
+    parts[1] = audio
+    out = dict(latent)
+    out["samples"] = _latents.rebuild(latent["samples"], parts)
+    vmask = torch.ones((1, 1) + tuple(int(d) for d in video.shape[2:]),
+                       device=video.device, dtype=torch.float32)
+    amask = torch.ones((1, 1) + tuple(int(d) for d in audio.shape[2:]),
+                       device=audio.device, dtype=torch.float32)
+    amask[..., :k] = 0.0
+    prev = latent.get("noise_mask")
+    if prev is not None:
+        try:
+            pv = list(prev.unbind())
+            vmask = vmask * pv[0].to(device=vmask.device, dtype=vmask.dtype)
+            if len(pv) > 1 and tuple(pv[1].shape[-1:]) == tuple(amask.shape[-1:]):
+                amask = amask * pv[1].to(device=amask.device, dtype=amask.dtype)
+        except Exception as e:
+            print(f"[{TAG}] WARNING: sound draft lock could not AND the existing "
+                  f"noise mask ({e!r}); using the lock mask alone", flush=True)
+    out["noise_mask"] = nt.NestedTensor((vmask, amask))
+    return out, k
 
 
 def _tail_audio(audio, frames):
@@ -1937,7 +2043,7 @@ def _splice_locked_audio(latent, z_audio, carry=None, carry_frames=0, hop_frames
     return out
 
 
-def _mean_anchor(sampled, ref, strength):
+def _mean_anchor(sampled, ref, strength, skip=0, ramp=0):
     """ht_seam_fix: pull a hop's video latent means onto hop 1's.
 
     H3 packs 17 frames into 5 latents (1,4,4,4,4), and each position in that
@@ -1963,6 +2069,12 @@ def _mean_anchor(sampled, ref, strength):
         return sampled, cur.detach().cpu()
     off = (ref.to(cur.device) - cur) * float(strength)
     shift = torch.stack([off[:, i % 5] for i in range(t)], dim=1)  # [C, T]
+    if int(skip) > 0 or int(ramp) > 0:
+        # ht_seam_fix v2: the carried overlap latents are the previous hop's
+        # frames again; moving them made a step against what was just shown.
+        w = torch.tensor([min(1.0, max(0.0, (i - int(skip) + 1) / float(int(ramp) + 1)))
+                          for i in range(t)], dtype=shift.dtype, device=shift.device)
+        shift = shift * w.view(1, t)
     parts = list(parts)
     parts[0] = (vf + shift.view(1, -1, t, 1, 1)).to(v.dtype)
     out = dict(sampled)
@@ -3328,7 +3440,12 @@ class HandTieClips:
                               for s in shots]
                 blocks = [_d.compile_shot(s, 0, establish)
                           for s in _ht.split_crossing(_ht.time_lines(
-                              _ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames))]
+                              _ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames,
+                              # ht_seam_fix v2: the line starts after the carried
+                              # 0.92 s overlap with margin (v1 drafts spoke at 0 s).
+                              start_s=(_ht.SEAMFIX_LINE_START_S
+                                       if str(ht_seam_fix or "off") == "on"
+                                       else _ht.LINE_START_S)))]
                 for _w in _ht.crossing_lints(shots):
                     print(f"[{TAG}] note: {_w}", flush=True)
             unique = len(shots)
@@ -4553,7 +4670,17 @@ class HandTieClips:
             mm.throw_exception_if_processing_interrupted()
             shot = shots[i] or {}
             hop_length = lengths[i]
-            print(f"[{TAG}] hop {i + 1}/{n}...", flush=True)
+            # ht_seam_fix v2 (tail discard): a hop with a next hop renders
+            # SEAMFIX_TAIL_EXTRA more frames and drops them after sampling, so its
+            # bright, griddy last 22 frames are never delivered or handed on.
+            # hop_length stays the delivered length: beat times and the film's
+            # total are unchanged. See CLAUDE.md "ht_seam_fix v2".
+            _xtra = (_ht.SEAMFIX_TAIL_EXTRA
+                     if (_sfix and i + 1 < n and locked is None) else 0)
+            render_length = hop_length + _xtra
+            print(f"[{TAG}] hop {i + 1}/{n}..."
+                  + (f" (renders {render_length}f, drops the last {_xtra})" if _xtra else ""),
+                  flush=True)
             # Computed HERE, not beside the sampler where it used to be. A
             # restart is a chain start, and almost everything that makes a hop
             # a start rather than a continuation -- which references ride it,
@@ -5184,8 +5311,9 @@ class HandTieClips:
                 _seam_prev = ht and _hd and _ht_seam_prev_hop(i, hop_restart)
                 if _seam_prev:
                     hop_payload["ht_seam"] = "prev_hop"
-                if _sfix and i > 0:
-                    hop_payload["ht_seam_fix"] = [1, _ht.SEAMFIX_ANCHOR_STRENGTH]
+                if _sfix:
+                    hop_payload["ht_seam_fix"] = [2, _ht.SEAMFIX_ANCHOR_STRENGTH_V2,
+                                                  int(_xtra), _ht.SEAMFIX_LINE_START_S]
                 hop_key = _store.hop_key(
                     None if (hop_restart or (ht and not _seam_prev)) else prev_key,
                     hop_payload)
@@ -5274,7 +5402,7 @@ class HandTieClips:
                 packed = _core_call(
                     MiniMaxH3ReferenceToVideo, "the reference conditioning",
                     clip=clip, vae=vae, audio_vae=audio_vae, prompt=block,
-                    width=int(width), height=int(height), length=hop_length,
+                    width=int(width), height=int(height), length=render_length,
                     ref_image_size=ref_image_size,
                     ref_images=hop_images,
                     ref_videos=hop_videos,
@@ -5342,7 +5470,7 @@ class HandTieClips:
                     # _pin_continue does off hand-tie), not the previs window.
                     _seam_prev = (not _free) and _ht_seam_prev_hop(i, hop_restart)
                     _ties = ([] if (_free or _seam_prev) else [(0, _k)]) \
-                        + ([(-_ht.WINDOW, _k + 1)] if _k + 1 < len(_wp) else [])
+                        + ([(-(_ht.WINDOW + _xtra), _k + 1)] if _k + 1 < len(_wp) else [])
                     # A skipped previs (one-hop chain) has no windows to tie to.
                     _ties = [(_fi, _w) for _fi, _w in _ties if _wp[_w] is not None]
                     if _sfix and _seam_prev:
@@ -5353,7 +5481,8 @@ class HandTieClips:
                         cond, _seam_mech = _pin_continue(
                             cond, latent, vae, audio_vae, overlap_n,
                             prev_sampled, prev_imgs, prev_audio,
-                            audio_ctx=audio_ctx, mode="motion_context")
+                            audio_ctx=audio_ctx, mode="motion_context",
+                            picture_only=_sfix)
                         if _seam_mech != "motion_context":
                             raise RuntimeError(
                                 f"{TAG}: hop {i + 1}: ht_seam_source=prev_hop needs the "
@@ -5438,7 +5567,7 @@ class HandTieClips:
                     _dp = _core_call(
                         MiniMaxH3ReferenceToVideo, "the sound draft conditioning",
                         clip=clip, vae=vae, audio_vae=audio_vae, prompt=block,
-                        width=int(sd_w), height=int(sd_h), length=hop_length,
+                        width=int(sd_w), height=int(sd_h), length=render_length,
                         ref_image_size=ref_image_size, ref_images=hop_images,
                         ref_videos=hop_videos,
                         ref_video_audios=(hop_video_audios or None),
@@ -5472,6 +5601,18 @@ class HandTieClips:
                         ))[0]
                         print(f"[{TAG}] hop {i + 1}: sound draft opens on the previous hop's "
                               "tail (ht_seam_fix)", flush=True)
+                    if _sfix and _seam_prev and prev_sampled is not None:
+                        # ht_seam_fix v2: the draft's overlap audio IS the carried
+                        # sound, frozen, so the draft continues from it. v1 drafted
+                        # freely and overwrote the first 0.92 s afterwards, which
+                        # erased "Look at" in seamAB_prev_hop_00003 hop 2.
+                        _pp0 = _latents.from_dict(prev_sampled)
+                        if _pp0 is not None and len(_pp0) >= 2:
+                            _dl, _dk = _lock_audio_head(_dl, _pp0[1], overlap_n, render_length)
+                            if _dk:
+                                print(f"[{TAG}] hop {i + 1}: sound draft continues the carried "
+                                      f"sound (first {_dk} audio steps frozen)", flush=True)
+                        del _pp0
                     _offload_text_encoder(clip, model)
                     _d_steps = int(shot.get("steps") or steps)
                     if _d_steps not in sigma_cache:
@@ -5507,11 +5648,24 @@ class HandTieClips:
                             _ok, _score, _note = True, 0.0, "unchecked"
                         else:
                             _ok, _score, _note = _ht.judge_sound(_want, _heard)
+                            if _hw is not None and i > 0 and not _want:
+                                # ht_seam_fix v2: a hop with no line keeps no speech
+                                # after the carried overlap.
+                                _inv = _ht.invented_words(_hw[1], overlap_n / float(FPS))
+                                if _inv:
+                                    _ok = False
+                                    _score -= _ht.SEAMFIX_EARLY_PENALTY + len(_inv)
+                                    _note += ("; invents speech in a hop with no line (%s at "
+                                              "%.2fs)" % (_inv[0][0], _inv[0][1]))
                             if _hw is not None and i > 0:
                                 _early = _ht.early_words(_want, _hw[1], overlap_n / float(FPS))
                                 if _early:
                                     _ok = False
-                                    _score -= _ht.SEAMFIX_EARLY_PENALTY
+                                    # v2: the later the first early word, the better,
+                                    # so if every try starts early the latest is kept.
+                                    _score -= (_ht.SEAMFIX_EARLY_PENALTY
+                                               + max(0.0, overlap_n / float(FPS)
+                                                     - min(t for _w0, t in _early)))
                                     _note += ("; the line starts early (%s at %.2fs, overlap ends "
                                               "%.2fs)" % (_early[0][0], _early[0][1],
                                                           overlap_n / float(FPS)))
@@ -5540,7 +5694,7 @@ class HandTieClips:
                     latent = _splice_locked_audio(
                         latent, _kept[0], carry=_carry,
                         carry_frames=(overlap_n if _carry is not None else 0),
-                        hop_frames=hop_length)
+                        hop_frames=render_length)
                     print(f"[{TAG}] hop {i + 1}: picture renders to the sound of draft "
                           f"seed {_kept[3]} (frozen)", flush=True)
                     del _kept
@@ -5727,14 +5881,25 @@ class HandTieClips:
                             refined_for_pin = _latent_cpu(_ref)
                         del _ref
 
+                if _xtra:
+                    # ht_seam_fix v2: drop the extra tail (latent, picture, sound)
+                    # before anything measures, decodes, caches or hands it on.
+                    sampled = _drop_latent_tail(sampled, _xtra)
+                    if refined_for_pin is not None:
+                        refined_for_pin = _drop_latent_tail(refined_for_pin, _xtra)
+                    print(f"[{TAG}] hop {i + 1}: dropped the last {_xtra} rendered frames "
+                          f"(the bright tail); delivers {hop_length}f (ht_seam_fix)", flush=True)
                 if _sfix:
                     if _mean_ref[0] is None or i == 0:
                         _, _mean_ref[0] = _mean_anchor(sampled, None, 0.0)
                         print(f"[{TAG}] hop {i + 1}: latent mean reference stored "
                               "(ht_seam_fix)", flush=True)
                     else:
-                        sampled, _ = _mean_anchor(sampled, _mean_ref[0],
-                                                  _ht.SEAMFIX_ANCHOR_STRENGTH)
+                        # v2: 0.3, and not on the carried overlap latents.
+                        sampled, _ = _mean_anchor(
+                            sampled, _mean_ref[0], _ht.SEAMFIX_ANCHOR_STRENGTH_V2,
+                            skip=(_ht.SEAMFIX_ANCHOR_SKIP if _seam_prev else 0),
+                            ramp=(_ht.SEAMFIX_ANCHOR_RAMP if _seam_prev else 0))
                 imgs, audio = _decode_av(vae, audio_vae, sampled)
                 imgs = imgs.contiguous().cpu()
                 wav = audio["waveform"].contiguous().cpu()
@@ -5758,6 +5923,8 @@ class HandTieClips:
                             SamplerCustomAdvanced, "the hop retake sampler",
                             noise=_n2, guider=guider, sampler=sampler,
                             sigmas=hop_sigmas, latent_image=latent))[0]
+                        if _xtra:
+                            _s2 = _drop_latent_tail(_s2, _xtra)
                         _i2, _a2 = _decode_av(vae, audio_vae, _s2)
                         _i2 = _i2.contiguous().cpu()
                         _c2 = _ht.previs_cuts(_i2)

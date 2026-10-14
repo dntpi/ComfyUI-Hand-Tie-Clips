@@ -684,6 +684,27 @@ def judge_sound(planned, heard):
 # window's sound. Measured rate: 14-17 words in 7.0-7.8 s, about 2.1 a second.
 
 LINE_START_S = 1.0          # the head window is 0.917 s; the line starts after it
+
+# --- ht_seam_fix (recover, 2026-10-14) ------------------------------------------
+# One RUN switch, ht_seam_fix=on, turns all of these on together (see CLAUDE.md).
+SEAMFIX_ANCHOR_STRENGTH = 0.75  # share of a hop's per-(channel, 5-latent position) mean
+                                # offset from hop 1 that is taken out before decode
+SEAMFIX_EARLY_SLACK_S = 0.05    # a new line's first word may start this far inside the overlap
+SEAMFIX_EARLY_PENALTY = 0.5     # score taken off an early draft, so a late one wins if all fail
+
+
+def early_words(planned, words, before_s, slack_s=SEAMFIX_EARLY_SLACK_S):
+    """The heard words of the NEW line that start before `before_s` (the overlap's
+    end). Words not in the planned line are treated as carried-over speech from
+    the previous hop and are allowed there. `words` is hear.transcribe_words'
+    [(word, start_s, end_s)]. -> [(word, start_s)]"""
+    want = set(planned or [])
+    out = []
+    for w, t0, _t1 in words or []:
+        for ww in _words(w):
+            if ww in want and float(t0) < float(before_s) - float(slack_s):
+                out.append((ww, float(t0)))
+    return out
 # H3's speaking rate is not one number: chain_00153 spoke 14-17 words at about 2.1 a
 # second, chain_00155 spoke 9-10 at about 3, starting 1.2-1.7 s in. A 12-word cap off
 # the slow rate left 2.3-3.6 s of a vlogger's face with nothing said, and the model

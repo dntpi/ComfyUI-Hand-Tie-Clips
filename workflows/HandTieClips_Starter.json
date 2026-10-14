@@ -655,7 +655,8 @@
         "None",
         1.0,
         70000,
-        "prev_hop"
+        "prev_hop",
+        "off"
       ],
       "title": "H3 Ref2VA Chain - starter"
     },

@@ -54,6 +54,8 @@ const GROUPS = [
                     // Read only under pin_mech=hand_tie: what a continuing
                     // hop opens on (recover branch, 2026-10-14).
                     "ht_seam_source",
+                    // ht_seam_fix: the seam-fix batch (recover, 2026-10-14).
+                    "ht_seam_fix",
                     "audio_pin_frames",
                     // Sits with the pin dials because that is what it is
                     // about: whether the timbre reference keeps riding, or
@@ -186,7 +188,7 @@ function commitWidget(node, w, value, onChange) {
 }
 
 // Display names that differ from the widget name with underscores spaced.
-const LABELS = { ht_seam_source: "seam source" };
+const LABELS = { ht_seam_source: "seam source", ht_seam_fix: "seam fix" };
 
 export function labelFor(w) {
     const n = String(w.name || "");

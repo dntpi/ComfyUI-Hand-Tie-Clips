@@ -433,7 +433,8 @@ ck("... and skips the incoming hop's echo of a previs word ('air')", 11000 <= p2
 rain = 0.1 * torch.randn(1, 2, 29333)
 ck("one continuous sound across the window switches at the picture cut", HT.audio_cut(rain, rain, SR) == 0)
 ck("run() tones a hop on its head window only (its tail span is not delivered)",
-   "_ht.tone_match(imgs, _wp[_k], None)" in src)
+   "_ht.tone_match(imgs, _tone_head, None)" in src
+   and "_tone_head = _wp[_k]" in src)
 ck("run() bends the outgoing hop to the incoming one, then deflickers each section",
    "_ht.seam_bend(master_imgs, ht_hop_start, write_pos, imgs)" in src
    and "_ht.deflicker(master_imgs[a:b])" in src)
@@ -616,7 +617,7 @@ ck("run() drops the head tie for it, and the head from its key",
    and "_store.tensor_digest(_wp[_k]) if _hd else None" in src
    and "_store.audio_digest(_ws[_k]) if _hd else None" in src)
 ck("run() does not tone-match a free hop to a window it was never tied to",
-   "if _ht.free_head(_k, ht_chained[_si], start_image is not None):" + chr(10)
+   "or _ht.free_head(_k, ht_chained[_si], start_image is not None)):" + chr(10)
    + "                    # No head window to match" in src)
 
 print("\nthe sound first: each hop drafts its sound, the picture renders to it")
@@ -655,7 +656,7 @@ _tm, (_th, _) = HT.tone_match(_t0, _ts, None)
 ck("tone_match takes a window cut from a smaller previs",
    abs(float(_th[0]) - 0.1) < 1e-5 and abs(float(_tm[0, 0, 0, 0]) - 0.6) < 1e-5, (_th, _tm[0, 0, 0]))
 _d0 = src.find("if ht and sound_first:")
-_lk = src.find("latent = _splice_locked_audio(latent, _kept[0])")
+_lk = src.find("latent = _splice_locked_audio(" + chr(10) + "                        latent, _kept[0], carry=_carry,")
 _sm = src.find('SamplerCustomAdvanced, "the sampler",')
 ck("run() drafts after the windows are tied and before the hop samples, then freezes the kept sound",
    -1 not in (_d0, _lk, _sm) and src.find('"the hand-tie window"') < _d0 < _lk < _sm)
@@ -696,7 +697,30 @@ ck("run() sizes each section's previs with previs_canvas",
    and "pv_w, pv_h = ht_pv[_si]" in src)
 _hs = open(os.path.join(HERE, "hear.py"), encoding="utf-8").read()
 ck("hear.py never downloads: local cache only, on the CPU",
-   "local_files_only=True" in _hs and "device=-1" in _hs and "snapshot_download(repo," in _hs)
+   "local_files_only=True" in _hs and "device=_device()" in _hs and "snapshot_download(repo," in _hs)
+# ht_seam_fix (recover, 2026-10-14)
+ck("hear.py takes the GPU when CUDA is up, else the CPU",
+   "return 0 if torch.cuda.is_available() else -1" in _hs and 'return_timestamps": "word"' in _hs)
+ck("early_words flags only the NEW line inside the overlap",
+   HT.early_words(["hi", "there"], [("so", 0.1, 0.3), ("Hi", 0.5, 0.7), ("there", 1.2, 1.4)], 0.917)
+   == [("hi", 0.5)] and HT.early_words(["hi"], [("Hi", 1.0, 1.2)], 0.917) == [])
+ck("ht_seam_fix is appended last and off by default",
+   '"ht_seam_fix": (["off", "on"], {' in src and 'ht_seam_source="prev_hop", ht_seam_fix="off", unique_id=None' in src)
+ck("ht_seam_fix keys hops 2+ only (hop 1 stays cached)",
+   'if _sfix and i > 0:' + chr(10) + '                    hop_payload["ht_seam_fix"]' in src)
+ck("a one-hop chain skips the previs and ties to no None window",
+   "if n <= 1 and not previs_only:" in src and "if _wp[_w] is not None]" in src)
+import torch as _tt
+import importlib as _il
+_rc = sys.modules.get(HT.__name__.rsplit(".", 1)[0] + ".h3_ref_chain")
+if _rc is not None and hasattr(_rc, "_mean_anchor"):
+    _v = _tt.zeros(1, 2, 10, 2, 2); _v[:, :, 0::5] += 1.0
+    _ref = {"samples": _v.clone()}
+    _, _tab = _rc._mean_anchor(_ref, None, 0.0)
+    _w = {"samples": _v.clone() - 0.5}
+    _o, _ = _rc._mean_anchor(_w, _tab, 1.0)
+    ck("_mean_anchor puts each block position back on hop 1's level",
+       float((_o["samples"] - _v).abs().max()) < 1e-5)
 
 print("\nclosed lips leave a hop that speaks (the push run: 'Today...' said with lips closed)")
 _ol = HT.open_lips([

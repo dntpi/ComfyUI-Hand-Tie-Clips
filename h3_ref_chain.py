@@ -3050,6 +3050,14 @@ class HandTieClips:
                                 "trained on the bare DiT. The chain applies its own sigma "
                                 "shift to it; upsample_lora still goes on top."),
                 }),
+                # APPENDED 2026-10-14, LAST (recover branch). hand_tie only.
+                "ht_seam_source": (["prev_hop", "previs"], {
+                    "default": "prev_hop",
+                    "tooltip": ("pin_mech=hand_tie: what a continuing hop opens on. prev_hop = "
+                                "the previous full-res hop's sampled latent tail via Motion-Context "
+                                "(seam continuity). previs = the old frame-0 AddGuide of the previs "
+                                "window. The end-of-hop previs guide is unchanged either way."),
+                }),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -3158,7 +3166,7 @@ class HandTieClips:
             boost_lora_4="None", boost_lora_4_strength=1.0,
             upsample_lora="None", upsample_lora_strength=1.0,
             upsample_tile_tokens=_tu.TOKEN_BUDGET, upsample_dit=None,
-            unique_id=None):
+            ht_seam_source="prev_hop", unique_id=None):
         # First thing, before a single model is touched: hand the writer's VRAM
         # back. The plan writer stays resident between plans now, which is the
         # right trade everywhere except here -- a 27B and an H3 render do not
@@ -4164,6 +4172,14 @@ class HandTieClips:
         # into 22-frame windows that guide every hop of the section at both ends.
         # See hand_tie.py.
         ht = str(pin_mech) == "hand_tie"
+        _seam_src = str(ht_seam_source or "prev_hop")
+        if _seam_src not in ("prev_hop", "previs"):
+            raise ValueError(f"{TAG}: ht_seam_source must be prev_hop or previs, got {_seam_src!r}")
+
+        def _ht_seam_prev_hop(i, hop_restart):
+            """True when this hand-tie hop opens on the previous hop's latent."""
+            return (_seam_src == "prev_hop" and i > 0 and not hop_restart
+                    and prev_sampled is not None)
         ht_pos = {}          # hop index -> (section, position in it)
         ht_layouts = []
         ht_previs_raw = []
@@ -5071,8 +5087,13 @@ class HandTieClips:
                         # whether anything listened.
                         hop_payload["sound_first"] = [sd_w, sd_h, _ht.SOUND_TRIES,
                                                       _hear.available() or "unchecked"]
+                # A section that opens free (free_head) keeps opening free.
+                _seam_prev = ht and _hd and _ht_seam_prev_hop(i, hop_restart)
+                if _seam_prev:
+                    hop_payload["ht_seam"] = "prev_hop"
                 hop_key = _store.hop_key(
-                    None if (hop_restart or ht) else prev_key, hop_payload)
+                    None if (hop_restart or (ht and not _seam_prev)) else prev_key,
+                    hop_payload)
                 # A locked shot reuses its last render even though its inputs
                 # changed -- that is the point of locking. The content key would
                 # have moved, so the pointer is what finds it.
@@ -5219,8 +5240,24 @@ class HandTieClips:
                     # A section's last hop has no window k+1: tied at its start only.
                     # A fresh section's first hop is tied at its end only (free_head).
                     _free = _ht.free_head(_k, ht_chained[_si], start_image is not None)
-                    _ties = ([] if _free else [(0, _k)]) \
+                    # ht_seam_source=prev_hop: the head is the previous full-res
+                    # hop's own sampled latent tail (Motion-Context, as
+                    # _pin_continue does off hand-tie), not the previs window.
+                    _seam_prev = (not _free) and _ht_seam_prev_hop(i, hop_restart)
+                    _ties = ([] if (_free or _seam_prev) else [(0, _k)]) \
                         + ([(-_ht.WINDOW, _k + 1)] if _k + 1 < len(_wp) else [])
+                    if _seam_prev:
+                        cond, _seam_mech = _pin_continue(
+                            cond, latent, vae, audio_vae, overlap_n,
+                            prev_sampled, prev_imgs, prev_audio,
+                            audio_ctx=audio_ctx, mode="motion_context")
+                        if _seam_mech != "motion_context":
+                            raise RuntimeError(
+                                f"{TAG}: hop {i + 1}: ht_seam_source=prev_hop needs the "
+                                f"Motion-Context pin, got {_seam_mech!r}. Install "
+                                "ComfyUI-H3-Motion-Context or set ht_seam_source=previs.")
+                        print(f"[{TAG}] hop {i + 1}: hand-tie seam opens on the previous "
+                              "hop's latent (ht_seam_source=prev_hop)", flush=True)
                     for _fi, _w in _ties:
                         cond = _result(_core_call(
                             MiniMaxH3AddGuide, "the hand-tie window",

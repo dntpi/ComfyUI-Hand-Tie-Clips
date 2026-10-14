@@ -611,7 +611,8 @@ ck("a chained section's first hop keeps its head; so does any later hop; so does
    not HT.free_head(0, True) and not HT.free_head(1, False) and not HT.free_head(0, False, True))
 ck("run() drops the head tie for it, and the head from its key",
    "_free = _ht.free_head(_k, ht_chained[_si], start_image is not None)" in src
-   and "_ties = ([] if _free else [(0, _k)])" in src
+   and "_ties = ([] if (_free or _seam_prev) else [(0, _k)])" in src
+   and "_seam_prev = (not _free) and _ht_seam_prev_hop(i, hop_restart)" in src
    and "_store.tensor_digest(_wp[_k]) if _hd else None" in src
    and "_store.audio_digest(_ws[_k]) if _hd else None" in src)
 ck("run() does not tone-match a free hop to a window it was never tied to",

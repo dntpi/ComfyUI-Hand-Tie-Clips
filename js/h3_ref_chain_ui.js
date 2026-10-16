@@ -54,10 +54,14 @@ const STYLE_ID = "h3rc-style";
 // reference_video / voice sockets, plus soundtrack_file. They are always
 // hidden: the media strip owns them in both modes, and shown raw they are
 // text boxes inviting you to type a path that would not resolve.
-const SHOTS_HIDDEN = ["prompt", "chains", "hop_script", "shot_plan", "ref_plan"]
-    .concat(MEDIA_WIDGETS);
+const SHOTS_HIDDEN = [
+    "prompt", "chains", "hop_script", "shot_plan", "ref_plan",
+    "swap_script", "swap_refs",
+].concat(MEDIA_WIDGETS);
 // `prompt` is hidden in Simple too: the SCRIPT tab draws it as its own box.
-const SIMPLE_HIDDEN = ["prompt", "shot_plan", "ref_plan"].concat(MEDIA_WIDGETS);
+const SIMPLE_HIDDEN = [
+    "prompt", "shot_plan", "ref_plan", "swap_script", "swap_refs",
+].concat(MEDIA_WIDGETS);
 
 const _cssUrl = new URL("./h3_ref_chain.css", import.meta.url).href;
 
@@ -140,12 +144,23 @@ function mountEditor(node) {
             const arr = Array.isArray(parsed) ? parsed : parsed?.shots;
             if (Array.isArray(arr) && arr.length) return arr.length;
         } catch (_) { /* unparseable plan: fall back to chains */ }
-        return Number(widgetByName(node, "chains")?.value) || 1;
+        const ch = Number(widgetByName(node, "chains")?.value) || 1;
+        const pr = String(widgetByName(node, "prompt")?.value || "").trim();
+        if (pr) {
+            const blks = pr.split(/^---\s*$/m).map((s) => s.trim()).filter(Boolean);
+            if (blks.length > 1) return Math.max(ch, blks.length);
+        }
+        return ch;
     };
 
     const rail = createRefRail(node, {
         getPlan: () => refPlan,
-        setPlan: (p) => { refPlan = p; refBad = false; refWidget.value = refPlanToJson(p); },
+        setPlan: (p) => {
+            refPlan = p;
+            refBad = false;
+            refWidget.value = refPlanToJson(p);
+            try { refWidget.callback?.(refWidget.value, node.graph?.canvas, node); } catch (_) {}
+        },
         getRaw: () => refWidget.value,
         isBad: () => refBad,
         // syncBadges is declared further down; these closures only ever run on
@@ -311,10 +326,21 @@ function mountEditor(node) {
 
     const videoSwap = createVideoSwap(node, {
         onWritten: (shotJson, extra) => {
-            if (shotJson) {
-                planWidget.value = shotJson;
-                node.properties ??= {};
-                node.properties[EDITOR_MODE_PROP] = "shots";
+            // SWAP owns `swap_script` and `swap_refs` -- never `shot_plan` and
+            // never `ref_plan`. Leaving `planWidget` untouched keeps the user's
+            // multi-shot chain intact while SWAP is active; clearing SWAP hands
+            // the node straight back to that chain.
+            if (extra && extra.swap_script !== undefined) {
+                const swW = widgetByName(node, "swap_script");
+                if (swW) {
+                    swW.value = String(extra.swap_script || "");
+                    try { swW.callback?.(swW.value, node.graph?.canvas, node); } catch (_) {}
+                }
+                const srW = widgetByName(node, "swap_refs");
+                if (srW && extra.swap_refs !== undefined) {
+                    srW.value = String(extra.swap_refs || "");
+                    try { srW.callback?.(srW.value, node.graph?.canvas, node); } catch (_) {}
+                }
             }
             if (extra?.reference_video_desc) {
                 const w = widgetByName(node, "reference_video_desc");
@@ -578,6 +604,10 @@ node._h3PaintPin = paintPin;
             tabs.badge("script", hopCount());
             tabs.badge("refs", (refPlan.refs || []).length || "");
             tabs.badge("timeline", timeline.badge());
+            const swapOn = Boolean(
+                String(widgetByName(node, "swap_script")?.value || "").trim(),
+            );
+            tabs.badge("swap", swapOn ? "ON" : "");
         } catch (err) {
             // Decoration. A bad count must never take the refresh down with it.
             console.warn("[HandTieClips] tab badges:", err);

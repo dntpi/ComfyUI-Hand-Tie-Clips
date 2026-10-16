@@ -36,4 +36,11 @@ workflows/*_Test.json
 
 # Handoff notes and editor/agent tool state -- working files, never ship.
 docs/*HANDOFF*.md
+docs/CLAUDE_*.md
+docs/BRAINSTORM_*.md
+RECAP_*.md
+REFINE_V2_BUILD_PLAN.md
+SPACE_BUNNY_FINDINGS.md
+workflows/HandTieClips_HandTie_Vlog10_*.json
+tools/head_probe.py
 .serena/

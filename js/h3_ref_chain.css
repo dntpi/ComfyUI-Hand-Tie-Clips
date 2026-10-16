@@ -255,14 +255,15 @@
     gap: var(--h3-gap-sm);
     margin-top: 4px;
     min-width: 0;
+    grid-column: 1 / -1;
 }
 
 .h3e-hopbar-track {
     display: flex;
     flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    border: 1px solid var(--h3-border-soft);
+    min-width: 120px;
+    overflow-x: auto;
+    border: 1px solid var(--h3-border);
     border-radius: var(--h3-radius-sm);
     background: var(--h3-sunken);
     cursor: pointer;
@@ -270,23 +271,26 @@
 }
 
 .h3e-hopcell {
-    flex: 0 0 auto;
-    height: 16px;
+    flex: 1 0 34px;
+    height: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-left: 1px solid var(--h3-line);
+    border-left: 1px solid var(--h3-border);
     background: transparent;
+    transition: background-color .1s ease;
 }
+.h3e-hopcell:hover { background: rgba(255, 255, 255, 0.06); }
 .h3e-hopcell:first-child { border-left: 0; }
-.h3e-hopcell-on { background: color-mix(in srgb, var(--h3-accent) 62%, var(--h3-sunken)); }
+.h3e-hopcell-on { background: color-mix(in srgb, var(--h3-accent) 75%, var(--h3-sunken)); }
 
 .h3e-hopcell-no {
     font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
     font-variant-numeric: tabular-nums;
-    font-size: 9px;
+    font-size: 11px;
+    font-weight: 700;
     line-height: 1;
-    color: var(--h3-faint);
+    color: var(--h3-muted);
 }
 .h3e-hopcell-on .h3e-hopcell-no { color: var(--h3-on-accent); }
 

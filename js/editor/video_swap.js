@@ -1,13 +1,17 @@
-/* SWAP -- one-hop identity swap from a reference clip.
+/* SWAP -- standalone one-hop identity swap from a reference clip.
  *
- * Standalone implant, not a chain writer. Accept writes shot_plan (exactly
- * one shot) and reference_video_desc. It never writes ref_plan. Identity is
- * picked from the rail; the pictures stay where they are.
+ * Writes `swap_script` (the complete six-field H3 contract) and `swap_refs`
+ * (the plate whitelist), plus `reference_video_desc` when captioned. It never
+ * writes `shot_plan` and never writes `ref_plan`, so your multi-shot chain on
+ * SCRIPT and your pictures on REFERENCES stay untouched.
  *
- * Trim the clip on MEDIA. SWAP reads the same widgets (slot 1) and uses the
- * IN point as the frame it shows the model.
+ * One or more identities may be added in left-to-right order:
+ *   1st chip -> <Subject 1> (left performer)
+ *   2nd chip -> <Subject 2> (middle / right performer)
+ *   ...
  *
- * LLM settings live on WRITE. This tab does not duplicate them.
+ * Trim the clip on MEDIA. SWAP reads the same widgets (slot 1).
+ * LLM settings live on WRITE.
  */
 import { el, button, widgetByName } from "./widget_utils.js";
 import { parseRefPlan } from "./ref_rail.js";
@@ -15,6 +19,7 @@ import { createPicker } from "./media_picker.js";
 
 const SWAP_PLAN_URL = "/h3_ref_chain/swap_plan";
 const SWAP_DESCRIBE_URL = "/h3_ref_chain/swap_describe";
+const SWAP_IDS_PROP = "h3_swap_identities";
 
 function commit(node, w, value) {
     if (!w) return;
@@ -39,26 +44,19 @@ export function createVideoSwap(node, { onWritten } = {}) {
     root.appendChild(body);
 
     const hint = el("div", "h3e-note h3e-note-hint");
-    hint.textContent = "One hop: replace the person in clip 1 with a still "
-        + "from the rail. Trim the clip on MEDIA. Does not change REFERENCES.";
+    hint.textContent = "Standalone guided swap: automatically loads the Character/Head "
+        + "Swap LoRA @ 1.0, lays clip 1 onto AddGuide (frame 0), and writes "
+        + "swap_script. Leaves SCRIPT, REFERENCES and your upstream LoRA stack untouched.";
     body.appendChild(hint);
 
     const wVideo = widgetByName(node, "reference_video_file");
     const wStart = widgetByName(node, "reference_video_start_s");
-    // The OUT point as well as the IN: the frames SWAP reads are sampled
-    // ACROSS the trimmed window, so an end of 0 would sample a default
-    // span rather than the span the user actually chose.
     const wEnd = widgetByName(node, "reference_video_end_s");
     const wDesc = widgetByName(node, "reference_video_desc");
+    const wSwapScript = widgetByName(node, "swap_script");
+    const wSwapRefs = widgetByName(node, "swap_refs");
 
-    /* D1h: a DIV, not a <label>. Same reason as media_strip.js's cell -- a label
-   * forwards every click on a descendant to the file input it wraps, so the
-   * picker was being triggered twice: once by its own click handler and once by
-   * the label, from anywhere in the cell.
-   *
-   * Here the cell also holds the description and size fields, so clicking near
-   * a text box opened a file browser. The Media tab had the same trap with a
-   * scrubber in it, which is how it was found. */
+    /* D1h: a DIV, not a <label>. */
     const cell = el("div", "h3e-media-cell");
     cell.appendChild(el("span", "h3e-media-label", "clip 1"));
     const pick = createPicker({
@@ -73,9 +71,29 @@ export function createVideoSwap(node, { onWritten } = {}) {
     cell.appendChild(pick.root);
     body.appendChild(cell);
 
+    // Ordered left-to-right identity list. 1 tag = single swap (<Subject 1>);
+    // 2+ tags = multi-person swap (<Subject 1..N> assigned left to right).
+    let selectedTags = [];
+    const savedIds = node.properties?.[SWAP_IDS_PROP];
+    if (Array.isArray(savedIds)) {
+        selectedTags = savedIds
+            .map((t) => String(t || "").replace(/^@/, "").trim())
+            .filter(Boolean);
+    }
+
+    function saveSelectedTags() {
+        node.properties ??= {};
+        node.properties[SWAP_IDS_PROP] = selectedTags.slice();
+    }
+
     const identRow = el("div", "h3e-writer-row");
+    const identLabel = el("span", "h3e-chips-label", "PEOPLE (L\u2192R)");
+    const chipWrap = el("div", "h3e-writer-row");
     const identSel = el("select", "h3e-select");
-    identSel.title = "Identity still already on the REFERENCES rail.";
+    identSel.title = "Add one or more identity pictures from the REFERENCES rail, "
+        + "in left-to-right order in the clip.";
+    identRow.appendChild(identLabel);
+    identRow.appendChild(chipWrap);
     identRow.appendChild(identSel);
     body.appendChild(identRow);
 
@@ -86,32 +104,59 @@ export function createVideoSwap(node, { onWritten } = {}) {
             && String(r.tag || "").trim());
     }
 
+    function renderIdentityChips(rows) {
+        const validSet = new Set(
+            rows.map((r) => String(r.tag || "").replace(/^@/, "")),
+        );
+        selectedTags = selectedTags.filter((t) => validSet.has(t));
+        chipWrap.textContent = "";
+        selectedTags.forEach((tag, idx) => {
+            const chip = button(
+                `${idx + 1}: @${tag} \u00d7`,
+                `Subject ${idx + 1} (performer ${idx + 1} from the left). Click to remove.`,
+                () => {
+                    selectedTags = selectedTags.filter((t) => t !== tag);
+                    saveSelectedTags();
+                    fillIdentity();
+                },
+                "h3e-btn h3e-draft-chip",
+            );
+            chipWrap.appendChild(chip);
+        });
+    }
+
     function fillIdentity() {
         const rows = railRows();
-        const prev = identSel.value;
+        renderIdentityChips(rows);
         identSel.textContent = "";
-        const blank = el("option", null, "— pick an identity —");
+        const blank = el("option", null,
+            selectedTags.length
+                ? "\u2014 + add next person (L\u2192R) \u2014"
+                : "\u2014 pick an identity \u2014");
         blank.value = "";
         identSel.appendChild(blank);
         for (const r of rows) {
             const tag = String(r.tag || "").replace(/^@/, "");
+            if (selectedTags.includes(tag)) continue;
             const o = el("option", null, "@" + tag);
             o.value = tag;
             identSel.appendChild(o);
         }
-        identSel.value = rows.some((r) => String(r.tag).replace(/^@/, "") === prev)
-            ? prev : "";
-        fillTagPicker(bgTagSel, "— background picture —");
-        fillTagPicker(wardSel, "— no wardrobe plate —");
+        identSel.value = "";
+        fillTagPicker(bgTagSel, "\u2014 background picture \u2014");
         syncControls();
     }
 
-    // What the identity photograph contributes, and what stays with the clip.
-    // Named intents rather than a `headswap` checkbox: sampling runs at cfg 1.0
-    // with no negative branch, so a mode that merely OMITS the swap line does
-    // not keep the clip's person -- the identity still is in front of the
-    // encoder either way and governs the subject anyway. Each mode states
-    // positively what stays. Taxonomy after PromptMasterLD's edit laws.
+    identSel.addEventListener("change", () => {
+        const picked = String(identSel.value || "").replace(/^@/, "").trim();
+        if (picked && !selectedTags.includes(picked)) {
+            selectedTags.push(picked);
+            saveSelectedTags();
+        }
+        identSel.value = "";
+        fillIdentity();
+    });
+
     const MODES = [
         ["replace_person", "Replace person",
          "Face, build, hairstyle AND wardrobe come from the identity photograph."],
@@ -134,10 +179,10 @@ export function createVideoSwap(node, { onWritten } = {}) {
     function picker(options, title) {
         const sel = el("select", "h3e-select");
         sel.title = title;
-        for (const [value, label, hint] of options) {
+        for (const [value, label, hintText] of options) {
             const o = el("option", null, label);
             o.value = value;
-            o.title = hint;
+            o.title = hintText;
             sel.appendChild(o);
         }
         return sel;
@@ -154,11 +199,13 @@ export function createVideoSwap(node, { onWritten } = {}) {
     const bgTagSel = el("select", "h3e-select");
     bgTagSel.title = "The @tag the background comes from. Only used by "
         + "Background: from a picture.";
-    const wardSel = el("select", "h3e-select");
-    wardSel.title = "Optional wardrobe plate. When set, the garment comes from "
-        + "this @tag whatever the mode says -- worn, not pasted.";
+    const wardInput = el("input", "h3e-writer-brief");
+    wardInput.type = "text";
+    wardInput.placeholder = "optional wardrobe / outfit text (e.g. black bikini, red dress, or @tag)";
+    wardInput.title = "Optional custom wardrobe from text (or an @tag on the rail). "
+        + "Overrides the clothing from the reference photo and the clip.";
     plateRow.appendChild(bgTagSel);
-    plateRow.appendChild(wardSel);
+    plateRow.appendChild(wardInput);
     body.appendChild(plateRow);
 
     function fillTagPicker(sel, blankLabel) {
@@ -178,15 +225,12 @@ export function createVideoSwap(node, { onWritten } = {}) {
             ? prev : "";
     }
 
-    // A control that cannot apply is disabled rather than ignored: an identity
-    // picker that still demands a value under keep_person would be asking for a
-    // face the instruct then tells the model to leave alone.
     function syncControls() {
         const needsIdentity = modeSel.value !== "keep_person";
         identSel.disabled = !needsIdentity;
         identRow.style.opacity = needsIdentity ? "" : "0.45";
         identSel.title = needsIdentity
-            ? "Identity still already on the REFERENCES rail."
+            ? "Add one or more identity pictures from the REFERENCES rail (L\u2192R)."
             : "Not used: this mode keeps the person who is already in the clip.";
         const usesBgTag = bgSel.value === "picture";
         bgTagSel.disabled = !usesBgTag;
@@ -201,22 +245,15 @@ export function createVideoSwap(node, { onWritten } = {}) {
     brief.placeholder = "optional -- extra context beyond the clip";
     row.appendChild(brief);
 
-    // Secondary, and it should read that way. Analyze & write plan captions
-    // the clip too -- its reply may carry a VIDEO_DESC line, and Accept commits
-    // it. What this button is for is the two cases that one does not cover: a
-    // fast check that the frames and the LLM are actually working before
-    // paying for a plan write, and a caption for a script you wrote yourself.
     const describeBtn = button("Describe frame",
-        "Optional. Captions the clip without touching your script -- useful as "
-        + "a quick check that the frames and the model are working before you "
-        + "write a plan, or when you already have a beat and only want the "
-        + "encoder to know what the clip is for. Analyze & write plan usually "
-        + "captions it too.",
+        "Optional. Captions the clip across 5 frames without touching your "
+        + "script -- useful as a quick check that the frames and the model are "
+        + "working before you write a swap.",
         () => describeFrame());
     row.appendChild(describeBtn);
 
-    const go = button("Analyze & write plan",
-        "Draft one hop. Your cards do not change until you press Accept.",
+    const go = button("Analyze & write swap",
+        "Draft one standalone swap contract. Nothing is committed until you press Accept.",
         () => run());
     row.appendChild(go);
     body.appendChild(row);
@@ -230,17 +267,44 @@ export function createVideoSwap(node, { onWritten } = {}) {
     const draftList = el("div", "h3e-writer-draft-list");
     draft.appendChild(draftList);
     const draftBtns = el("div", "h3e-writer-row");
-    const acceptBtn = button("Accept",
-        "Put this one hop on SCRIPT and the caption on the clip. "
-        + "Does not change REFERENCES.",
+    const acceptBtn = button("Accept to SWAP",
+        "Commit this six-field contract to swap_script and swap_refs. "
+        + "SCRIPT (your chain) and REFERENCES stay untouched.",
         () => acceptDraft());
     const discardBtn = button("Discard",
-        "Throw the draft away. The cards stay as they are.",
+        "Throw the draft away.",
         () => discardDraft());
     draftBtns.appendChild(acceptBtn);
     draftBtns.appendChild(discardBtn);
     draft.appendChild(draftBtns);
     body.appendChild(draft);
+
+    // Live view of the active `swap_script` + `swap_refs` on the node, with a
+    // one-click Clear button so returning from a swap to a multi-shot chain
+    // takes one click and loses nothing.
+    const activeBox = el("div", "h3e-writer-draft");
+    activeBox.style.display = "none";
+    const activeHead = el("div", "h3e-writer-row");
+    const activeMeta = el("span", "h3e-draft-meta", "");
+    const clearSwapBtn = button("Clear swap (use SCRIPT chain)",
+        "Empty swap_script and swap_refs so the node renders your SCRIPT chain again.",
+        () => clearActiveSwap());
+    activeHead.appendChild(activeMeta);
+    activeHead.appendChild(clearSwapBtn);
+    activeBox.appendChild(activeHead);
+    const activeText = el("textarea", "h3e-json");
+    activeText.rows = 8;
+    activeText.placeholder = "Active six-field swap contract (swap_script)";
+    activeText.addEventListener("change", () => {
+        if (wSwapScript) commit(node, wSwapScript, activeText.value);
+        syncActiveBox();
+        onWritten?.(null, {
+            swap_script: activeText.value,
+            swap_refs: String(wSwapRefs?.value || ""),
+        });
+    });
+    activeBox.appendChild(activeText);
+    body.appendChild(activeBox);
 
     let busy = false;
     let pending = null;
@@ -258,6 +322,33 @@ export function createVideoSwap(node, { onWritten } = {}) {
         describeBtn.disabled = go.disabled = acceptBtn.disabled = on;
     }
 
+    function syncActiveBox() {
+        const curScript = String(wSwapScript?.value || "").trim();
+        const curRefs = String(wSwapRefs?.value || "").trim();
+        badge.textContent = curScript ? "ON" : "";
+        if (!curScript) {
+            activeBox.style.display = "none";
+            return;
+        }
+        activeBox.style.display = "";
+        if (document.activeElement !== activeText) {
+            activeText.value = curScript;
+        }
+        const platesLabel = curRefs === "[]"
+            ? "(none -- keep_person)"
+            : (curRefs ? curRefs.split(",").map((t) => "@" + t.trim()).join(" ")
+                : "(register default)");
+        activeMeta.textContent = `ACTIVE SWAP \u00b7 plates: ${platesLabel} \u00b7 overrides SCRIPT while set`;
+    }
+
+    function clearActiveSwap() {
+        if (wSwapScript) commit(node, wSwapScript, "");
+        if (wSwapRefs) commit(node, wSwapRefs, "");
+        onWritten?.(null, { swap_script: "", swap_refs: "" });
+        syncActiveBox();
+        say("Cleared swap_script. The node will render SCRIPT again.", "hint");
+    }
+
     function oneShot(shotJson) {
         let obj;
         try {
@@ -270,32 +361,55 @@ export function createVideoSwap(node, { onWritten } = {}) {
         return JSON.stringify({ shots: [shots[0]] }, null, 2);
     }
 
-    function showDraft(shotJson, videoDesc) {
+    function deriveSwapWidgets(oneJson, explicitScript, explicitRefs) {
+        let shot = {};
+        try { shot = JSON.parse(oneJson).shots[0] || {}; } catch (err) { /* */ }
+        const scriptText = String(explicitScript || shot.beat || "").trim();
+        let refsText = "";
+        if (explicitRefs !== undefined && explicitRefs !== null && String(explicitRefs) !== "") {
+            refsText = String(explicitRefs).trim();
+        } else if (Array.isArray(shot.refs)) {
+            const cleaned = shot.refs
+                .map((t) => String(t || "").replace(/^@/, "").trim())
+                .filter(Boolean);
+            refsText = cleaned.length ? cleaned.join(", ") : "[]";
+        }
+        return { shot, scriptText, refsText };
+    }
+
+    function showDraft(shotJson, videoDesc, explicitScript, explicitRefs) {
         const one = oneShot(shotJson);
         if (!one) {
             say("SWAP writes one hop. This draft had "
                 + "a different number of shots and was not kept.", "error");
             return;
         }
-        pending = { shot: one, videoDesc: videoDesc || "" };
+        const { shot, scriptText, refsText } = deriveSwapWidgets(
+            one, explicitScript, explicitRefs,
+        );
+        pending = {
+            shot: one,
+            swapScript: scriptText,
+            swapRefs: refsText,
+            videoDesc: videoDesc || "",
+        };
         draftList.textContent = "";
-        // In full, the way WRITE's draft is: Accept writes all of it, so a
-        // preview cut at a character count read as a plan the model had not
-        // finished. The list scrolls instead.
-        let shot = {};
-        try { shot = JSON.parse(one).shots[0] || {}; } catch (err) { /* */ }
-        draftList.appendChild(el("div", "h3e-writer-draft-line",
-            shot.beat || "(one hop)"));
+        // Show the FULL six-field contract before Accept so the user can verify
+        // every header and subject definition before committing it.
+        draftList.appendChild(el("div", "h3e-draft-beat",
+            scriptText || shot.beat || "(empty contract)"));
         const dirs = Object.entries(shot.directives || {})
             .map(([k, v]) => `${k}=${v}`);
-        if (Array.isArray(shot.refs)) {
-            dirs.push("refs " + (shot.refs.map((t) => "@" + t).join(" ") || "(none)"));
+        if (refsText === "[]") {
+            dirs.push("plates (none)");
+        } else if (refsText) {
+            dirs.push("plates " + refsText.split(",").map((t) => "@" + t.trim()).join(" "));
         }
         if (dirs.length) {
-            draftList.appendChild(el("div", "h3e-writer-draft-line", dirs.join(" · ")));
+            draftList.appendChild(el("div", "h3e-draft-meta", dirs.join(" \u00b7 ")));
         }
         if (pending.videoDesc) {
-            draftList.appendChild(el("div", "h3e-writer-draft-line",
+            draftList.appendChild(el("div", "h3e-draft-meta",
                 "clip: " + pending.videoDesc));
         }
         draft.style.display = "";
@@ -309,31 +423,23 @@ export function createVideoSwap(node, { onWritten } = {}) {
 
     function acceptDraft() {
         if (!pending) return;
-        const { shot, videoDesc } = pending;
+        const { shot, swapScript, swapRefs, videoDesc } = pending;
         const one = oneShot(shot);
-        if (!one) {
-            say("Accept refused: SWAP writes exactly one shot.", "error");
+        if (!one || !swapScript) {
+            say("Accept refused: SWAP writes exactly one valid six-field contract.", "error");
             return;
         }
-        const nShots = widgetByName(node, "shot_plan")?.value
-            ? (() => {
-                try {
-                    const cur = JSON.parse(widgetByName(node, "shot_plan").value);
-                    return (cur.shots || []).length;
-                } catch (err) { return 0; }
-            })()
-            : 0;
-        if (nShots > 1) {
-            say("SCRIPT already has " + nShots + " shots. SWAP replaces the "
-                + "script with one hop. Discard or save that chain first.",
-                "error");
-            return;
-        }
+        if (wSwapScript) commit(node, wSwapScript, swapScript);
+        if (wSwapRefs) commit(node, wSwapRefs, swapRefs);
         discardDraft();
         onWritten?.(one, {
+            swap_script: swapScript,
+            swap_refs: swapRefs,
             reference_video_desc: videoDesc || "",
         });
-        say("Accepted. One hop on SCRIPT. REFERENCES unchanged.", "hint");
+        syncActiveBox();
+        say("Accepted to SWAP (1 hop). SCRIPT and REFERENCES are untouched; "
+            + "press Clear swap whenever you want to return to your chain.", "hint");
     }
 
     async function describeFrame() {
@@ -341,7 +447,7 @@ export function createVideoSwap(node, { onWritten } = {}) {
         const video = String(wVideo?.value || "");
         if (!video) { say("Pick a reference clip first.", "error"); return; }
         setBusy(true);
-        say("Captioning the frame at MEDIA's IN point…", "hint");
+        say("Captioning 5 frames across MEDIA's trim window\u2026", "hint");
         try {
             const r = await fetch(SWAP_DESCRIBE_URL, {
                 method: "POST",
@@ -359,19 +465,10 @@ export function createVideoSwap(node, { onWritten } = {}) {
             }
             const desc = j.description || "";
             commit(node, wDesc, desc);
-            // Show it HERE. It is written to reference_video_desc, which the
-            // MEDIA tab renders as the "describe it" row under the clip's trim
-            // bar -- a different pane, below the fold, and nowhere near the
-            // button that produced it. "Written" with nothing to read is
-            // indistinguishable from "silently did nothing".
             draftList.textContent = "";
             if (desc) {
                 draftList.appendChild(el("div", "h3e-writer-draft-line", desc));
             }
-            // The caption reaches the encoder as what <Video 1> IS, so one
-            // that describes the PERSON contradicts a swap additively -- and
-            // the only other signal is a render that came back wrong. The
-            // system prompt forbids it; this says when the model did it anyway.
             const leaked = j.identity_words || [];
             if (!desc) {
                 say("The model returned an empty description.", "error");
@@ -396,25 +493,29 @@ export function createVideoSwap(node, { onWritten } = {}) {
         if (busy) return;
         const video = String(wVideo?.value || "");
         if (!video) { say("Pick a reference clip first.", "error"); return; }
-        // keep_person swaps nobody, so it needs no identity. The server
-        // applies the same rule; this one exists so the user is told before a
-        // round trip -- and the tag is dropped rather than merely ignored,
-        // because the picker is GREYED, not cleared, so a tag chosen under
-        // another mode is still sitting in it. Sending it made the route's own
-        // `identity=@...` log line describe a swap that was not happening.
         const needsIdentity = modeSel.value !== "keep_person";
-        const tag = needsIdentity ? identSel.value : "";
-        const identity = tag
-            ? railRows().find(
-                (r) => String(r.tag || "").replace(/^@/, "") === tag)
-            : null;
-        if (needsIdentity && !identity) {
-            say("Pick an identity picture first.", "error");
+        const rows = railRows();
+        const activeTags = needsIdentity
+            ? (selectedTags.length
+                ? selectedTags.slice()
+                : (identSel.value ? [String(identSel.value).replace(/^@/, "")] : []))
+            : [];
+        const identities = activeTags
+            .map((tag) => rows.find((r) => String(r.tag || "").replace(/^@/, "") === tag))
+            .filter(Boolean)
+            .map((r) => ({
+                tag: String(r.tag).replace(/^@/, ""),
+                file: String(r.file || "").trim(),
+            }));
+        if (needsIdentity && !identities.length) {
+            say("Pick at least one identity picture from the rail first.", "error");
             return;
         }
 
         setBusy(true);
-        say("Writing one hop…", "hint");
+        say(identities.length > 1
+            ? `Writing ${identities.length}-person swap contract (L\u2192R)\u2026`
+            : "Writing one-hop swap contract\u2026", "hint");
         try {
             const r = await fetch(SWAP_PLAN_URL, {
                 method: "POST",
@@ -425,33 +526,34 @@ export function createVideoSwap(node, { onWritten } = {}) {
                     video,
                     video_start_s: Number(wStart?.value) || 0,
                     video_end_s: Number(wEnd?.value) || 0,
-                    identity: identity ? {
-                        tag: String(identity.tag).replace(/^@/, ""),
-                        file: String(identity.file || "").trim(),
-                    } : {},
-                    rail_tags: railRows().map(
-                        (r) => String(r.tag || "").replace(/^@/, "")),
+                    identity: identities[0] || {},
+                    identities,
+                    rail_tags: rows.map(
+                        (rowItem) => String(rowItem.tag || "").replace(/^@/, "")),
+                    rail_rows: rows.map((rowItem) => ({
+                        tag: String(rowItem.tag || "").replace(/^@/, ""),
+                        file: String(rowItem.file || "").trim(),
+                    })),
                     mode: modeSel.value,
                     background: bgSel.value,
-                    // Only meaningful under Background: from a picture. Sent
-                    // regardless so the server decides, rather than the two
-                    // sides disagreeing about when a field applies.
                     background_tag: bgTagSel.value || "",
-                    wardrobe_tag: wardSel.value || "",
+                    wardrobe_text: String(wardInput.value || "").trim(),
                 }),
             });
             const j = await r.json();
-            if (j.shot_plan) showDraft(j.shot_plan, j.video_desc || "");
+            if (j.shot_plan) {
+                showDraft(j.shot_plan, j.video_desc || "", j.swap_script, j.swap_refs);
+            }
             if (!j.ok) {
-                const errs = (j.errors || []).map((e) => `• ${e}`).join("\n");
+                const errs = (j.errors || []).map((e) => `\u2022 ${e}`).join("\n");
                 say(errs || j.error || "SWAP failed", "error");
                 return;
             }
-            const warn = (j.warnings || []).map((w) => `• ${w}`).join("\n");
-            say("Draft of one hop in " + (j.attempts || "?")
-                + " attempt(s). Accept to put it on SCRIPT."
+            const warn = (j.warnings || []).map((w) => `\u2022 ${w}`).join("\n");
+            say("Drafted six-field swap contract in " + (j.attempts || "?")
+                + " attempt(s). Review the full script below and press Accept to SWAP."
                 + (warn ? "\n\n" + warn : ""),
-                warn ? "hint" : "hint");
+                "hint");
         } catch (e) {
             say(String(e), "error");
         } finally {
@@ -462,8 +564,10 @@ export function createVideoSwap(node, { onWritten } = {}) {
     function render() {
         fillIdentity();
         pick.render?.();
+        syncActiveBox();
     }
 
     fillIdentity();
+    syncActiveBox();
     return { root, render, destroy() { pick.destroy?.(); } };
 }

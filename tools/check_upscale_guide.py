@@ -235,7 +235,7 @@ def orchestration_checks(tu):
     lat = {"samples": nt.NestedTensor((torch.randn(1, 24, tokens, 48, 84),
                                        torch.randn(1, 32, 2, 400)))}
     try:
-        tu.recipe_sigmas = lambda model, denoise=0.2: torch.tensor([0.57, 0.0])
+        tu.recipe_sigmas = lambda model, denoise=0.2, *a, **kw: torch.tensor([0.57, 0.0])
         out = tu.upsample(None, lambda f0, f1: [["HOP", {}]], lat, None, "x", 2.0,
                           0.1, guide=guide)
         v = out["samples"].tensors[0]
@@ -259,7 +259,7 @@ def orchestration_checks(tu):
         ck("one guide decode per chunk", len(decoded) == len(tu.chunks(tokens)),
            f"{decoded}")
         decoded.clear()
-        tu.recipe_sigmas = lambda model, denoise=0.2: None
+        tu.recipe_sigmas = lambda model, denoise=0.2, *a, **kw: None
         tu.upsample(None, cap, lat, None, "x", 2.0, 0.0, guide=guide)
         ck("denoise 0: no guide decode at all", not decoded)
     finally:
@@ -282,8 +282,10 @@ def chain_wiring_checks():
     opt = src[src.index('"optional": {'):src.index('"hidden": {')]
     keys = [ln.strip().split('"')[1] for ln in opt.splitlines()
             if ln.startswith('                "') and '": (' in ln]
-    ck("upsample_dit is the last optional input", keys and keys[-1] == "upsample_dit",
-       keys[-1] if keys else "")
+    ck("upsample_dit is declared after upsample_tile_tokens",
+       "upsample_dit" in keys and "upsample_tile_tokens" in keys
+       and keys.index("upsample_dit") == keys.index("upsample_tile_tokens") + 1,
+       keys[-5:] if keys else "")
     ck("upsample_dit is a MODEL socket", '"upsample_dit": ("MODEL"' in opt)
     at = src.index("if upsample_dit is not None:\n                # Its own model")
     ck("upsample_dit is sigma-shifted before the re-draw uses it",

@@ -126,9 +126,7 @@ export function hideWidget(w) {
         serialize: w.options?.serialize !== false,
     });
     w.computeSize = () => [0, -4];
-    if (typeof w.computeLayoutSize === "function") {
-        w.computeLayoutSize = () => ({ minHeight: 0, maxHeight: 0, minWidth: 0 });
-    }
+    w.computeLayoutSize = () => ({ minHeight: 0, maxHeight: 0, minWidth: 0, maxWidth: 0 });
     w.draw = () => {};
 
     // A multiline STRING widget is a real DOM textarea. Collapsing only the
@@ -151,6 +149,7 @@ export function showWidget(w) {
     if (saved.computeSize) w.computeSize = saved.computeSize;
     else delete w.computeSize;
     if (saved.computeLayoutSize) w.computeLayoutSize = saved.computeLayoutSize;
+    else delete w.computeLayoutSize;
     if (saved.draw) w.draw = saved.draw;
     else delete w.draw;
     for (const el of widgetElements(w)) {
@@ -273,8 +272,8 @@ export function installHeightGuard(node, domWidget, {
     // note above is about -- that loop needs every pass to find one more pixel
     // than the last, and a deadband makes "one more pixel" unreachable.
     const TOLERANCE = 3;
-    const nodeHeight = () => Math.max(minHeight, +(node.size?.[1]) || minHeight);
-    const nodeWidth = () => Math.max(minWidth, +(node.size?.[0]) || minWidth);
+    const nodeHeight = () => Math.max(minHeight, +(node.size?.[1] ?? node.height) || minHeight);
+    const nodeWidth = () => Math.max(minWidth, +(node.size?.[0] ?? node.width) || minWidth);
 
     // The pin. Once set, nothing the panel does changes the height: the node
     // keeps whatever size it has until the pin is lifted. Stored on the node,
@@ -397,24 +396,17 @@ export function installHeightGuard(node, domWidget, {
         //   _arrangeWidgets()         calls computeSize(), no argument.
         //     The real layout pass. Report the live height.
         domWidget.computeSize = (width) => [
-            Math.max(minWidth, +(node.size?.[0]) || minWidth),
+            Math.max(minWidth, +(node.size?.[0] ?? node.width) || minWidth),
             measuring ? 0 : (width === undefined ? guard.panelHeight() : minHeight),
         ];
-        if (typeof domWidget.computeLayoutSize === "function") {
-            // TRACK, DO NOT FREEZE. Reporting a constant `minWidth` here is
-            // what collapses the node: the layout pass re-reads it on every
-            // recompute -- selecting the node is enough -- and faithfully
-            // re-declares the node at its stated minimum, so a wide node
-            // becomes a 560px node on the first click and stays there.
-            // Safe against feedback: max() against a constant is a fixpoint,
-            // not an accumulator like the height chain, and width never feeds
-            // height.
-            domWidget.computeLayoutSize = () => ({
-                minHeight: measuring ? 0 : guard.panelHeight(),
-                maxHeight: measuring ? 0 : guard.panelHeight(),
-                minWidth: Math.max(minWidth, +(node.size?.[0]) || minWidth),
-            });
-        }
+        // TRACK, DO NOT FREEZE. Defined unconditionally so both Classic
+        // LiteGraph (`computeSize`) and Vue Nodes 2.0 (`computeLayoutSize`)
+        // size the panel identically.
+        domWidget.computeLayoutSize = () => ({
+            minHeight: measuring ? 0 : guard.panelHeight(),
+            maxHeight: measuring ? 0 : guard.panelHeight(),
+            minWidth: Math.max(minWidth, +(node.size?.[0] ?? node.width) || minWidth),
+        });
         // The other half of the collapse. ComfyUI's DOM-widget position
         // updater computes `size = [(widget.width ?? node.width) - margin*2, ...]`.
         // Once anything writes a stale number onto widget.width, node.width is
@@ -592,7 +584,7 @@ export function isolateEvents(root) {
         }
         const canvasEl = document.querySelector("#graph-canvas")
             || app?.canvas?.canvas;
-        if (!canvasEl) return;
+        if (!canvasEl || canvasEl.contains?.(root)) return;
         e.preventDefault();
         e.stopPropagation();
         canvasEl.dispatchEvent(new WheelEvent(e.type, e));

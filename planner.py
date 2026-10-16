@@ -145,7 +145,11 @@ _SOUND = re.compile(
     r"tick\w*|thud\w*|scuff\w*|squeak\w*|jingl\w*|shuffl\w*|breath\w*|"
     r"sigh\w*|ring\w*|grind\w*|whistl\w*|siren|bell|chime\w*|static|noise|"
     r"music|rumbl\w*|hiss\w*|splash\w*|crunch\w*|tap\w*|knock\w*|hoot\w*|"
-    r"clang\w*|scrap\w*|whoosh\w*|purr\w*|bark\w*|applause|laughter)\b",
+    r"clang\w*|scrap\w*|whoosh\w*|purr\w*|bark\w*|applause|laughter|"
+    r"sizzl\w*|crackl\w*|drip\w*|pour\w*|bubbl\w*|boil\w*|fry\w*|chop\w*|"
+    r"slic\w*|thump\w*|bass|crowd|echo\w*|chirp\w*|cicada\w*|cricket\w*|"
+    r"roar\w*|thunder|gasp\w*|groan\w*|moan\w*|pant\w*|chuckle\w*|giggle\w*|"
+    r"gravel|refrigerator|fridge|ambience|ambient|piano|drum\w*|synth\w*|waves?|surf)\b",
     re.I)
 
 # How much action may precede the first spoken line before those seconds are
@@ -917,9 +921,63 @@ MV_RULES = "\n".join([
     "Nobody stands posed.",
     "3. Every hop has an open, a mid-hop change and a definite end move, and "
     "uses the top of its word budget on action: a thin beat finishes early and "
-    "idles.",
-    "4. The overall_soundscape is the song itself: name the music and the room "
+    "idles. Match energy to the section: `intro` builds atmosphere with a slow "
+    "camera move; `verse` focuses on the lead performer's rhythm and movement; "
+    "`chorus` and `drop` hit peak physical energy with dynamic camera motion "
+    "(`orbit`, `push_in`, `handheld`); `bridge` / `breakdown` shifts framing "
+    "or pace; `outro` lands and settles.",
+    "4. `R` hops are bar-aligned cuts (`join: hard_cut` or `match_cut` on hop 2+); "
+    "`C` hops continue the shot before them (`join: continuous`).",
+    "5. The overall_soundscape is the song itself: name the music and the room "
     "(the bass, the crowd), never a voice saying words.",
+])
+
+
+def _format_rail_rows(pinned):
+    """Format pinned rail rows with all user-configured metadata (`subject`,
+    `retention`, `voice`, `source`, `desc`) so the writer can infer each
+    reference's role even before or without inspecting vision pixels."""
+    rail = []
+    for p in pinned or []:
+        if not isinstance(p, dict):
+            continue
+        bit = f"- @{p.get('tag')}  file={p.get('file')}"
+        if p.get("subject") is not None:
+            bit += f"  subject={p['subject']}"
+        if p.get("retention"):
+            bit += f"  retention={p['retention']}"
+        if p.get("source") == "refmod":
+            bit += "  source=refmod"
+        if p.get("voice"):
+            bit += f"  voice={p['voice']}"
+        desc = str(p.get("desc") or "").strip()
+        if desc:
+            bit += f"  desc={json.dumps(desc)}"
+        rail.append(bit)
+    return rail
+
+
+INTENT_INFERENCE_GUIDE = "\n".join([
+    "How to read the user's intent and references:",
+    "- Infer the cast and setting from the references: every person on the rail "
+    "gets a distinct `subject` number (1, 2, ...), a `fully_preserved` likeness "
+    "plate scheduled across every hop they appear in (`shots: [1..N]`), and a "
+    "`subjects.N` entry (`name`, `locked` for face/hair/build, `context` for "
+    "wardrobe colors and garments ONLY -- never a pose or a room). Every place "
+    "or prop plate gets `retention: \"reference\"` and no `subject`.",
+    "- If two plates show the same person, the portrait/head shot is the likeness "
+    "plate (`fully_preserved`, `shots: [1..N]`) and the full-body outfit shot is "
+    "the wardrobe plate (`partially_copy`, `shots: [1]`, with the outfit named "
+    "in `subjects.N.context`).",
+    "- If multiple place plates are present, structure the hops as a journey "
+    "between them: arrive at the boundary at the end of hop K and open hop K+1 "
+    "in the new place with `join: match_cut` or `hard_cut` (unless hand-tied).",
+    "- Match the user's brief: if the brief is short or high-level, use the "
+    "visible props, architecture, lighting and wardrobe in the reference stills "
+    "to build a concrete physical through-line across all hops (Hop 1 establishes "
+    "character, light and space; middle hops develop the action or dialogue; the "
+    "final hop lands on `tail: settle` or `hold`). If the brief gives specific "
+    "dialogue lines or actions, keep the user's exact words and staging.",
 ])
 
 
@@ -990,6 +1048,7 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech="",
         lines += ["", hand_tie_rules(duration)]
     if mv:
         lines += ["", MV_RULES]
+    lines += ["", INTENT_INFERENCE_GUIDE]
     pinned = [p for p in (pinned or []) if isinstance(p, dict)]
     if pinned:
         lines += ["",
@@ -1019,12 +1078,7 @@ def build_user_turn(brief, hops, files, pinned=None, duration=None, pin_mech="",
         # Tags and filenames are typed by a person and read off disk. They are
         # names to copy, never sentences to obey, so they go inside a fence
         # like the brief does.
-        rail = []
-        for p in pinned:
-            bit = f"- @{p.get('tag')}  file={p.get('file')}"
-            if p.get("subject") is not None:
-                bit += f"  subject={p['subject']}"
-            rail.append(bit)
+        rail = _format_rail_rows(pinned)
         lines.append(fence("\n".join(rail), "rail"))
         lines += ["",
                   "Stills of those rows are attached below, labelled with "
@@ -1060,11 +1114,31 @@ def attach_images(text, images):
 
 
 def _parse_obj(text):
-    try:
-        obj = json.loads(text or "")
-    except ValueError:
+    raw = str(text or "").strip()
+    if not raw:
         return None
-    return obj if isinstance(obj, dict) else None
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj
+    except ValueError:
+        pass
+    for b in _FENCE.findall(raw):
+        try:
+            obj = json.loads(b.strip())
+            if isinstance(obj, dict):
+                return obj
+        except ValueError:
+            continue
+    a, b = raw.find("{"), raw.rfind("}")
+    if 0 <= a < b:
+        try:
+            obj = json.loads(raw[a:b + 1])
+            if isinstance(obj, dict):
+                return obj
+        except ValueError:
+            pass
+    return None
 
 
 def _is_subjects_patch(ref_text):
@@ -1593,6 +1667,24 @@ def proposal_errors(obj):
     return out
 
 
+def _normalise_proposal_obj(obj):
+    """Unwrap `{"proposal": ...}` or coerce `shots: 3` -> `{"count": 3}`."""
+    if not isinstance(obj, dict):
+        return None
+    if isinstance(obj.get("proposal"), dict) and "one_line" not in obj:
+        obj = dict(obj["proposal"])
+    else:
+        obj = dict(obj)
+    sh = obj.get("shots")
+    if isinstance(sh, int) and sh > 0:
+        obj["shots"] = {"count": sh}
+    elif isinstance(sh, str) and sh.strip().isdigit():
+        obj["shots"] = {"count": int(sh.strip())}
+    elif isinstance(sh, list) and sh:
+        obj["shots"] = {"count": len(sh)}
+    return obj
+
+
 async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
                         images=None, duration=None, thread=None, attempts=2,
                         pin_mech="", on_step=None, mv=False):
@@ -1614,7 +1706,8 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
                    "scene_brief"),
              "",
              "Do not write the plan yet. Describe the film first, so the "
-             "person can agree with it before any beat exists."]
+             "person can agree with it before any beat exists.",
+             f"Target hop count: {int(hops or 3)} hop(s)."]
     if duration:
         lines.append(f"Every hop will be {duration}.")
     if pin_mech == "hand_tie":
@@ -1639,12 +1732,7 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
                   "you took it to be -- a person, a place, a garment plate. "
                   "Do not invent a picture that is not here, and do not "
                   "silently drop one."]
-        rail = []
-        for p in pinned:
-            bit = f"- @{p.get('tag')}  file={p.get('file')}"
-            if p.get("subject") is not None:
-                bit += f"  subject={p['subject']}"
-            rail.append(bit)
+        rail = _format_rail_rows(pinned)
         lines.append(fence("\n".join(rail), "rail"))
         lines.append("Stills of those rows are attached below, labelled with "
                      "their @tag. Look at them.")
@@ -1669,6 +1757,20 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
         # but the FILM has already been pitched as a spoken one. Same reason
         # `pin_mech` reaches this stage rather than only `develop`.
         lines += ["", MV_RULES]
+    lines += [
+        "",
+        "IMPORTANT: For this proposal turn, do NOT emit `shot_plan` or "
+        "`ref_plan`. Reply with ONLY ONE JSON object using these exact keys:",
+        '{\n'
+        '  "one_line": "One sentence pitching the film.",\n'
+        '  "look": "Camera movement, lighting, and visual atmosphere.",\n'
+        '  "frames": "Who is in frame and how the staging moves across the hops.",\n'
+        '  "refs": [{"tag": "tag_name", "read_as": "how this picture is used"}],\n'
+        f'  "shots": {{"count": {int(hops or 3)}, "arithmetic": "{int(hops or 3)} hops of {duration or "8 s"}: what each hop covers"}},\n'
+        f'  "sections": [{{"from": 1, "to": {int(hops or 3)}, "why": "how the hops group"}}],\n'
+        '  "note": "One sentence on pacing or joins."\n'
+        '}',
+    ]
     messages = build_thread(system_prompt(), thread, instruction="\n".join(lines),
                             images=images)
     last = []
@@ -1676,7 +1778,7 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
         if on_step:
             on_step({"attempt": attempt, "of": int(attempts), "errors": last})
         reply = await complete_fn(messages, schema=sch)
-        obj = _parse_obj(reply)
+        obj = _normalise_proposal_obj(_parse_obj(reply))
         last = proposal_errors(obj)
         if not last:
             obj = {k: v for k, v in obj.items() if v not in (None, "", [], {})}
@@ -1691,8 +1793,12 @@ async def write_propose(brief, *, complete_fn, hops=3, files=None, pinned=None,
         messages.append({"role": "user", "content":
                          "That proposal was missing: "
                          + "; ".join(last)
-                         + ". Return the same proposal with those filled in. "
-                           "Change nothing else."})
+                         + ". Return ONLY one JSON object with keys "
+                           "`one_line` (string), `look` (string), `frames` "
+                           "(string), `refs` (array), `shots` "
+                           f'({{"count": {int(hops or 3)}, "arithmetic": "..."}}), '
+                           "and `note` (string). Do NOT emit `shot_plan` or "
+                           "`ref_plan`. Change nothing else."})
     return {"ok": False, "proposal": None, "note": "", "errors": last,
             "warnings": [], "attempts": int(attempts)}
 
@@ -1761,12 +1867,19 @@ async def write_edit(message, shot_text, ref_text, *, complete_fn, hops=None,
         + fence(str(message or "").strip() or "Nothing was asked for.", "edit_request")
         + "\n\nThe plan as it stands:\n"
         + fence(listing, "shot_index")
-        + "\n\nReturn ONLY the shots you changed, as edits: a list of objects "
-          "with the shot_id exactly as it appears above and ONLY the fields you "
-          "change on it. A field you leave out stays exactly as it is. To remove "
-          "a field, list its name in `clear` (for example \"clear\": [\"moment\"]). "
+        + "\n\nReturn ONLY the shots you changed, as a single JSON object with "
+          "key `edits`: a list of objects with `shot_id` exactly as it appears "
+          "above and ONLY the fields you change on it (`beat`, `directives`, "
+          "etc.). A field you leave out stays exactly as it is. To remove a "
+          "field, list its name in `clear` (for example \"clear\": [\"moment\"]). "
           "Do not return shots you were not asked to change, and do not return "
-          "the whole plan."
+          "the whole plan. Example JSON reply:\n"
+          '{\n'
+          '  "edits": [\n'
+          '    {"shot_id": "s1", "beat": "Updated beat prose..."}\n'
+          '  ],\n'
+          '  "note": "Brief summary of what changed."\n'
+          '}'
         + ("\n\n" + hand_tie_rules(duration) if pin_mech == "hand_tie" else "")
         # An EDIT is how a `<d>` line gets into an MV: nobody writes the
         # dialogue, they ask for a shot to be changed and the rewrite puts a
@@ -1953,7 +2066,7 @@ def _apply_skeleton(shot_text, sk):
             "the plan has %d shot(s) and the layout has %d. The layout is the "
             "film: write exactly %d, one per line."
             % (len(shots), len(sk), len(sk))]
-    for shot, h in zip(shots, sk):
+    for idx, (shot, h) in enumerate(zip(shots, sk)):
         if not isinstance(shot, dict):
             continue
         if h.get("duration"):
@@ -1965,6 +2078,16 @@ def _apply_skeleton(shot_text, sk):
             shot["anchor"] = "restart"
         else:
             shot.pop("anchor", None)
+        dirs = shot.get("directives")
+        if isinstance(dirs, dict):
+            dirs = dict(dirs)
+            if idx == 0:
+                dirs.pop("join", None)
+            elif h["kind"] == "R" and dirs.get("join") == "continuous":
+                dirs["join"] = "hard_cut"
+            elif h["kind"] == "C" and dirs.get("join") in ("hard_cut", "match_cut"):
+                dirs["join"] = "continuous"
+            shot["directives"] = dirs
     return json.dumps(data, indent=2, ensure_ascii=False), []
 
 
@@ -2274,10 +2397,94 @@ _MODE_RULE = {
         "<Subject 1> keeps the movement, the camera path and the shot timing "
         "of <Video 1>.",
     "keep_person":
-        "<Subject 1> is the person in <Video 1>, kept as they are. <Video 1> "
-        "supplies the movement, the camera path, the shot timing and the "
-        "setting. Nobody is swapped.",
+        # Affirmative on purpose, and it was not the first draft. This rule
+        # used to read "kept as they are ... Nobody is swapped." Both halves
+        # fail the gate this pack now runs: "they" is a plural pronoun, which
+        # has rendered two people out of one photograph here, and "Nobody is
+        # swapped" is a negation, which at cfg 1.0 adds the thing it names.
+        # The contract itself is not negating -- what stays is stated, which
+        # is what the note above this dict has always said.
+        "<Subject 1> is the person in <Video 1>. The face, hair, skin, build "
+        "and clothing of <Subject 1> stay those of <Video 1> in every frame. "
+        "<Video 1> supplies the movement, the camera path, the shot timing and "
+        "the setting, and <Subject 1> keeps all of it.",
 }
+
+
+def _swap_positions(n):
+    """Left-to-right position labels for N performers in a clip."""
+    if n <= 1:
+        return ["in the clip"]
+    if n == 2:
+        return ["on the left", "on the right"]
+    if n == 3:
+        return ["on the left", "in the middle", "on the right"]
+    ordinals = {2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth"}
+    out = []
+    for i in range(n):
+        if i == 0:
+            out.append("on the far left")
+        elif i == n - 1:
+            out.append("on the far right")
+        elif i == n - 1 - i:
+            out.append("in the middle")
+        elif i < n - 1 - i:
+            out.append(f"{ordinals.get(i + 1, f'{i + 1}th')} from the left")
+        else:
+            out.append(f"{ordinals.get(n - i, f'{n - i}th')} from the right")
+    return out
+
+
+def _multi_mode_rule(mode, idents):
+    """Subject definitions rule when 2+ identities replace performers left to right."""
+    pos = _swap_positions(len(idents))
+    lines = []
+    for i, tag in enumerate(idents, 1):
+        where = pos[i - 1]
+        if mode == "head_swap":
+            lines.append(
+                f"<Subject {i}> is the person {where} in <Video 1>. The face, "
+                f"hair and skin tone of <Subject {i}> come from @{tag} "
+                f"(<Picture {i}>). The build, posture, hands, and every "
+                f"garment and worn accessory of <Subject {i}> are <Video 1>'s "
+                f"own, and the neck and jaw meet <Video 1>'s collar. "
+                f"<Subject {i}> keeps the movement, the camera path and the "
+                f"shot timing of that performer in <Video 1>.")
+        elif mode == "face_only":
+            lines.append(
+                f"<Subject {i}> is the person {where} in <Video 1>. The "
+                f"facial features of <Subject {i}> come from @{tag} "
+                f"(<Picture {i}>). The hair, ears, expression range, build "
+                f"and every garment of <Subject {i}> are <Video 1>'s own. "
+                f"<Subject {i}> keeps the movement, the camera path and the "
+                f"shot timing of that performer in <Video 1>.")
+        else:
+            lines.append(
+                f"<Subject {i}> is the person {where} in <Video 1>. The face, "
+                f"build, hairstyle and wardrobe of <Subject {i}> come from "
+                f"@{tag} (<Picture {i}>). <Subject {i}> keeps the movement, "
+                f"the camera path and the shot timing of that performer in "
+                f"<Video 1>.")
+    lines.append(
+        "Each <Subject N> holds that assigned left-to-right position for the "
+        "whole clip; define every <Subject N> in subject_definitions: and act "
+        "on every <Subject N> by label in detailed_description:.")
+    return " ".join(lines)
+
+
+def _normalise_identities(identity_tag="", identities=None):
+    """Ordered, deduplicated list of stripped @tags."""
+    raw = list(identities) if identities is not None else (
+        list(identity_tag) if isinstance(identity_tag, (list, tuple))
+        else ([identity_tag] if identity_tag else [])
+    )
+    out = []
+    for item in raw:
+        t = (item.get("tag") if isinstance(item, dict) else item) or ""
+        t = str(t).lstrip("@").strip()
+        if t and t not in out:
+            out.append(t)
+    return out
 
 
 def normalise_swap_mode(mode):
@@ -2369,8 +2576,279 @@ def parse_swap_reply(raw):
     return shot_text, video_desc
 
 
-def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
-                  mode=DEFAULT_SWAP_MODE, allowed=None):
+# -- the swap's own contract, validated as a contract ------------------------
+#
+# SWAP's `beat` is not prose. It is the complete six-field H3 block, and the
+# reason is in directives.py: `compile_shot` returns a full block INTACT on
+# hop 1 and flattens it to a continuation beat on hop 2+ (`is_full_h3_prompt`,
+# then `flatten_official_continue`). Writing the contract here means the mode
+# rule survives to the encoder instead of being compiled through prose.
+#
+# It also means the validator has to check a CONTRACT, and the gate has to fail
+# CLOSED. `is_full_h3_prompt` is a substring test -- it returns True only if
+# `subject_definitions:` (or the legacy header) appears anywhere in the text.
+# When a model returns a block that misses that header, two things happen
+# silently, and both break the swap:
+#
+#   * h3_ref_chain.py:4741 prepends the register's own `subject_prose` to the
+#     hop, which is the original person defined in words, on top of the swap;
+#   * compile_shot falls through to the prose path and injects `directive_prose
+#     (dirs, axes=("tail",))` into detailed_description.
+#
+# Neither raises. The symptom is only a render that came back wrong. For the
+# chain that is a bad afternoon; for SWAP, whose entire value is a
+# hand-tuned prompt, it is the failure mode the tab exists to prevent. So
+# these are errors, not warnings, and the message names the missing header.
+
+SWAP_REQUIRED_FIELDS = (
+    "subject_definitions:", "summary:", "detailed_description:",
+    "overall_soundscape:", "non_diegetic_music:",
+)
+
+# The task type opens `summary:` and is not decoration. `[video editing]` plus
+# Add Guide copies the original performer back onto the render (measured on the
+# same swap, different packs, 2026-10-13); `[keyframe completion]` hard-cuts a
+# hop onto a separate shot (this pack's bridge lab, 2026-10-08). Only the first
+# one has ever swapped anything.
+SWAP_TASK_PREFIX = "video generation + reference"
+SWAP_TASK_KILLERS = ("video editing", "keyframe completion")
+
+
+# The negation lint has to survive its own instruct. `SWAP_PROMPT.md` tells the
+# model to close on "stable in every frame" and "no texture crawling", and
+# `_SWAP_NEGATION` matches every one of those words -- so the first version of
+# this gate rejected the exact sentence it asks for, which is worse than having
+# no gate at all, because the repair loop would fight the instruct forever.
+#
+# The distinction is the one the instruct draws: these name the LOOK TO HOLD,
+# not the FAULT TO AVOID. "no texture crawling" asks for a surface; "no
+# texture loss" asks the encoder for loss. Strip the sanctioned shapes before
+# scanning, rather than weakening the pattern.
+# The drift clause is REQUIRED, not merely tolerated, and it is located by
+# POSITION rather than by matching its words.
+#
+# The first version of this gate scanned the whole block for negation, which
+# meant it rejected the sentence its own instruct demands ("no texture
+# crawling"), and the repair loop would have fought the instruct forever. The
+# obvious repair -- a whitelist regex of sanctioned phrases -- is worse: it is a
+# third copy of the instruct's wording, so reword the instruct and the gate
+# silently starts refusing correct output, and no fixture catches it.
+#
+# So: the drift clause is the CLOSING SENTENCE of detailed_description. We
+# require one there (positive check), and exempt that sentence from the
+# negation scan by removing it before scanning. Whatever the model writes there
+# is exempt by construction; everything it improvises is still linted.
+_DRIFT_CLAUSE = re.compile(
+    r"stable in every frame|steady in every frame|holds? steady|"
+    r"texture crawl\w*|identity drift|no flicker|prevent\w*[^.;]{0,40}"
+    r"(?:drift|flicker|crawl)", re.I)
+
+# Plural "they" has rendered two people out of one photograph on this node, so
+# that form blocks. The singular pronouns are a warning: "her clip" is a
+# perfectly correct phrase about the guide, and a gate that refuses correct
+# input teaches the user to ignore it.
+_SWAP_PLURAL = re.compile(r"\bthey\b|\bthem\b|\btheir\b|\btheirs\b", re.I)
+_SWAP_SINGULAR = re.compile(r"\b(?:he|she|him|her|his|hers)\b", re.I)
+
+
+def _last_sentence(text):
+    """The closing sentence of a field -- where the prescribed drift clause goes."""
+    parts = [p for p in re.split(r"(?<=[.!?])\s+", str(text or "").strip()) if p.strip()]
+    return parts[-1] if parts else ""
+
+
+def _swap_negations(text):
+    """Negations in the model's own prose: quotes dropped, closing clause removed."""
+    return _SWAP_NEGATION.findall(dialogue_free(str(text or "")))
+
+
+def swap_contract_errors(script, *, identities=(), mode=DEFAULT_SWAP_MODE,
+                        allowed=(), shape_only=False):
+    """What is wrong with a swap's block, in the order the model can fix it.
+
+    `identities` is the ordered tag list the tab collected; one person per tag,
+    left to right. Empty is legitimate only under keep_person.
+
+    `shape_only` is the RENDER-TIME pass. `run()` calls it before compiling a
+    `swap_script` and has no idea which identities the tab collected, so the
+    identity block is skipped and only the structure is checked. That split is
+    deliberate: the identity citations are a quality check that the writer can
+    repair, while a missing field header is the misparse that silently prepends
+    the register's own identity prose and renders the clip's person. The second
+    is the one that must never reach a sampler, and it needs no identity list
+    to detect.
+
+    Every failure here is an ERROR, not a warning. SWAP's whole value is a
+    hand-tuned prompt, and the failure it cannot survive is a render that comes
+    back quietly wrong -- so a swap that cannot be checked does not queue.
+    """
+    errors, warnings = [], []
+    text = str(script or "")
+    if not text.strip():
+        return ["the script is empty."], warnings
+
+    try:
+        from .directives import field_body, is_full_h3_prompt
+    except Exception:                                  # pragma: no cover
+        field_body = None
+        is_full_h3_prompt = None
+
+    # 1. the classifier itself, first, because everything below assumes it.
+    if is_full_h3_prompt is not None and not is_full_h3_prompt(text):
+        missing = [f for f in SWAP_REQUIRED_FIELDS if f not in text]
+        errors.append(
+            "this is not a complete H3 block, so the pack will prepend its own "
+            "identity definitions on top of it and the swap will render the "
+            "clip's own person. Missing field header(s): "
+            + (", ".join(missing) if missing else "none -- `subject_definitions:` "
+               "must appear literally, spelled exactly.")
+        )
+        return errors, warnings
+
+    missing = [f for f in SWAP_REQUIRED_FIELDS if f not in text]
+    if missing:
+        errors.append("the block is missing the field header(s) "
+                      + ", ".join(missing) + ". Spell them exactly.")
+
+    # 1b. order. `field_body` cuts each field at the next KNOWN header, so an
+    # out-of-order block yields bodies that run into each other and a summary
+    # that swallows the shot.
+    present = [f for f in SWAP_REQUIRED_FIELDS if f in text]
+    pos = [text.index(f) for f in present]
+    if pos != sorted(pos):
+        errors.append("the fields are out of order. Write them as: "
+                      + ", ".join(present) + ".")
+
+    # 2. the task type, in summary: -- the one thing that makes the swap take.
+    summary = field_body(text, "summary:") if field_body else ""
+    if summary:
+        low = summary.lower()
+        if SWAP_TASK_PREFIX not in low:
+            errors.append(
+                f"`summary:` must open with `[{SWAP_TASK_PREFIX}]`. That task "
+                "type is what makes the swap take; `[video editing]` copies the "
+                "original performer back and `[keyframe completion]` hard-cuts."
+            )
+        else:
+            bad = [t for t in SWAP_TASK_KILLERS if t in low]
+            if bad:
+                errors.append(
+                    "`summary:` also carries " + ", ".join(f"`[{t}]`" for t in bad)
+                    + ". A contract that opens with two task types is read as "
+                    "neither; keep only `[video generation + reference]`."
+                )
+
+    # 3. the shot's own shape. Cheap, and each one is a sentence the encoder
+    # follows; without them the block reads as prose and the field headers
+    # become decoration.
+    dd = field_body(text, "detailed_description:") if field_body else ""
+    if dd:
+        if "[Shot 1]" not in dd:
+            errors.append("`detailed_description:` opens with `[Shot 1] 0 to N s`.")
+        for marker in ("(VISUAL)", "(SOUND)"):
+            if marker not in dd:
+                errors.append(f"`detailed_description:` needs a {marker} line.")
+
+    # 4. the drift clause: required, closing the VISUAL run, and exempt from the
+    # negation scan. Scoped to `(VISUAL)` and not to the whole field: the
+    # field ends with the SOUND line, so scoping to the field tests the wrong
+    # sentence and refuses every correct block.
+    vis = ""
+    if dd:
+        m = re.search(r"\(VISUAL\)(.*?)(?=\(SOUND\)|$)", dd, re.S)
+        vis = (m.group(1) if m else "").strip()
+    closing = _last_sentence(vis)
+    if dd and vis and not _DRIFT_CLAUSE.search(closing):
+        errors.append(
+            "`detailed_description:` does not close its (VISUAL) run on the "
+            "drift clause. End it with one sentence about the two things that "
+            "drift: who the subject is, and the fine texture of the picture -- "
+            "`stable in every frame, with no texture crawling`. That sentence is "
+            "required, and it is the one place a negation is allowed."
+        )
+    scannable = text
+    if closing and closing.strip() and closing.strip() in text:
+        scannable = text.replace(closing.strip(), " ", 1)
+
+    # 5. one subject per person, every identity cited, every subject used.
+    wanted = [str(t).lstrip("@").strip() for t in (identities or []) if str(t).strip()]
+    if shape_only:
+        # Render-time pass: keep the structural half of this check, skip the
+        # identity half, which needs the tab's ordered tag list.
+        wanted = []
+    elif swap_mode_needs_identity(mode):
+        if not wanted:
+            errors.append(
+                "this mode swaps somebody, so the block needs an identity on "
+                "the rail to take the face from. Pick one in the tab.")
+        else:
+            defs = field_body(text, "subject_definitions:") if field_body else text
+            highest = max((int(n) for n in re.findall(r"<Subject\s*(\d+)\s*>", defs)),
+                          default=0)
+            if highest < len(wanted):
+                errors.append(
+                    f"{len(wanted)} identit(y/ies) were chosen, so the block "
+                    f"needs <Subject 1> through <Subject {len(wanted)}>. The "
+                    f"highest found is <Subject {highest}>. One subject per "
+                    "person, assigned left to right by the order the tags were "
+                    "given.")
+            for tag in wanted:
+                if not re.search(r"@" + re.escape(tag) + r"\b", text):
+                    errors.append(
+                        f"@{tag} is never cited. It is one of the identities "
+                        "being swapped in, and at cfg 1.0 nothing weighs the "
+                        "clip against it -- a generate that does not name it "
+                        "keeps the clip's person.")
+            # Declared in the definitions but never used in the shot is how a
+            # two-person swap quietly becomes a one-person one.
+            for i in range(1, len(wanted) + 1):
+                if dd and not re.search(r"<Subject\s*%d\s*>" % i, dd, re.I):
+                    errors.append(
+                        f"<Subject {i}> is defined but never appears in the shot. "
+                        "Every person you declare has to be acted on by name in "
+                        "`detailed_description:`.")
+    else:
+        # keep_person: no IDENTITY may be named. The background picture and the
+        # wardrobe plate still may be -- they are plates, not faces. Tested as
+        # `wanted AND cited` rather than `cited MINUS allowed`, so a tag the
+        # tab did not offer cannot slip through as an unknown.
+        if wanted:
+            leaked = sorted({t for t in wanted
+                             if re.search(r"@" + re.escape(t) + r"\b", text)})
+            if leaked:
+                errors.append(
+                    "this mode keeps the clip's own person and swaps nobody, so "
+                    "the block names no identity. Remove "
+                    + ", ".join("@" + t for t in leaked) + ".")
+
+    # 6. negation in the model's own prose. The closing clause is gone by now.
+    neg = _swap_negations(scannable)
+    if neg:
+        errors.append(
+            "the block says " + ", ".join(sorted({n.lower() for n in neg}))
+            + ". At cfg 1.0 a negation ADDS the thing it names. Say what is "
+            "there instead. The one place a negation is allowed is the closing "
+            "drift clause, which the gate checks for by position."
+        )
+
+    # 7. pronouns. Plural blocks, singular warns -- "her clip" is correct prose.
+    body = dialogue_free(scannable)
+    if _SWAP_PLURAL.search(body):
+        errors.append(
+            "the block says they/them/their. A plural pronoun has rendered TWO "
+            "people out of one photograph on this node. Use `<Subject 1>` or the "
+            "identity's @tag for the person."
+        )
+    sing = sorted({n.lower() for n in _SWAP_SINGULAR.findall(body)})
+    if sing:
+        warnings.append(
+            "the block says " + ", ".join(sing) + ". `<Subject N>` and the "
+            "@tag are the handles; a pronoun gives the encoder nothing to bind.")
+    return errors, warnings
+
+
+def validate_swap(shot_text, *, rail_tags, identity_tag="", duration=None,
+                  mode=DEFAULT_SWAP_MODE, allowed=None, identities=None):
     """SWAP policy: one shot, tags already on the rail, no register document.
 
     Errors go back to the model. This is not `validate()`: that function
@@ -2393,11 +2871,13 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
     # to require in refs. Blanking it here rather than branching three times
     # below keeps the rules that DO apply -- one shot, tags on the rail -- in
     # one place.
-    ident = ("" if not swap_mode_needs_identity(mode)
-             else str(identity_tag or "").lstrip("@").strip())
+    _ids = (_normalise_identities(identity_tag, identities)
+            if swap_mode_needs_identity(mode) else [])
+    ident = _ids[0] if _ids else ""
     known = [str(t).lstrip("@").strip() for t in (rail_tags or []) if str(t).strip()]
-    if ident and ident not in known:
-        known = [ident] + known
+    for t in reversed(_ids):
+        if t and t not in known:
+            known = [t] + known
     rail = [{"tag": t, "file": t + ".png"} for t in known]
     try:
         _plan.validate_shot_refs(shots, rail)
@@ -2405,6 +2885,13 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
         errors.append(_clean(exc))
 
     beat = shots[0].get("beat") or ""
+
+    # The contract gate, before anything reads the beat as prose. This is the
+    # check that makes SWAP fail closed instead of rendering the clip's person.
+    _ce, _cw = swap_contract_errors(beat, identities=_ids, mode=mode, allowed=allowed)
+    errors.extend(_ce)
+    warnings.extend(_cw)
+
     # TWO handles, not one handle twice.
     #
     # The measured result on this node was that naming the identity ONCE loses
@@ -2453,9 +2940,17 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
                    if allowed else "") + ".")
 
     _dur = str(shots[0].get("duration") or duration or "").strip()
+    # The beat is now the whole contract, so the word budget applies to
+    # detailed_description only. Counting the entire block would flag a script
+    # for being long when its VISUAL section is exactly the length the hop wants.
+    try:
+        from .directives import field_body as _fb
+        _scored = _fb(beat, "detailed_description:") or beat
+    except Exception:
+        _scored = beat
     band = beat_table().get(_dur)
     if band:
-        words = count_beat(beat)[0]
+        words = count_beat(_scored)[0]
         if words < band[0] or words > band[1]:
             warnings.append(
                 f"the beat is {words} words; a {_dur} hop wants "
@@ -2463,12 +2958,6 @@ def validate_swap(shot_text, *, rail_tags, identity_tag, duration=None,
                 + ("Written short, the action ends early and the hop settles on "
                    "the photograph." if words < band[0] else
                    "Written long, the action is truncated."))
-    neg = _SWAP_NEGATION.findall(dialogue_free(beat))
-    if neg:
-        warnings.append(
-            "the beat says " + ", ".join(sorted({n.lower() for n in neg}))
-            + " -- at cfg 1.0 a negation ADDS what it names. Say what is there "
-            "instead.")
 
     refs = shots[0].get("refs")
     if refs is not None and ident and ident not in refs:
@@ -2549,27 +3038,126 @@ def _ensure_swap_refs(shot_text, tags, exact=False):
     # `exact`: keep_person. Its contract is "swaps nobody", so the shot rides
     # the cited plates and nothing else -- an absent `refs` falls back to the
     # register default, which puts every hop-1 still on, the face included.
-    shot["refs"] = want if exact else have + [t for t in want if t not in have]
+    # For identity modes, `want` leads so <Picture 1..N> match the exact
+    # left-to-right order `build_swap_user_turn` declared.
+    shot["refs"] = want if exact else want + [t for t in have if t not in want]
     obj = dict(obj)
     obj["shots"] = [shot]
     return json.dumps(obj, indent=2)
 
 
-def build_swap_user_turn(brief, identity_tag, duration=None, *,
+# Alissonerdx's guide-latent swap LoRAs (`minimax_h3_character_swap_v1.0_ref2va_r64_gl`
+# and `minimax_h3_head_swap_v1.0_r32`) are triggered by these leading prefixes.
+SWAP_TRIGGERS = {
+    "replace_person": "body_swap:",
+    "head_swap": "head_swap:",
+    "face_only": "head_swap:",
+    "keep_person": "",
+}
+
+
+def scrub_swap_pronouns(text):
+    """Rewrite plural pronouns (they/them/their) outside spoken dialogue to <Subject 1>.
+
+    When a clip shows a second figure (such as a partner partially in frame),
+    vision models frequently write 'their' or 'they' for the interaction or for
+    the main subject. Rewriting those spans outside <d> / quoted speech keeps
+    the H3 prompt bound to <Subject 1> instead of failing the render gate.
+    """
+    raw = str(text or "")
+    if not raw or not _SWAP_PLURAL.search(raw):
+        return raw
+
+    def _fix_chunk(chunk):
+        c = re.sub(r"\bthey(?:\s+are|'re)\b", "<Subject 1> is", chunk, flags=re.I)
+        c = re.sub(r"\bthey\s+were\b", "<Subject 1> was", c, flags=re.I)
+        c = re.sub(r"\bthey(?:\s+have|'ve)\b", "<Subject 1> has", c, flags=re.I)
+        c = re.sub(r"\btheirs?\b", "<Subject 1>'s", c, flags=re.I)
+        c = re.sub(r"\b(?:themselves|them|they)\b", "<Subject 1>", c, flags=re.I)
+        return c
+
+    spans = sorted(dialogue_spans(raw))
+    if not spans:
+        return _fix_chunk(raw)
+    out = []
+    pos = 0
+    for a, b, _said in spans:
+        if a > pos:
+            out.append(_fix_chunk(raw[pos:a]))
+        out.append(raw[a:b])
+        pos = b
+    if pos < len(raw):
+        out.append(_fix_chunk(raw[pos:]))
+    return "".join(out)
+
+
+def _scrub_shot_json(shot_text):
+    """Apply `scrub_swap_pronouns` to `shots[0]['beat']` in a 1-shot JSON string."""
+    if not shot_text:
+        return shot_text
+    try:
+        obj = json.loads(shot_text)
+        shots = (obj or {}).get("shots")
+        if not isinstance(shots, list) or not shots or not isinstance(shots[0], dict):
+            return shot_text
+        beat = shots[0].get("beat")
+        if not isinstance(beat, str) or not _SWAP_PLURAL.search(beat):
+            return shot_text
+        shot = dict(shots[0])
+        shot["beat"] = scrub_swap_pronouns(beat)
+        out = dict(obj)
+        out["shots"] = [shot]
+        return json.dumps(out, indent=2)
+    except Exception:
+        return shot_text
+
+
+def _extract_swap_widgets(shot_text, mode=DEFAULT_SWAP_MODE):
+    """Extract (swap_script, swap_refs) from a validated 1-shot JSON string."""
+    if not shot_text:
+        return "", ""
+    try:
+        obj = json.loads(shot_text)
+        shots = (obj or {}).get("shots") or []
+        shot = shots[0] if shots and isinstance(shots[0], dict) else {}
+    except Exception:
+        return "", ""
+    script = scrub_swap_pronouns(str(shot.get("beat") or "").strip())
+    trig = SWAP_TRIGGERS.get(normalise_swap_mode(mode), "")
+    if script and trig and not script.lower().startswith(("body_swap:", "head_swap:")):
+        script = f"{trig}\n\n{script}"
+    refs = shot.get("refs")
+    if isinstance(refs, list):
+        clean = [str(r or "").lstrip("@").strip() for r in refs if str(r or "").strip()]
+        swap_refs = ", ".join(clean) if clean else "[]"
+    else:
+        swap_refs = ""
+    return script, swap_refs
+
+
+def build_swap_user_turn(brief, identity_tag="", duration=None, *,
                          mode=DEFAULT_SWAP_MODE, background=DEFAULT_BG_MODE,
-                         background_tag="", wardrobe_tag="", clip_s=None,
-                         clip_sound=None):
-    ident = str(identity_tag or "").lstrip("@").strip()
+                         background_tag="", wardrobe_tag="", wardrobe_text="",
+                         clip_s=None, clip_sound=None, identities=None):
     mode = normalise_swap_mode(mode)
+    idents = (_normalise_identities(identity_tag, identities)
+              if swap_mode_needs_identity(mode) else [])
+    ident = idents[0] if idents else ""
     bg = str(background or "").strip().lower()
     bg = bg if bg in BG_MODES else DEFAULT_BG_MODE
     bg_tag = str(background_tag or "").lstrip("@").strip()
     ward = str(wardrobe_tag or "").lstrip("@").strip()
+    wtext = str(wardrobe_text or "").strip()
 
     lines = [f"Mode: {mode}"]
-    if swap_mode_needs_identity(mode):
-        lines.append(f"Identity tag: @{ident}")
-    lines.append(_MODE_RULE[mode].format(ident=ident))
+    if len(idents) > 1:
+        lines.append("Identity tags (left to right in the clip): "
+                     + ", ".join(f"@{t}" for t in idents))
+        lines.append(_multi_mode_rule(mode, idents))
+    else:
+        if swap_mode_needs_identity(mode):
+            lines.append(f"Identity tag: @{ident}")
+        lines.append(_MODE_RULE[mode].format(ident=ident))
 
     # A picture background with no tag is a free background, not a broken one:
     # the mode names a source and there is nothing to name.
@@ -2589,12 +3177,24 @@ def build_swap_user_turn(brief, identity_tag, duration=None, *,
     if ward:
         lines.append(
             f"Wardrobe: the garment comes from @{ward}, whatever the mode "
-            f"says. It is WORN, not pasted -- it drapes on the body in frame, "
+            f"says (do NOT describe <Picture 1>'s original clothes when @{ward} "
+            f"is set). It is WORN, not pasted -- it drapes on the body in frame, "
             f"creases where that body bends and moves with the action. Skin "
             f"revealed by the change belongs to the person wearing it.")
+    elif wtext:
+        lines.append(
+            f"Wardrobe: <Subject 1> wears {wtext} (overriding the clothing in "
+            f"<Picture 1> and <Video 1>; do NOT describe <Picture 1>'s original "
+            f"clothes), whatever the mode says. It is WORN, not pasted -- "
+            f"describe <Subject 1> wearing {wtext} in both "
+            f"subject_definitions: and detailed_description:, draping and "
+            f"moving naturally with the body.")
 
-    cite = [t for t in (ident if swap_mode_needs_identity(mode) else "",
-                        bg_tag if bg == "picture" else "", ward) if t]
+    cite = []
+    for t in (*(idents if swap_mode_needs_identity(mode) else ()),
+              bg_tag if bg == "picture" else "", ward):
+        if t and t not in cite:
+            cite.append(t)
     lines.append(
         ("Cite " + ", ".join("@" + t for t in cite) + " in the beat. "
          if cite else "")
@@ -2669,19 +3269,20 @@ async def _repair_loop(messages, complete_fn, attempts, on_step, consume,
     return last
 
 
-async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
+async def write_swap_plan(brief, *, complete_fn, identity_tag="", rail_tags=None,
                           images=None, duration=None, attempts=MAX_ATTEMPTS,
                           on_step=None, mode=DEFAULT_SWAP_MODE,
                           background=DEFAULT_BG_MODE, background_tag="",
-                          wardrobe_tag="", clip_s=None, clip_sound=None):
+                          wardrobe_tag="", wardrobe_text="", clip_s=None,
+                          clip_sound=None, identities=None):
     """One hop, no register. Returns no `ref_plan` key."""
     mode = normalise_swap_mode(mode)
-    ident = str(identity_tag or "").lstrip("@").strip()
+    idents = _normalise_identities(identity_tag, identities)
     # Only the modes that actually swap somebody need one. keep_person uses the
     # clip as a scene plate, and demanding a face there would ask the user to
     # pick something the instruct then tells the model to leave alone.
-    if not ident and swap_mode_needs_identity(mode):
-        return {"ok": False, "shot_plan": "",
+    if not idents and swap_mode_needs_identity(mode):
+        return {"ok": False, "shot_plan": "", "swap_script": "", "swap_refs": "",
                 "attempts": 0, "errors": ["SWAP needs an identity tag."],
                 "warnings": []}
     if not swap_mode_needs_identity(mode):
@@ -2692,7 +3293,8 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
         # additively at cfg 1.0 whatever the instruct says about keeping the
         # clip's person. The one mode whose contract is "swaps nobody" is the
         # last place to trust the panel.
-        ident = ""
+        idents = []
+    ident = idents[0] if idents else ""
 
     # The tags the instruct will tell the model to cite, in its own order.
     # `build_swap_user_turn` normalises these again for the prose; they are
@@ -2700,15 +3302,17 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
     # a disagreement is the failure this pair of lines exists to prevent.
     _bg = str(background or "").strip().lower()
     _bg = _bg if _bg in BG_MODES else DEFAULT_BG_MODE
-    cited = [ident,
+    cited = [*idents,
              str(background_tag or "").lstrip("@").strip()
              if _bg == "picture" else "",
              str(wardrobe_tag or "").lstrip("@").strip()]
     text = build_swap_user_turn(brief, ident, duration=duration, mode=mode,
                                 background=background,
                                 background_tag=background_tag,
-                                wardrobe_tag=wardrobe_tag, clip_s=clip_s,
-                                clip_sound=clip_sound)
+                                wardrobe_tag=wardrobe_tag,
+                                wardrobe_text=wardrobe_text,
+                                clip_s=clip_s,
+                                clip_sound=clip_sound, identities=idents)
     messages = [{"role": "system", "content": swap_prompt()},
                 {"role": "user", "content": attach_images(text, images)}]
     sch = swap_schema()
@@ -2719,7 +3323,7 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
         nonlocal last_errors, warnings, shot_text, video_desc
         new_shot, new_desc = parse_swap_reply(reply)
         if new_shot:
-            shot_text = new_shot
+            shot_text = _scrub_shot_json(new_shot)
         if new_desc:
             video_desc = new_desc
         if not shot_text:
@@ -2730,7 +3334,7 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
         else:
             last_errors, warnings = validate_swap(
                 shot_text, rail_tags=rail_tags, identity_tag=ident, mode=mode,
-                duration=duration,
+                duration=duration, identities=idents,
                 allowed=(None if swap_mode_needs_identity(mode)
                          else [t for t in cited if t]))
         if not last_errors:
@@ -2739,10 +3343,14 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
             # own person). Describe already checks its caption; this one is
             # the same text arriving by the other door.
             who = _identity_words(video_desc) if (video_desc and ident) else []
+            ensured = _ensure_swap_refs(
+                shot_text, cited, exact=not swap_mode_needs_identity(mode))
+            sw_script, sw_refs = _extract_swap_widgets(ensured, mode=mode)
             out = {
                 "ok": True,
-                "shot_plan": _ensure_swap_refs(
-                    shot_text, cited, exact=not swap_mode_needs_identity(mode)),
+                "shot_plan": ensured,
+                "swap_script": sw_script,
+                "swap_refs": sw_refs,
                 "attempts": attempt,
                 "errors": [],
                 "warnings": list(warnings) + (
@@ -2760,9 +3368,12 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
             + "\n\nReturn one corrected shot_plan with a single shot. "
               "Do not emit ref_plan."
         )
+        sw_script, sw_refs = _extract_swap_widgets(shot_text, mode=mode)
         fail = {
             "ok": False,
             "shot_plan": shot_text,
+            "swap_script": sw_script,
+            "swap_refs": sw_refs,
             "attempts": attempt,
             "errors": last_errors,
             "warnings": warnings,
@@ -2774,7 +3385,7 @@ async def write_swap_plan(brief, *, complete_fn, identity_tag, rail_tags=None,
     out = await _repair_loop(
         messages, complete_fn, attempts, on_step, consume, schema=sch)
     if out is None:
-        return {"ok": False, "shot_plan": "",
+        return {"ok": False, "shot_plan": "", "swap_script": "", "swap_refs": "",
                 "attempts": int(attempts), "errors": last_errors,
                 "warnings": warnings}
     return out

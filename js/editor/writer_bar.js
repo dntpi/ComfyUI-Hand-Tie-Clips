@@ -68,13 +68,16 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
     const stageRow = el("div", "h3e-writer-row");
     stageRow.appendChild(button("Propose", "Ask for the film in words first — "
         + "the look, who is in frame, how many hops and why. Writes nothing.",
-        () => sendCanned("propose", "propose the film")));
+        () => sendCanned("propose", scenePrompt("propose the film"))));
     stageRow.appendChild(button("Write beats", "Write the beats for the "
         + "proposal you accepted.", () => sendCanned("develop",
-            "write the beats for the accepted proposal")));
+            scenePrompt("write the beats for the accepted proposal"))));
     stageRow.appendChild(button("Write plan", "Propose and write the beats in "
-        + "one go.", () => sendCanned("develop", "propose the film, then write "
-        + "the beats for it")));
+        + "one go.", () => sendCanned("develop", scenePrompt("propose the film, then write "
+        + "the beats for it"))));
+    stageRow.appendChild(button("Edit", "Change only the shots you name (e.g. "
+        + "'hop 2: make her laugh instead') and leave every other shot untouched.",
+        () => sendCanned("edit", scenePrompt(""))));
     // MV mode's entry point, and only meaningful with a song attached. Kept on
     // the same row because it IS the same conversation -- the song card it
     // produces is a reply, not a separate mode.
@@ -139,6 +142,8 @@ export function createWriterBar(node, { onWritten, hopCount } = {}) {
             + "nothing — the plan only changes when you accept a draft."],
         ["develop", "Write beats", "Treat this as a brief and write the beats. "
             + "A draft card appears; nothing reaches the plan until Accept."],
+        ["edit", "Edit shots", "Change only the shots you name (e.g. 'hop 2: "
+            + "make her laugh instead') and leave every other shot untouched."],
     ]) {
         const b = button(label, tip, () => {
             composerStageId = id;
@@ -219,6 +224,12 @@ function writeThread(t) {
     brief.title = "Describe the scene in plain language. Pictures already in "
         + "the REFERENCES rail are the ones that get used; the model looks at "
         + "them. With the rail empty, files in h3_refs are listed by name.";
+    brief.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+        e.preventDefault();
+        e.stopPropagation();
+        run();
+    });
     row.appendChild(brief);
 
     const hops = el("input", "h3e-writer-hops");
@@ -979,9 +990,18 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
             }));
     }
 
+    function scenePrompt(canned) {
+        const fromChat = String(chat.value || "").trim();
+        const fromBrief = String(brief.value || "").trim();
+        const userText = fromChat || fromBrief;
+        if (!userText) return canned;
+        if (!canned || userText.toLowerCase() === canned.toLowerCase()) return userText;
+        return `${userText}\n\n(${canned})`;
+    }
+
     async function run() {
         // "Write plan" is the whole thing in one go: propose, then beats.
-        await sendCanned("develop", "propose the film, then write the beats for it");
+        await sendCanned("develop", scenePrompt("propose the film, then write the beats for it"));
     }
 
     // The one call every stage button and every free-text line goes through.
@@ -994,7 +1014,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
     // this box is for, and it was the one input that could not be sent.
     async function sendCanned(stage, text, extra) {
         if (busy) return;
-        const msg = String(text || "").trim();
+        const msg = String(text || "").trim() || String(brief.value || "").trim();
         if (!msg) return;
         setBusy(true);
         chat.value = "";
@@ -1189,6 +1209,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
             for (const x of s.sections) {
                 b.appendChild(el("div", "h3e-cardbox-row h3e-mv-why",
                     `bar ${x.bar ?? "?"}${x.from != null ? ` (${x.from.toFixed(1)}s)` : ""}`
+                    + `${x.kind ? ` · ${x.kind}` : ""}`
                     + `${x.why ? ` — ${x.why}` : ""}`));
             }
         }
@@ -1224,9 +1245,9 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
             + "own lengths, which puts the cuts off the bar.", () => {
                 draft.style.display = "none";
                 draftList.textContent = "";
-                sendCanned("develop", `propose a music video cut to this song. `
+                sendCanned("develop", scenePrompt(`propose a music video cut to this song. `
                     + `Sections: ${readBars().map((x) => `bar ${x}`).join(", ") || "none yet"}.`
-                    + ` Nobody speaks: the song carries it.`);
+                    + ` Nobody speaks: the song carries it.`));
             }));
         c.acts.appendChild(button("Close", "Dismiss this card",
             () => { draft.style.display = "none"; draftList.textContent = ""; }));
@@ -1285,7 +1306,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
             () => {
                 draft.style.display = "none";
                 draftList.textContent = "";
-                sendCanned("develop", "write the beats for this layout", { skeleton: sk });
+                sendCanned("develop", scenePrompt("write the beats for this layout"), { skeleton: sk });
             }));
         c.acts.appendChild(button("Close", "Dismiss this card",
             () => { draft.style.display = "none"; draftList.textContent = ""; }));

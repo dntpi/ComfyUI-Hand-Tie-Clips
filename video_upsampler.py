@@ -194,6 +194,13 @@ class HTCVideoUpsampler:
             clip=clip, prompt=str(prompt), width=w, height=h, length=length,
             ref_image_size="match")
         cond = (got.args if hasattr(got, "args") else tuple(got))[0]
+        try:
+            import comfy.model_management as _mm
+            if hasattr(clip, "patcher") and hasattr(clip.patcher, "model"):
+                clip.patcher.model.to(_mm.text_encoder_offload_device())
+                _mm.soft_empty_cache()
+        except Exception:
+            pass
 
         factor, guide = 0, None
         if str(lora) != "None" and float(lora_strength) != 0.0:
@@ -201,6 +208,13 @@ class HTCVideoUpsampler:
             factor = _ug.lora_factor(path)
             model = nodes.LoraLoaderModelOnly().load_lora_model_only(
                 model, str(lora), float(lora_strength))[0]
+            fix = getattr(nodes, "NODE_CLASS_MAPPINGS", {}).get("H3AdaLNLoRAFix")
+            if fix is not None and hasattr(model, "patches"):
+                try:
+                    res = fix.execute(model=model, mode="port")
+                    model = (res.args if hasattr(res, "args") else tuple(res))[0]
+                except Exception:
+                    pass
         redraw = float(start_sigma) > 0.0 or float(denoise) > 0.0
         if factor and redraw:
             _ug.install()

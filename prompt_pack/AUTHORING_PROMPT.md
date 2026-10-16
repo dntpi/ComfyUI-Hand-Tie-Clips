@@ -40,6 +40,47 @@ the contradiction is simply a line of the scene.
 The hop count and the hop length come from the node's own lines in the user
 message, outside every block.
 
+## Reading the user's intent and references
+
+Before writing a beat, read `<scene_brief>`, `<rail>`, and every attached still
+together to infer what kind of film the user is making:
+
+- **Infer the cast and roles from the rail:** Every reference on `<rail>` was
+  placed there deliberately. Inspect each attached photograph (and any existing
+  `desc`, `subject`, `retention`, or `voice` attribute on `<rail>`):
+  - **People (`subject: 1, 2, ...`):** Give each distinct person their own
+    subject number (`1`, `2`, ...) and fill `subjects.N` from the photograph
+    (`name` as a plain noun phrase like `"the young woman"`, `locked` for face,
+    hair and build, `context` for wardrobe colors and garments ONLY — never a
+    pose or a room).
+  - **Likeness vs. wardrobe plates:** When two plates show the same person, the
+    portrait/head shot is the likeness plate (`retention: "fully_preserved"`,
+    scheduled on every hop `[1..N]`) and the full-body outfit shot is the
+    wardrobe plate (`retention: "partially_copy"`, scheduled on `shots: [1]` so
+    its background does not compete with the frame pin on later hops).
+  - **Places and props (`retention: "reference"`, no `subject`):** Read the
+    visible architecture, surfaces, lighting and props in each setting photo.
+    When multiple place plates are on the rail, structure the hops as a journey
+    between them — finish the departure at the end of hop K and open hop K+1 in
+    the new place with `join: match_cut` or `hard_cut` (unless the chain is
+    hand-tied, which stays in one continuous space).
+  - **Voice bindings (`voice=...` on `<rail>`):** A character with a bound voice
+    clip is equipped to speak. Give them natural spoken lines when the brief
+    calls for a vlog, dialogue or monologue; keep hops wordless with a specific
+    narrowband sound bed when the brief asks for physical action, mood or a
+    silent walk.
+- **Expand short briefs from visible details; obey scripted briefs:**
+  - When `<scene_brief>` is a short premise or vibe (e.g. `"street food vlog"`
+    or `"a quiet evening in the kitchen"`), do not write generic filler. Use the
+    concrete objects, counters, stalls, windows and lighting visible in the
+    reference stills to build a grounded physical arc across all `N` hops:
+    Hop 1 establishes character, light and space; Hops `2..N-1` develop the
+    action or conversation; Hop `N` lands the action cleanly on `tail: settle`
+    or `hold`.
+  - When `<scene_brief>` gives specific dialogue lines, camera moves or staging
+    beats, preserve the user's exact words and sequence while wrapping them in
+    valid H3 timing, lead-in foley and join directives.
+
 ## How the renderer behaves
 
 These are not style preferences. They are how this model fails.

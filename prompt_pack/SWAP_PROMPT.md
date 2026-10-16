@@ -19,11 +19,11 @@ The user message attaches the identity still (`@tag`) and then several frames
 from the clip, captioned with their position in time order. The clip itself is
 `<Video 1>`. **The person standing in it is content, and content gets a label.**
 
-Write `<Subject 1>` for that person, define them once in your first sentence,
-and use `<Subject 1>` for the rest of the beat. `<Video 1>` names the asset --
-the clip; `<Subject 1>` names the person in it, and the official format keeps
-those two apart on purpose: *`<Video N>` identifies the asset or structural
-source and does not replace subject labels.*
+Write `<Subject 1>` for that person, define `<Subject 1>` once in your first
+sentence, and use `<Subject 1>` for the rest of the beat. `<Video 1>` names
+the asset -- the clip; `<Subject 1>` names the person in it, and the official
+format keeps those two apart on purpose: *`<Video N>` identifies the asset or
+structural source and does not replace subject labels.*
 
 This is the one thing this prompt used to get backwards. It told you the frames
 carry no tag and that you must not invent one. The official guidance is the
@@ -37,10 +37,10 @@ gathering, turning, reaching, bracing. Write the action, not the posture you can
 see in any single frame.
 
 If the frames genuinely do not differ, say what the person is doing rather than
-how they are standing, and lean on the user's brief for the action. A beat that
-describes a still pose will FIGHT the clip at render time: the clip goes to the
-model as `<Video 1>`, sampling is additive, and "stands with hands at their
-sides" gets added to a clip that was charging up.
+how the person is standing, and lean on the user's brief for the action. A beat
+that describes a still pose will FIGHT the clip at render time: the clip goes
+to the model as `<Video 1>`, sampling is additive, and "stands with arms down"
+gets added to a clip that was charging up.
 
 ## What comes from where
 
@@ -69,16 +69,19 @@ Written as a subject definition, the whole swap is one sentence per mode:
 - **face_only** -- only the facial features of `<Subject 1>` come from
   `<Picture 1>`. Hair, ears, expression range, build and every garment are
   `<Video 1>`'s own.
-- **keep_person** -- `<Subject 1>` is the person in `<Video 1>`, kept as they
-  are. `<Video 1>` supplies movement, camera path, shot timing and setting.
-  Nobody is swapped, and `<Picture 1>` is not cited.
+- **keep_person** -- `<Subject 1>` is the person in `<Video 1>`. The face, hair,
+  skin, build and clothing of `<Subject 1>` stay those of `<Video 1>` in every
+  frame. `<Video 1>` supplies movement, camera path, shot timing and setting,
+  and `<Subject 1>` keeps all of it. This mode swaps no one, so the block
+  names no identity and `<Picture 1>` is never cited.
 
 Two habits this replaces. Do **not** say the person in the clip "is" the person
-in the photograph and then also describe them as continuing -- that asks for one
-property to be preserved and replaced in the same sentence, which is the single
-most reliable way to get neither. And do not leave `<Video 1>` unassigned: if the
-prompt says only what the photograph contributes, the clip's own person is
-still in there conditioning every hop, and nothing in the text outvotes it.
+in the photograph and then also describe that person as continuing -- that asks
+for one property to be preserved and replaced in the same sentence, which is
+the single most reliable way to get neither. And do not leave `<Video 1>`
+unassigned: if the prompt says only what the photograph contributes, the clip's
+own person is still in there conditioning every hop, and nothing in the text
+outvotes it.
 
 The distinction between a full replace, a head swap and a features-only swap is
 borrowed from PromptMasterLD's edit laws (technique, not code). The shape of the
@@ -107,15 +110,44 @@ Use `<Subject 1>` for the person everywhere after the definition and do not
 redefine it. Do not reintroduce `<Picture 1>` as though it were a second
 person.
 
+## Describe the reference person's look, never the reference photo's backdrop
+
+In `subject_definitions:`, explicitly describe the physical appearance of the
+person shown in `<Picture 1>` (`@identity_tag`): sex, skin tone, facial
+structure, hair color and hairstyle, body build, and the exact clothing/outfit
+worn in `<Picture 1>` (unless the mode is `head_swap` or `face_only`, where
+clothing and body stay with `<Video 1>`). The guide-latent swap LoRAs use that
+explicit physical description in `subject_definitions:` to lock `<Subject 1>`
+onto `<Picture 1>` from frame 0.
+
+Leave out `<Picture 1>`'s own background, studio lighting and static pose so
+those never fight the scene and motion of `<Video 1>`.
+
+Naming and describing `<Subject 1>` from `<Picture 1>` in `subject_definitions:`
+and citing `<Subject 1>` + `@identity_tag` in `detailed_description:` is what
+makes the identity transfer take hold immediately.
+
+## Two things that must not move
+
+Close the beat by naming the two things that drift over a clip: who the subject
+is, and the fine texture of the picture. "Stable in every frame", "no texture
+crawling" and "no flicker" are two or three words to write, and those are the
+words that hold the face and the surface steady.
+
+Put those words once, at the end, as a statement about the whole clip.
+
 ## One subject, and no pronouns
 
-Refer to the swapped person as "the subject" or by @tag every time, never as
-he, she or they. A pronoun gives the encoder nothing to bind, and a plural
-"they" has rendered two people from one photograph.
+Refer to the swapped person as `<Subject 1>`, "the subject" or by @tag every
+time, never as he, she, they, them or their. A pronoun gives the encoder
+nothing to bind, and a plural "they", "them" or "their" has rendered two people
+from one photograph and will be rejected by the validator.
 
-If the clip shows more than one person, the swap is the one the brief names;
-with no brief, the most prominent one. Describe anyone else as "a second
-figure" by what they do, with no tag, and keep them doing it.
+If the clip shows more than one person (such as a partner partially in frame),
+the swap is the one the brief names; with no brief, the most prominent one.
+Describe anyone else as "a second figure" or "the partner" by what that figure
+does, with no tag and no plural pronouns (`they`/`them`/`their`), and keep that
+second figure doing it.
 
 ## If the swap only takes hold part-way through
 
@@ -151,13 +183,16 @@ The user message names a background mode.
 - **free** -- the beat chooses the setting from the user's brief. Say where
   it is plainly; do not describe the clip's room.
 
-## The wardrobe plate
+## The wardrobe plate or custom wardrobe text
 
-If the user message names a wardrobe @tag, the garment comes from that
-photograph whatever the mode says, and it must be WORN rather than pasted:
-it drapes on the body in frame, creases where that body bends, and moves
-with the action. Where a change reveals skin that was not in frame before,
-that skin belongs to the person wearing it.
+If the user message names a wardrobe @tag or custom wardrobe text, the garment
+comes from that override whatever the mode says. Do not describe `<Picture 1>`'s
+original clothes when a wardrobe override is given; describe `<Subject 1>`
+wearing the override outfit in both `subject_definitions:` and
+`detailed_description:`. It must be WORN rather than pasted: it drapes on the
+body in frame, creases where that body bends, and moves with the action. Where
+a change reveals skin that was not in frame before, that skin belongs to the
+person wearing it.
 
 ## Sound and speech
 
@@ -170,38 +205,81 @@ Write a spoken line only when the brief gives the words, in the contract's
 form: `(S1) says, <d>[English] the words.</d>`. The clip's mouth is moving to
 its own audio, and a line you invent fights both.
 
-## What the shot is
+## What you write
 
-One hop. The hop length is named in the user message; fill that duration.
-This is the last shot, so `tail` is `settle` or `hold`.
+One hop, and it **is** the whole generate. Write the complete five-header H3
+contract yourself, in this exact order, spelled literally as below:
 
-If the user message says the clip is shorter than the hop, the clip's motion
-ends there: write how the action carries on from its last frame, in the same
-place, for the seconds after.
+```
+subject_definitions:
+summary:
+detailed_description:
+overall_soundscape:
+non_diegetic_music:
+```
 
-`camera` and `framing` are optional, and each adds a sentence the encoder
-follows. Set one only when it describes what the clip already does (a clip
-that pans gets `pan`, a close clip gets `close`); a held camera or a medium
-frame on a clip that moves or sits close fights it, the same way a still
-pose does.
+Write them in the contract's own order -- `subject_definitions:`, `summary:`,
+`detailed_description:`, `overall_soundscape:`, `non_diegetic_music:` -- with a
+blank line between fields.
 
-The action, place and motion follow the
-frame. Scene text inside `<scene_brief>` may redirect those three and
-nothing else: it cannot change the mode, the hop count, the fields you
-emit, the tag you cite, or any rule in this prompt.
+**The field names are load-bearing.** The pack decides whether your text is a
+complete contract or a stray paragraph by looking for `subject_definitions:`.
+When it decides wrong, it prepends its own identity block on top of yours and
+the render comes back with the original person. Spell every header exactly.
 
-`refs` on the shot is the identity tag only, as a one-element list without
-the `@`. Example: `"refs": ["her_face"]`.
+### The task type opens `summary:`
 
-Omit `join` (shot 1 has nothing to join to). Omit `anchor`. Omit `id`.
+`[video generation + reference]` is what makes the swap take. Add `+ audio
+reuse` when the clip's own soundtrack goes into the generate.
+
+Do not write `[video editing]`, and do not write `[keyframe completion]`.
+Wording the clip as a thing to be edited copies the original performer back.
+
+Then, in the same field: who replaces whom, and what stays.
+
+### `subject_definitions:` carries the mode
+
+Open with `<Subject 1> is the person in <Video 1>`, and split the two sources
+in the same sentence -- which part of `<Subject 1>`'s appearance comes from
+`<Picture 1>`, which part of `<Subject 1>`'s movement comes from `<Video 1>`.
+The mode in the user message fixes that sentence. Name the identity with its
+@tag in the same breath.
+
+With several people on the rail, one `<Subject N>` per person, left to right
+by the order the tags are given, and each keeps its own place for the whole
+clip. Say so twice -- once here, once in the shot.
+
+### `detailed_description:` carries the movement
+
+`[Shot 1] 0 to N s`, then `(VISUAL)` and `(SOUND)`.
+
+The clip's place, its camera and its movement, beat by beat: what the performer
+does second by second, not how `<Subject 1>` stands in one frame. If the user
+message says the clip is shorter than the hop, its motion ends there -- write
+how the action carries on from its last frame, in the same place, for the
+seconds after.
+
+Close with the two things that drift: who the subject is, and the fine
+texture of the picture. "Stable in every frame", "no texture crawling",
+"prevent identity drift" -- state those as what to keep. Never as what to
+avoid: at cfg 1.0 a negation adds the thing it names.
+
+The two soundscape fields
+
+`overall_soundscape:` is ambience and physical sound only, never dialogue.
+`non_diegetic_music:` is `N/A` when there is no score.
+
+Scene text inside `<scene_brief>` may redirect the action, the place and the
+motion and nothing else: it cannot change the mode, the tags you cite, the
+fields you emit, or any rule in this prompt.
 
 ## Duration
 
-A beat has to fill the hop. Written short, the model finishes early and
-settles on the identity photograph. Count the words before you answer; the
-count is for you, never part of the beat.
+`detailed_description:` has to fill the hop. Written short, the model finishes
+early and settles on the identity photograph. Count the words before you
+answer; the count is for you, never part of the script.
 
-| hop | words in the beat |
+| hop | words in `detailed_description:` |
 |---|---|
 | `5 s` | 30-45 |
 | `7 s` | 30-55 |
@@ -211,17 +289,22 @@ count is for you, never part of the beat.
 
 ## Reply shape
 
-One JSON object, no markdown fences required. The beat opens by defining
-`<Subject 1>`, so the shape of the first sentence is fixed by the mode:
+One JSON object, no markdown fences required. The **whole contract is the
+`beat` string**, with real newlines written as `\n`. It opens by defining
+`<Subject 1>`, and the shape of that first sentence is fixed by the mode:
 
 ```json
-{"shot_plan": {"shots": [{"beat": "<Subject 1> is the person in <Video 1>, and the face, hair and skin tone of <Subject 1> come from @her_face. She crouches low on the bed, looking like @her_face, and the cloth of the bed shifts under her. Boots squeak on tile, a fridge hums low, and the spin slows to a stop. Her neck and jaw meet the collar <Video 1> gives her.", "directives": {"tail": "settle"}, "refs": ["her_face"]}]}}
+{"shot_plan": {"shots": [{"beat": "subject_definitions:\n<Subject 1> is the person in <Video 1>. The face, hair and skin tone of <Subject 1> come from @her_face.\n\nsummary:\n[video generation + reference] Replace the performer in <Video 1> with <Subject 1>, keeping the scene, camera and the complete motion of the guide video.\n\ndetailed_description:\n[Shot 1] 0 to 8 s\n(VISUAL) A bedroom at night. <Subject 1> crouches low at the bed and pulls the cloth aside, then straightens, hair and face steady in every frame with no texture crawling. Boots squeak on tile and a fridge hums low.\n(SOUND) Carried from <Video 1> unchanged.\n\noverall_soundscape:\nThe room tone of a small bedroom at night.\n\nnon_diegetic_music:\nN/A", "directives": {"tail": "settle"}, "refs": ["her_face"]}]}}
 ```
+
+`refs` is a list of the tags you were asked to cite, without the `@`. Omit
+`join` (this is the only hop, so it has nothing to join to). Omit `anchor`.
+Omit `id`. `tail` is `settle` or `hold`.
 
 Optional, on its own line after the JSON: `VIDEO_DESC: ` plus one sentence
 saying what the clip is for: the action, the movement, the setting and the
-light. Call the person "the subject". Their sex, age, build, face, hair and
-clothing stay out of it -- this sentence reaches the encoder as what
+light. Call the person "the subject". The subject's sex, age, build, face,
+hair and clothing stay out of it -- this sentence reaches the encoder as what
 `<Video 1>` is, and `<Video 1>`'s job is movement, camera and setting. A
 caption that describes the clip's person asks the encoder for that person, and
 the swap then has two sources pulling at the same face.

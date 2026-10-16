@@ -30,6 +30,7 @@ cannot stop the pack from loading.
 
 import hashlib as _hashlib
 import os as _os
+import re
 
 from . import directives as _d
 from . import media as _media
@@ -105,10 +106,24 @@ def _songmap_summary(m):
     for s in (m.get("sections") or [])[:12]:
         if not isinstance(s, dict):
             continue
-        secs.append({"bar": s.get("bar"), "from": _f(s.get("from_s")),
+        from_val = s.get("from_s") if s.get("from_s") is not None else s.get("s")
+        secs.append({"bar": s.get("bar"), "from": _f(from_val),
                      "to": _f(s.get("to_s")),
+                     "kind": str(s.get("kind") or ""),
                      "why": str(s.get("why") or "")[:80],
                      "confidence": _f(s.get("confidence"))})
+    raw_lines = []
+    for x in (m.get("lines") or [])[:24]:
+        if isinstance(x, dict):
+            txt = str(x.get("text") or "").strip()
+            if txt:
+                raw_lines.append(f"[{float(x.get('a') or 0.0):.1f}s] {txt}")
+        elif str(x or "").strip():
+            raw_lines.append(str(x))
+    steady_val = _f(m.get("steady"))
+    if steady_val is None and m.get("grid"):
+        steady_val = str(m.get("grid"))
+    drift_val = m.get("grid_drift_f") if m.get("grid_drift_f") is not None else m.get("drift_f")
     return {
         "bpm": _f(m.get("bpm")),
         "bar_s": _f(m.get("bar_s")),
@@ -117,12 +132,12 @@ def _songmap_summary(m):
         # Steadiness and drift say whether the GRID can be trusted. A song that
         # wanders is why a cut lands off the bar, and the user should see that
         # before blaming the solver.
-        "steady": _f(m.get("steady")),
-        "grid_drift_f": _f(m.get("grid_drift_f")),
+        "steady": steady_val,
+        "grid_drift_f": _f(drift_val),
         "sections": secs,
         "sections_confidence":
             "measured 4/9, 2/9 with listening - confirm or move them",
-        "lines": [str(x) for x in (m.get("lines") or [])][:24],
+        "lines": raw_lines,
     }
 
 
@@ -819,6 +834,23 @@ def register():
                             _mvsong_path, listen=_mvlisten,
                             status=lambda m: print(f"[{TAG}] {m}", flush=True),
                             allow_download=False)
+                        _det = [s for s in (_map.get("sections") or [])
+                                if isinstance(s, dict) and s.get("bar") is not None]
+                        for _s in _mvsecs:
+                            if not _s.get("kind") and _det:
+                                _b = int(_s.get("bar", 1))
+                                _match = None
+                                for _d in _det:
+                                    _da = int(_d.get("bar", 1))
+                                    _db = int(_d.get("b", _da + 8))
+                                    if _da <= _b < _db:
+                                        _match = _d.get("kind")
+                                        break
+                                if not _match:
+                                    _near = min(_det, key=lambda d: abs(int(d.get("bar", 1)) - _b))
+                                    _match = _near.get("kind")
+                                if _match:
+                                    _s["kind"] = _match
                         return _mv.solve(_map, _mvsecs)
 
                     _out = await asyncio.get_running_loop().run_in_executor(
@@ -959,11 +991,16 @@ def register():
                 "the writer cannot look at a RefMod; it read the description "
                 "of " + ", ".join("@" + t for t in mods) + " instead")
 
+        _plan_calls = 0
+
         async def complete_fn(messages, schema=None):
+            nonlocal _plan_calls
+            _temp = min(1.2, float(conn["temperature"]) + 0.1 * _plan_calls)
+            _plan_calls += 1
             try:
                 return await _llm.complete(
                     conn["server_url"], conn["model"], messages,
-                    schema=schema, temperature=conn["temperature"])
+                    schema=schema, temperature=_temp)
             except _llm.LLMError as exc:
                 if _llm.has_images(messages) and "HTTP 4" in str(exc):
                     print(f"[{TAG}] server rejected the attached stills; "
@@ -974,7 +1011,7 @@ def register():
                     return await _llm.complete(
                         conn["server_url"], conn["model"],
                         _llm.text_only(messages),
-                        schema=schema, temperature=conn["temperature"])
+                        schema=schema, temperature=_temp)
                 raise
 
         try:
@@ -1073,11 +1110,12 @@ def register():
 
         import asyncio
 
-        # Three, like the plan path. A caption written from one frame describes
-        # a pose, and this caption reaches the encoder as what <Video 1> IS.
+        # Five frames across the trimmed window, like the plan path. A caption
+        # written from one frame describes a pose, and this caption reaches the
+        # encoder as what <Video 1> IS.
         def encode():
             return _media.video_frame_data_urls(
-                video, start=start, end=end, count=3)
+                video, start=start, end=end, count=5)
 
         try:
             frames = await asyncio.get_running_loop().run_in_executor(
@@ -1121,9 +1159,26 @@ def register():
         brief = str(body.get("brief") or "").strip()
         duration = str(body.get("duration") or "").strip()
         video = str(body.get("video") or "").strip()
-        identity = body.get("identity") if isinstance(body.get("identity"), dict) else {}
-        ident_tag = str(identity.get("tag") or "").lstrip("@").strip()
-        ident_file = str(identity.get("file") or "").strip()
+        raw_idents = body.get("identities")
+        ident_list = []
+        if isinstance(raw_idents, list):
+            for item in raw_idents:
+                if isinstance(item, dict):
+                    t = str(item.get("tag") or "").lstrip("@").strip()
+                    f = str(item.get("file") or "").strip()
+                else:
+                    t = str(item or "").lstrip("@").strip()
+                    f = ""
+                if t and not any(x["tag"] == t for x in ident_list):
+                    ident_list.append({"tag": t, "file": f})
+        if not ident_list:
+            identity = body.get("identity") if isinstance(body.get("identity"), dict) else {}
+            t = str(identity.get("tag") or "").lstrip("@").strip()
+            f = str(identity.get("file") or "").strip()
+            if t:
+                ident_list.append({"tag": t, "file": f})
+        ident_tags = [x["tag"] for x in ident_list]
+        ident_tag = ident_tags[0] if ident_tags else ""
         if not video:
             return web.json_response(
                 {"ok": False, "error": "pick a reference clip first"})
@@ -1131,6 +1186,7 @@ def register():
         background = str(body.get("background") or "").strip().lower()
         background_tag = str(body.get("background_tag") or "").lstrip("@").strip()
         wardrobe_tag = str(body.get("wardrobe_tag") or "").lstrip("@").strip()
+        wardrobe_text = str(body.get("wardrobe_text") or "").strip()
         try:
             start = float(body.get("video_start_s") or 0.0)
         except (TypeError, ValueError):
@@ -1141,7 +1197,15 @@ def register():
             end = 0.0
         rail_tags = body.get("rail_tags")
         if not isinstance(rail_tags, list):
-            rail_tags = [ident_tag]
+            rail_tags = list(ident_tags)
+        # If the user typed `@tag` in the wardrobe text box and that tag exists
+        # on the rail, treat it as `wardrobe_tag`; otherwise keep it as free-text
+        # `wardrobe_text` so the user can invent any wardrobe purely from text.
+        if wardrobe_text and not wardrobe_tag:
+            cand_w = wardrobe_text.lstrip("@").strip()
+            if wardrobe_text.startswith("@") and cand_w in rail_tags:
+                wardrobe_tag = cand_w
+                wardrobe_text = ""
         try:
             _llm, _planner, conn = _swap_conn()
         except Exception as exc:
@@ -1157,9 +1221,13 @@ def register():
         # keep_person uses the clip as a scene plate and swaps nobody, so
         # requiring an identity there would make the user pick a face the
         # instruct then tells the model to leave alone.
-        if not ident_tag and _planner.swap_mode_needs_identity(mode):
+        if not ident_tags and _planner.swap_mode_needs_identity(mode):
             return web.json_response(
                 {"ok": False, "error": "pick an identity picture from the rail"})
+        if not _planner.swap_mode_needs_identity(mode):
+            ident_list = []
+            ident_tags = []
+            ident_tag = ""
         # Say what was actually used. A mode picked in the browser and a mode
         # the server acted on are two different things whenever ComfyUI has not
         # been restarted since the Python changed -- an older route ignores the
@@ -1168,20 +1236,45 @@ def register():
         print(f"[{TAG}] SWAP: mode={mode} background={background or 'clip'}"
               + (f" background_tag=@{background_tag}" if background_tag else "")
               + (f" wardrobe=@{wardrobe_tag}" if wardrobe_tag else "")
-              + (f" identity=@{ident_tag}" if ident_tag else " identity=none"),
+              + (f" identities={','.join('@' + t for t in ident_tags)}"
+                 if ident_tags else " identity=none"),
               flush=True)
 
         import asyncio
 
         clip = {}
 
+        rail_rows = body.get("rail_rows") if isinstance(body.get("rail_rows"), list) else []
+        rail_file_by_tag = {
+            str(r.get("tag") or "").lstrip("@").strip(): str(r.get("file") or "").strip()
+            for r in rail_rows if isinstance(r, dict) and r.get("tag") and r.get("file")
+        }
+
         def encode():
             images = []
-            if ident_file:
-                url = _media.vision_data_url(ident_file)
-                if url:
-                    images.append({"tag": ident_tag, "data_url": url})
-            # Three frames across the trimmed window, not one. A single frame
+            seen_tags = set()
+            for item in ident_list:
+                if item.get("file"):
+                    url = _media.vision_data_url(item["file"])
+                    if url:
+                        images.append({"tag": item["tag"], "data_url": url})
+                        seen_tags.add(item["tag"])
+            for extra_tag, role_label in (
+                (background_tag if background == "picture" else "", "background setting plate"),
+                (wardrobe_tag, "wardrobe / outfit plate"),
+            ):
+                if extra_tag and extra_tag not in seen_tags:
+                    f_extra = rail_file_by_tag.get(extra_tag)
+                    if f_extra:
+                        url = _media.vision_data_url(f_extra)
+                        if url:
+                            images.append({
+                                "tag": extra_tag,
+                                "caption": f"@{extra_tag} ({role_label}) is this picture:",
+                                "data_url": url,
+                            })
+                            seen_tags.add(extra_tag)
+            # Five frames across the trimmed window, not one. A single frame
             # is a POSE: the model described somebody standing with their hands
             # on a bed and could not describe what the clip was DOING, because
             # motion does not exist in one frame. The beat then fought the clip
@@ -1189,9 +1282,9 @@ def register():
             #
             # This is also what "video vision" is in practice: the VLMs that
             # advertise it sample frames and present them in order. Saying the
-            # order out loud is what turns three pictures into a movement.
+            # order out loud is what turns five pictures into a movement.
             frames = _media.video_frame_data_urls(
-                video, start=start, end=end, count=3)
+                video, start=start, end=end, count=5)
             # Not the loop variable: `video_frame_data_urls` documents [] as
             # its failure mode, and returning `frame` from an empty loop raised
             # UnboundLocalError into the handler below -- which then blamed the
@@ -1224,12 +1317,16 @@ def register():
                                        "IN point. Trim the clip on MEDIA."})
 
         vision_notes = []
+        _swap_calls = 0
 
         async def complete_fn(messages, schema=None):
+            nonlocal _swap_calls
+            _temp = min(1.2, float(conn["temperature"]) + 0.1 * _swap_calls)
+            _swap_calls += 1
             try:
                 return await _llm.complete(
                     conn["server_url"], conn["model"], messages,
-                    schema=schema, temperature=conn["temperature"])
+                    schema=schema, temperature=_temp)
             except _llm.LLMError as exc:
                 if _llm.has_images(messages) and "HTTP 4" in str(exc):
                     print(f"[{TAG}] server rejected SWAP stills; "
@@ -1240,21 +1337,116 @@ def register():
                     return await _llm.complete(
                         conn["server_url"], conn["model"],
                         _llm.text_only(messages),
-                        schema=schema, temperature=conn["temperature"])
+                        schema=schema, temperature=_temp)
                 raise
+
+        # Automatically describe each identity reference image (`@tag` -> `<Picture N>`)
+        # before writing the swap plan, mirroring BFS's `ref_details` VLM pass and
+        # scoping strictly to what `mode` transfers (head/hair only for `head_swap`,
+        # facial features only for `face_only`, full body + outfit for `replace_person`).
+        ident_looks = {}
+        for idx, im in enumerate(images):
+            t_name = str(im.get("tag") or "").lstrip("@").strip()
+            if not t_name or not im.get("data_url"):
+                continue
+            if mode == "head_swap":
+                look_sys = (
+                    "Describe ONLY the head, face, skin tone, facial structure, eye color, "
+                    "hair color, and hairstyle of the person in this reference image in one "
+                    "compact noun phrase (15-25 words). Do NOT mention body build, clothing, "
+                    "tops, skirts, outfits, accessories, background, lighting, or pose. "
+                    "Do NOT use pronouns (he, she, they, their). Start with 'a woman' or 'a man'."
+                )
+            elif mode == "face_only":
+                look_sys = (
+                    "Describe ONLY the facial features, skin tone, facial structure, eye color, "
+                    "nose, lips, and jawline of the person in this reference image in one "
+                    "compact noun phrase (12-22 words). Do NOT mention hair, hairstyle, body "
+                    "build, clothing, outfits, background, lighting, or pose. "
+                    "Do NOT use pronouns (he, she, they, their). Start with 'a woman' or 'a man'."
+                )
+            else:
+                cloth_clause = (
+                    " Do NOT mention clothing or outfit (a custom wardrobe override is used)."
+                    if (wardrobe_tag or wardrobe_text)
+                    else ", and exact clothing/outfit worn (colors, cut, fabric)."
+                )
+                look_sys = (
+                    "Describe ONLY the physical appearance of the person in this "
+                    "reference image in one compact noun phrase (25-45 words): "
+                    "sex, skin tone, facial structure, eye color, hair color and "
+                    "hairstyle, body build" + cloth_clause
+                    + " Do NOT describe the background, lighting, or pose. "
+                    "Do NOT use pronouns (he, she, they, their). Start with 'a woman' "
+                    "or 'a man'."
+                )
+            try:
+                look_msg = [
+                    {"role": "system", "content": look_sys},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Reference image @{t_name}:"},
+                            {"type": "image_url", "image_url": {"url": im["data_url"]}},
+                        ],
+                    },
+                ]
+                raw_look = await _llm.complete(
+                    conn["server_url"], conn["model"], look_msg, temperature=0.35
+                )
+                clean_look = _planner.scrub_swap_pronouns(
+                    " ".join(str(raw_look or "").split()).strip(" .\"'")
+                )
+                if clean_look:
+                    ident_looks[t_name] = clean_look
+                    print(f"[{TAG}] SWAP @{t_name} (<Picture {idx + 1}>, {mode}) look: {clean_look}",
+                          flush=True)
+            except Exception as _le:
+                print(f"[{TAG}] SWAP could not auto-describe @{t_name}: {_le!r}",
+                      flush=True)
+
+        enriched_brief = brief
+        if ident_looks:
+            look_lines = [
+                f"Reference look for @{t} (<Subject {idx + 1}> in <Picture {idx + 1}>, {mode} only): {lk}."
+                for idx, (t, lk) in enumerate(ident_looks.items())
+            ]
+            enriched_brief = (
+                (brief + "\n" if brief else "")
+                + "\n".join(look_lines)
+            ).strip()
 
         try:
             out = await _planner.write_swap_plan(
-                brief, complete_fn=complete_fn, identity_tag=ident_tag,
+                enriched_brief, complete_fn=complete_fn, identity_tag=ident_tag,
+                identities=ident_tags,
                 rail_tags=rail_tags, images=images, duration=duration,
                 mode=mode, background=background,
                 background_tag=background_tag, wardrobe_tag=wardrobe_tag,
+                wardrobe_text=wardrobe_text,
                 clip_s=clip.get("seconds"), clip_sound=clip.get("sound"))
         except _llm.LLMError as exc:
             return web.json_response({"ok": False, "error": str(exc)})
         except Exception as exc:
             print(f"[{TAG}] swap_plan failed: {exc!r}", flush=True)
             return web.json_response({"ok": False, "error": str(exc)})
+        if ident_looks and out.get("swap_script") and "subject_definitions:" in out["swap_script"]:
+            out["ident_looks"] = ident_looks
+            for idx, (t, lk) in enumerate(ident_looks.items()):
+                w_note = f", wearing {wardrobe_text}" if wardrobe_text else ""
+                if lk.lower()[:24] not in out["swap_script"].lower():
+                    out["swap_script"] = re.sub(
+                        r"(@" + re.escape(t) + r"\b)",
+                        lambda m, l_s=lk, wn=w_note: f"{m.group(1)} ({l_s}{wn})",
+                        out["swap_script"],
+                        count=1,
+                    )
+                elif wardrobe_text and wardrobe_text.lower() not in out["swap_script"].lower():
+                    out["swap_script"] = out["swap_script"].replace(
+                        "subject_definitions:\n",
+                        f"subject_definitions:\n<Subject {idx + 1}> wears {wardrobe_text}.\n",
+                        1,
+                    )
         if vision_notes:
             out["warnings"] = list(out.get("warnings") or []) + vision_notes
         if "ref_plan" in out:

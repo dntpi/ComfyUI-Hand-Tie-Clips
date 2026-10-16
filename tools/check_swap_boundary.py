@@ -95,9 +95,15 @@ def main():
     async def fake_with_register(messages, schema=None):
         return json.dumps({
             "shot_plan": {"shots": [{
-                "beat": ("<Subject 1> is the person in <Video 1>, and the face of "
-                         "<Subject 1> comes from <Picture 1>. The subject stands in the "
-                         "room looking like @her_face and turns."),
+                "beat": ("subject_definitions:\n<Subject 1> is the person in <Video 1>. "
+                         "The face of <Subject 1> comes from @her_face.\n\n"
+                         "summary:\n[video generation + reference] Replace the performer in "
+                         "<Video 1> with <Subject 1>, keeping the scene and camera.\n\n"
+                         "detailed_description:\n[Shot 1] 0 to 8 s\n(VISUAL) <Subject 1> "
+                         "stands in the room looking like @her_face and turns toward the "
+                         "light, the surface steady in every frame.\n(SOUND) The room tone."
+                         "\n\noverall_soundscape:\nThe room tone.\n\n"
+                         "non_diegetic_music:\nN/A"),
                 "directives": {"camera": "hold", "framing": "medium",
                                "tail": "settle"},
                 "refs": ["her_face"],
@@ -126,7 +132,7 @@ def main():
        any("one hop" in e.lower() or "length 1" in e.lower() for e in errs),
        "; ".join(errs) or "validate_swap accepted a chain")
 
-    print("video_swap.js never writes the rail and Accepts one shot")
+    print("video_swap.js never writes the rail or SCRIPT, and Accepts to swap_script")
     js = io.open(os.path.join(HERE, "js", "editor", "video_swap.js"),
                  encoding="utf-8").read()
     ck("video_swap.js reads the rail, it does not write it",
@@ -140,15 +146,27 @@ def main():
     ck("Accept requires shots.length === 1",
        "shots.length !== 1" in js or "shots.length != 1" in js,
        "SWAP Accept must refuse a draft that is not one shot")
-    ck("Accept refuses a multi-shot SCRIPT",
-       "already has" in js and "one hop" in js,
-       "SWAP must not silently replace a chain")
+    ck("Accept writes swap_script and swap_refs, never shot_plan",
+       'widgetByName(node, "swap_script")' in js
+       and 'widgetByName(node, "swap_refs")' in js
+       and 'widgetByName(node, "shot_plan")' not in js,
+       "SWAP owns swap_script and swap_refs so SCRIPT's chain is untouched")
+    ck("Swap tab has a Clear control to return to the chain",
+       "clearActiveSwap" in js,
+       "clearing swap_script and swap_refs returns the node to SCRIPT")
 
     ui = io.open(os.path.join(HERE, "js", "h3_ref_chain_ui.js"),
                  encoding="utf-8").read()
     # The SWAP onWritten is the createVideoSwap callback. It must not assign
-    # refWidget -- that assignment is WRITE's.
+    # refWidget or planWidget -- those belong to REFERENCES and SCRIPT.
     swap_cb = ui.split("const videoSwap = createVideoSwap")[-1].split("const tabs")[0] if "const videoSwap = createVideoSwap" in ui else ""
+    ck("SWAP onWritten writes swap_script and leaves planWidget alone",
+       '"swap_script"' in swap_cb and "planWidget.value =" not in swap_cb,
+       "SWAP must not clobber the user's multi-shot chain on SCRIPT")
+    ck("swap_script and swap_refs are hidden as editor-owned widgets",
+       '"swap_script"' in ui.split("const SIMPLE_HIDDEN")[0]
+       and '"swap_refs"' in ui.split("const SIMPLE_HIDDEN")[0],
+       "raw native text boxes must not appear below the DOM editor")
     # Stage 4: the mode pickers. The thing being guarded is not that the modes
     # exist -- it is that keep_person does not quietly become "replace, with no
     # identity". Sampling runs at cfg 1.0 with no negative branch, so a mode
@@ -169,8 +187,15 @@ def main():
     keep = P.build_swap_user_turn("", "mia", "8 s", mode="keep_person")
     ck("keep_person names no identity tag", "@mia" not in keep,
        "citing a face the mode tells the model to leave alone")
+    # Asserted on the AFFIRMATIVE shape, not on the old wording. "kept as they
+    # are ... Nobody is swapped" was the first draft and the gate now refuses
+    # both halves of it -- a plural pronoun, and a negation at cfg 1.0 -- so a
+    # check pinning that sentence would have pinned a rule that cannot render.
     ck("keep_person says the person is KEPT, positively",
-       "kept as they are" in keep)
+       "stay those of <Video 1>" in keep
+       and "they" not in keep.lower().replace("they are", "", 1)
+       and "nobody" not in keep.lower(),
+       keep)
     for m in ("replace_person", "head_swap", "face_only"):
         ck("%s cites the identity" % m,
            "@mia" in P.build_swap_user_turn("", "mia", "8 s", mode=m))
@@ -241,10 +266,15 @@ def main():
     def reply_citing(refs):
         async def fake(messages, schema=None):
             return json.dumps({"shot_plan": {"shots": [{
-                "beat": ("<Subject 1> is the person in <Video 1>, and the face of "
-                         "<Subject 1> comes from <Picture 1>. Someone looking like "
-                         "@her_face stands in @kitchen wearing @jacket, looking like "
-                         "@her_face, and turns."),
+                "beat": ("subject_definitions:\n<Subject 1> is the person in <Video 1>. "
+                         "The face of <Subject 1> comes from @her_face.\n\n"
+                         "summary:\n[video generation + reference] Replace the performer in "
+                         "<Video 1> with <Subject 1>, keeping the scene and camera.\n\n"
+                         "detailed_description:\n[Shot 1] 0 to 8 s\n(VISUAL) <Subject 1> stands "
+                         "in @kitchen wearing @jacket and turns, the surface steady in "
+                         "every frame.\n(SOUND) The room tone."
+                         "\n\noverall_soundscape:\nThe room tone.\n\n"
+                         "non_diegetic_music:\nN/A"),
                 "directives": {"camera": "hold", "framing": "medium",
                                "tail": "settle"},
                 "refs": refs,
@@ -262,6 +292,10 @@ def main():
         ck("@%s rides the hop it is cited in" % tag, tag in refs,
            "refs=%r -- resolve_tags refuses a cited tag with no picture on "
            "the hop, so the render aborts on the queue" % (refs,))
+    ck("write_swap_plan returns swap_script and swap_refs directly",
+       "subject_definitions:" in (out.get("swap_script") or "")
+       and out.get("swap_refs") == "her_face, kitchen, jacket",
+       repr((out.get("swap_script", "")[:40], out.get("swap_refs"))))
 
     # keep_person swaps nobody, and an identity still in `refs` conditions the
     # subject additively at cfg 1.0 whatever the instruct says. The panel greys
@@ -273,6 +307,45 @@ def main():
     refs = (got.get("shots") or [{}])[0].get("refs") or []
     ck("keep_person puts no identity on the hop", "her_face" not in refs,
        "refs=%r -- the one mode whose contract is 'swaps nobody'" % (refs,))
+    ck("keep_person with no plates sets swap_refs='[]'",
+       out.get("swap_refs") == "[]", repr(out.get("swap_refs")))
+
+    print("multi-person left-to-right swap")
+    multi_turn = P.build_swap_user_turn(
+        "", identities=["her_face", "his_face"], duration="8 s",
+        mode="replace_person")
+    ck("multi-person turn assigns <Subject 1> on the left and <Subject 2> on the right",
+       "<Subject 1> is the person on the left" in multi_turn
+       and "<Subject 2> is the person on the right" in multi_turn
+       and "@her_face" in multi_turn and "@his_face" in multi_turn,
+       multi_turn)
+
+    async def multi_reply(messages, schema=None):
+        return json.dumps({"shot_plan": {"shots": [{
+            "beat": ("subject_definitions:\n"
+                     "<Subject 1> is the person on the left in <Video 1>. "
+                     "The face and wardrobe of <Subject 1> come from @her_face.\n"
+                     "<Subject 2> is the person on the right in <Video 1>. "
+                     "The face and wardrobe of <Subject 2> come from @his_face.\n\n"
+                     "summary:\n[video generation + reference] Replace the two "
+                     "performers in <Video 1> with <Subject 1> and <Subject 2>, "
+                     "keeping the scene and camera.\n\n"
+                     "detailed_description:\n[Shot 1] 0 to 8 s\n(VISUAL) "
+                     "<Subject 1> dances on the left looking like @her_face while "
+                     "<Subject 2> dances on the right looking like @his_face, "
+                     "each holding position with the surface steady in every frame.\n"
+                     "(SOUND) The room tone.\n\noverall_soundscape:\nThe room tone."
+                     "\n\nnon_diegetic_music:\nN/A"),
+            "directives": {"tail": "settle"},
+            "refs": ["her_face"],
+        }]}})
+
+    mout = asyncio.run(P.write_swap_plan(
+        "", complete_fn=multi_reply, identities=["her_face", "his_face"],
+        rail_tags=["her_face", "his_face"]))
+    ck("multi-person swap passes the gate and schedules both identity plates in order",
+       mout.get("ok") is True and mout.get("swap_refs") == "her_face, his_face",
+       repr((mout.get("ok"), mout.get("errors"), mout.get("swap_refs"))))
 
     # A server that does not enforce items:{type:object} returns a bare string.
     # plan.normalise promotes it to a beat; this used to raise ValueError out

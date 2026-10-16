@@ -183,7 +183,7 @@ SERVER_EXES = (("ninfer", "ninfer-serve.exe"),)
 # A model to serve, when the backend needs one named on the command line.
 # Filled in by the route from the node's own widgets; kept here so the default
 # is discoverable in one place rather than at the call site.
-DEFAULT_MODEL_FILE = "qwen3_8_27b_nvfp4.ninfer"
+DEFAULT_MODEL_FILE = "Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-DFlash2-ninfer-v3.ninfer"
 
 
 def _server_exe(name):
@@ -400,8 +400,18 @@ def start_process(model_file=None, name=None, already_checked=False):
         model = str((CONN.get("servers") or {}).get(n, {})
                     .get("model_file") or "").strip()
     if n == "ninfer" and not os.path.isfile(model):
-        default = os.path.join(os.path.dirname(exe), "models", DEFAULT_MODEL_FILE)
+        mdir = os.path.join(os.path.dirname(exe), "models")
+        default = os.path.join(mdir, DEFAULT_MODEL_FILE)
         model = default if os.path.isfile(default) else ""
+        if not model and os.path.isdir(mdir):
+            try:
+                cand = [os.path.join(mdir, f) for f in os.listdir(mdir)
+                        if f.lower().endswith(".ninfer")
+                        and os.path.isfile(os.path.join(mdir, f))]
+                if cand:
+                    model = max(cand, key=os.path.getsize)
+            except OSError:
+                pass
         if not model:
             return False, ("No .ninfer model file found. Put one in "
                            "C:\\ninfer\\models, or set the path in Settings.")
@@ -577,7 +587,7 @@ CONN = {
     "server_url": DEFAULT_BASE,
     "model": "",
     "servers": {},
-    "temperature": 0.35,
+    "temperature": 0.75,
     # Warm between plans; evicted when a render is queued.
     #
     # Replaces `unload_after`, which unloaded the moment a plan was written.
@@ -1234,14 +1244,14 @@ def _chat_body(model, messages, *, schema, temperature, max_tokens):
         "model": model,
         "messages": messages,
         "temperature": float(temperature),
+        "top_p": 0.95,
         "max_tokens": int(max_tokens),
         "stream": False,
         # Kill think-mode. A reasoning model otherwise puts the plan in
         # `reasoning_content` and returns an EMPTY `content`, which reads as
-        # "the model said nothing" rather than "the switch was ignored". Both
-        # keys are harmless on servers that do not know them.
+        # "the model said nothing" rather than "the switch was ignored".
         "enable_thinking": False,
-        "chat_template_kwargs": {"enable_thinking": False, "thinking": False},
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     # Deliberately no `ttl`. PromptMasterLD sent `"ttl": 30` once and LM Studio
     # unloaded a 26B model ~30s after the prompt finished, while its panel still

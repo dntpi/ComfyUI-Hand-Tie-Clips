@@ -742,12 +742,23 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
       // "set these hops ON", not "flip every hop I passed over", so dragging
       // back over a hop you already had leaves it on.
       let dragFrom = null;
-      const cellsAt = (x) => {
-        const i = columnAt(geo, x, 0);
+      const cellsAt = (e) => {
+        const rect = bar.getBoundingClientRect?.();
+        if (rect && rect.width > 0) {
+          const hit = e.target?.closest?.("[data-hop]");
+          if (hit && dragFrom == null) {
+            const dh = Number(hit.dataset?.hop);
+            if (dh >= 1 && dh <= hops) return dh;
+          }
+          const relX = ((e.clientX ?? 0) - rect.left) * (geo.width / rect.width);
+          const idx = columnAt(geo, relX, bar.scrollLeft || 0);
+          return idx < 0 ? -1 : idx + 1;
+        }
+        const i = columnAt(geo, e.clientX ?? 0, 0);
         return i < 0 ? -1 : i + 1;
       };
       bar.addEventListener("pointerdown", (e) => {
-        const h = cellsAt(e.clientX ?? 0);
+        const h = cellsAt(e);
         if (h < 1) return;
         dragFrom = h;
         bar.setPointerCapture?.(e.pointerId);
@@ -760,7 +771,7 @@ export function createRefRail(node, { getPlan, setPlan, onChange, hopCount,
       });
       bar.addEventListener("pointermove", (e) => {
         if (dragFrom == null) return;
-        const h = cellsAt(e.clientX ?? 0);
+        const h = cellsAt(e);
         if (h < 1) return;
         const lo = Math.min(dragFrom, h);
         const hi = Math.max(dragFrom, h);

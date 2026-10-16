@@ -51,9 +51,6 @@ const GROUPS = [
                     // display only, and INPUT_TYPES appends it last so saved
                     // workflows keep their widget indices.
                     "pin_mech",
-                    // Read only under pin_mech=hand_tie: what a continuing
-                    // hop opens on (recover branch, 2026-10-14).
-                    "ht_seam_source",
                     // ht_seam_fix: the seam-fix batch (recover, 2026-10-14).
                     "ht_seam_fix",
                     "audio_pin_frames",
@@ -115,8 +112,13 @@ const GROUPS = [
     // Last because it is the last thing to happen: the bed goes on after every
     // hop is joined. The file itself is picked in MEDIA -- these four only say
     // how loud it is and how it is laid down, and are inert with nothing set.
+    // The audio-refine dials are declared last on the node so saved graphs keep
+    // their indices; they are drawn here, and a drawn dial is hidden on the
+    // node face. audio_model stays a wire.
     ["soundtrack", ["music_gain_db", "music_duck", "music_fit",
-                    "music_fade_s"]],
+                    "music_fade_s",
+                    "audio_refine", "audio_denoise", "audio_steps",
+                    "audio_sampler", "audio_scheduler", "audio_seed_offset"]],
 ];
 
 /**
@@ -188,7 +190,28 @@ function commitWidget(node, w, value, onChange) {
 }
 
 // Display names that differ from the widget name with underscores spaced.
-const LABELS = { ht_seam_source: "seam source", ht_seam_fix: "seam fix" };
+const LABELS = { ht_seam_fix: "seam fix" };
+
+// Redundant v1 refine plumbing dials hidden in the RUN panel under Universal
+// Refine v2 (their native widgets remain owned/hidden and keep their optimal
+// defaults: same sampler, simple scheduler, base cond, freeze audio, linear
+// ramp, refine head).
+const REFINE_V2_HIDDEN = new Set([
+    "speed_mode",
+    "refine_align",
+    "refine_sampler",
+    "refine_scheduler",
+    "refine_cond",
+    "refine_audio",
+    "refine_blend_interp",
+    "refine_head",
+    "pin_to_qwen",
+    "ht_seam_fix",
+    "pin_renorm",
+    "pin_noise",
+    "tone_compensate",
+    "tone_anchor",
+]);
 
 export function labelFor(w) {
     const n = String(w.name || "");
@@ -336,12 +359,14 @@ function stampSpeedMode(node, table, mode, onChange) {
  * a ReferenceError at mount rather than a typo you can see. */
 function syncTally(node2) {
     // GROUPS is [groupName, [widgetName, ...]], so the dial count is the sum of
-    // the inner arrays. Counted from the TABLE rather than from the DOM, so the
-    // number is right when every group is collapsed and does not depend on a
-    // render having happened.
+    // the visible inner arrays. Counted from the TABLE rather than from the DOM,
+    // so the number is right when every group is collapsed and does not depend
+    // on a render having happened.
     let dials = 0;
     for (const [, names] of GROUPS) {
-        if (Array.isArray(names)) dials += names.length;
+        if (Array.isArray(names)) {
+            dials += names.filter((n) => !REFINE_V2_HIDDEN.has(n)).length;
+        }
     }
     node2.textContent = `${dials} dials · ${GROUPS.length} groups`;
 }
@@ -477,6 +502,13 @@ export function createRunPanel(node, { onChange, suppressed, hopCount, onBack } 
                 if (skip.has(name)) continue;
                 const w = widgetByName(node, name);
                 if (!w) continue;
+                if (REFINE_V2_HIDDEN.has(name)) {
+                    // Refine v2 is universal across turbo and regular models:
+                    // claim ownership so the raw LiteGraph widgets stay hidden
+                    // while omitting the redundant selectors from the RUN panel.
+                    owned.push(name);
+                    continue;
+                }
                 const f = fieldFor(node, w, () => { paintDigest(); onChange?.(); });
                 if (!f) {                          // stays a native dial below
                     rejected.push(`${name}:${widgetType(w) || "?"}`);

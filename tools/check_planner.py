@@ -1630,16 +1630,22 @@ def main():
     print("write_swap_plan -- one hop, no register")
     async def swap_ok(messages, schema=None):
         return json.dumps({"shot_plan": {"shots": [{
-            # D1q: the shape the instruct now asks for. This fixture was in the
-            # pre-D1q form, so validate_swap raised "define <Subject 1>", the
-            # plan went round the repair loop and came back ok=False -- the
-            # checker failing on its own fixture, which is how the seven
-            # failures in check_swap_boundary started. One file's stale fixture
-            # is easy to fix; finding the SECOND one needs the suite.
-            "beat": ("<Subject 1> is the person in <Video 1>, and the face of "
-                     "<Subject 1> comes from <Picture 1>. The subject stands "
-                     "looking like @her_face and turns toward the light. The "
-                     "face and hair of @her_face are the subject's own."),
+            # The shape the instruct asks for NOW: the complete six-field
+            # block, not a prose beat. This file's fixture was in the
+            # pre-D1q form and then in the prose form, and each time
+            # validate_swap raised, the plan went round the repair loop and
+            # came back ok=False -- the checker failing on its own fixture.
+            # A third stale fixture is the suite telling you the contract
+            # moved again; read it, do not relax the check.
+            "beat": ("subject_definitions:\n<Subject 1> is the person in <Video 1>. "
+                     "The face of <Subject 1> comes from @her_face.\n\n"
+                     "summary:\n[video generation + reference] Replace the performer in "
+                     "<Video 1> with <Subject 1>, keeping the scene and camera.\n\n"
+                     "detailed_description:\n[Shot 1] 0 to 8 s\n(VISUAL) <Subject 1> "
+                     "stands looking like @her_face and turns toward the light, the "
+                     "surface steady in every frame.\n(SOUND) The room tone."
+                     "\n\noverall_soundscape:\nThe room tone.\n\n"
+                     "non_diegetic_music:\nN/A"),
             "directives": {"tail": "settle"},
             "refs": ["her_face"],
         }]}})

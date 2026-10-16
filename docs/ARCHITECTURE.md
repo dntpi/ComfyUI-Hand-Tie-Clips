@@ -234,14 +234,27 @@ Moved from `CLAUDE.md` section 6c.
 
 ### 6c. SWAP (`js/editor/video_swap.js`, `planner.write_swap_plan`)
 
-SWAP is a one-hop identity-swap helper, not a chain writer. It may write
-`shot_plan` (exactly one shot) and `reference_video_desc`, may bind MEDIA
-clip slot 1, and may set that shot's `refs` to tags that already exist on
-the rail. It must not write `ref_plan`, must not add, remove or rewrite
-rail rows, must not share WRITE's system prompt or WRITE's
-generate/validate/repair loop, and must not Accept over a multi-shot plan
-without an explicit replace. A change that is about hops 2+, the pin, the
-tone anchor, the audio lock, or the hop cache is not a SWAP change.
+SWAP is a standalone one-hop guided identity-swap helper, not a chain writer.
+It writes its own `swap_script` (`[98]`, the complete six-field H3 contract
+prefixed with `body_swap:` or `head_swap:`) and `swap_refs` (`[99]`, the plate
+whitelist: `""` = register default, `"[]"` = no plates for `keep_person`,
+`"tag1, tag2"` = explicit ordered plates) plus `reference_video_desc`, and may
+bind MEDIA clip slot 1. It must not write `shot_plan` (leaving the user's
+multi-shot chain untouched), must not write `ref_plan`, must not add, remove or
+rewrite rail rows, and must not share WRITE's system prompt or WRITE's
+generate/validate/repair loop. Clearing SWAP (`Clear swap`) empties
+`swap_script` and `swap_refs` and hands the node back to `shot_plan`. A change
+that is about hops 2+, the pin, the tone anchor, the audio lock, or the hop
+cache is not a SWAP change.
+
+When `swap_script` is non-empty, `run()` re-runs `swap_contract_errors(swap,
+shape_only=True)` (fail-closed), clones `model` via `_swap_lora` to auto-load
+`minimax_h3_character_swap_v1.0_ref2va_r64_gl.safetensors` (`body_swap:`) or
+`minimax_h3_head_swap_v1.0_r32.safetensors` (`head_swap:`) @ `1.0` with
+`H3AdaLNLoRAFix(mode="port")` before `_model_fingerprint(model)`, lays
+`reference_video[:render_length]` onto `MiniMaxH3AddGuide(frame_idx=0)` for
+guide-latent (`_gl`) alignment, and renders 1 hop (`hop_script="verbatim"`,
+`chains=1`, `ht` forced `False`).
 
 The generate/validate/repair *loop* (`planner._repair_loop`) is
 mechanism, extracted so SWAP did not fork WRITE's policy loop to get one.
@@ -251,11 +264,11 @@ rewrites the conversation between attempts -- remapping rail tags by
 filename, merging the register, restoring pinned `mp` and `file` -- before
 anything validates, which `consume` cannot express. Two loops, and a change
 to the repair protocol has to land in both. SWAP's instruct
-(`prompt_pack/SWAP_PROMPT.md`) and validator (`validate_swap`) are separate
-policy. WRITE's `validate()` and
-`system_prompt()` are not on this path. `tools/check_swap_boundary.py`
-enforces the clauses that can be checked without a browser. Gaps it cannot
-cover are named in that file's docstring.
+(`prompt_pack/SWAP_PROMPT.md`) and validator (`validate_swap` /
+`swap_contract_errors`) are separate policy. WRITE's `validate()` and
+`system_prompt()` are not on this path. `tools/check_swap_boundary.py`,
+`tools/check_swap_instruct.py`, and `tools/check_swap_render_path.py`
+enforce the contract and wiring invariants without a browser or GPU.
 
 ## Tone compensation
 

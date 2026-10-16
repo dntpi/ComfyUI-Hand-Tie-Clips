@@ -95,6 +95,29 @@ def main():
     print("node declares %d widgets (control_after_generate included)\n"
           % len(expect))
 
+    # A widget COUNT is not a widget ORDER. These two were first declared
+    # between `ht_seam_source` and `ht_seam_fix` while every graph stored them
+    # last, so `widgets_values[swap_script]` handed the node ht_seam_fix's
+    # "off"/"on" -- a non-empty swap script on every chain graph, and the swap
+    # gate refused to render them all. The count stayed correct, which is
+    # exactly why the check above could not see it. Anything positional needs
+    # to be asserted BY POSITION.
+    print("SWAP slots are positional, and a count cannot prove an order")
+    ck("swap_refs is immediately before audio_refine",
+       expect[expect.index("audio_refine") - 1] == "swap_refs"
+       and expect[expect.index("swap_refs") - 1] == "swap_script",
+       str(expect[-8:]))
+    ck("audio_refine is the tail, after swap_refs",
+       expect[-6:] == ["audio_refine", "audio_denoise", "audio_steps",
+                       "audio_sampler", "audio_scheduler", "audio_seed_offset"],
+       str(expect[-8:]))
+    ck("ht_seam_source, gap_order and guide_carry are gone (removed 2026-10-14)",
+       not ({"ht_seam_source", "gap_order", "guide_carry"} & set(expect)), str(expect[-4:]))
+    ck("they come after ht_seam_fix",
+       "ht_seam_fix" in expect
+       and expect.index("ht_seam_fix") < expect.index("swap_script"),
+       str(expect[-5:]))
+
     for fn in ("HandTieClips_Starter.json", "HandTieClips_Showcase.json"):
         p = os.path.join(HERE, "workflows", fn)
         print(fn)
@@ -102,6 +125,15 @@ def main():
         nodes = wf["nodes"]
         byid = {n["id"]: n for n in nodes}
         types_used = {n["type"] for n in nodes}
+
+        # What run() would actually SEE, by position.
+        chain0 = next(n for n in nodes if n["type"] == "HandTieClips")
+        got = {nm: (chain0.get("widgets_values") or [None] * len(expect))[i]
+               for i, nm in enumerate(expect) if i < len(expect)}
+        ck("this graph loads with swap_script EMPTY (so it renders as a chain)",
+           got.get("swap_script", "") == "", repr(got.get("swap_script"))[:90])
+        ck("this graph loads with swap_refs empty",
+           got.get("swap_refs", "") == "", repr(got.get("swap_refs"))[:90])
 
         allowed = CORE | OURS | set(DEPS)
         ck("only core, this pack and declared deps", types_used <= allowed,
@@ -155,6 +187,11 @@ def main():
 
         wv = dict(zip(expect, chain["widgets_values"]))
         ck("control_after_generate=fixed", wv["control_after_generate"] == "fixed")
+        ck("ht_seam_fix, swap_script, swap_refs sit ahead of the audio widgets",
+           chain["widgets_values"][-9] in ("on", "off")
+           and chain["widgets_values"][-8:-6] == ["", ""]
+           and chain["widgets_values"][-6:] == ["off", 0.5, 5, "same", "same", 0],
+           str(chain["widgets_values"][-9:]))
 
         # Links: every id referenced by a node must exist, and vice versa.
         lids = {l[0] for l in wf["links"]}

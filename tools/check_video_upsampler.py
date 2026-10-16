@@ -100,9 +100,9 @@ def run_checks(V, tu, ug):
         def decode(self, v):
             return torch.zeros(1, tu.frames_in(v.shape[2]), v.shape[3] * 16, v.shape[4] * 16, 3)
 
-    def fake_upsample(model, cond, latent, sampler, name, mp, denoise, guide=None, budget=None):
+    def fake_upsample(model, cond, latent, sampler, name, mp, denoise, guide=None, budget=None, **kw):
         seen.update(cond=cond, mp=mp, denoise=denoise, guide=guide, budget=budget,
-                    latent=latent)
+                    latent=latent, **kw)
         v = latent["samples"].tensors[0]
         return {"samples": nt.NestedTensor((torch.zeros(1, 24, v.shape[2], v.shape[3] * 2,
                                                         v.shape[4] * 2),
@@ -202,8 +202,10 @@ def chain_budget_checks(H3, tu):
     ck("upsample_tile_tokens: INT, default = recipe, min 0",
        spec is not None and spec[0] == "INT" and spec[1].get("default") == tu.TOKEN_BUDGET
        and spec[1].get("min") == 0)
-    ck("it is the last widget (only the upsample_dit socket after it)",
-       list(opt)[-2:] == ["upsample_tile_tokens", "upsample_dit"])
+    opt_keys = list(opt)
+    ck("upsample_dit sits immediately after upsample_tile_tokens",
+       "upsample_tile_tokens" in opt_keys and "upsample_dit" in opt_keys
+       and opt_keys.index("upsample_dit") == opt_keys.index("upsample_tile_tokens") + 1)
     ck("run() defaults it to the recipe",
        inspect.signature(H3.HandTieClips.run).parameters["upsample_tile_tokens"].default
        == tu.TOKEN_BUDGET)
@@ -222,7 +224,8 @@ def chain_budget_checks(H3, tu):
     for f in ("HandTieClips_Starter.json", "HandTieClips_Showcase.json"):
         w = json.load(open(os.path.join(HERE, "workflows", f), encoding="utf-8"))
         n = next(x for x in w["nodes"] if x["type"] == "HandTieClips")
-        ck(f"{f}: last widget is the recipe budget", n["widgets_values"][-1] == tu.TOKEN_BUDGET)
+        ck(f"{f}: upsample_tile_tokens [95] is the recipe budget",
+           len(n["widgets_values"]) > 95 and n["widgets_values"][95] == tu.TOKEN_BUDGET)
 
 
 def main():

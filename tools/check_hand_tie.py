@@ -68,8 +68,10 @@ ck("a run split by size alone is split evenly: 10 x 8 s is 5 + 5, every last hop
 _ex = [{"beat": "x"}] * 3 + [{"beat": "x", "anchor": "extend"}] + [{"beat": "x"}] * 2
 ck("an authored extend or restart is never moved by the balancing",
    HT.sections(_ex, [192] * 6) == [[0, 1, 2], [3, 4, 5]], HT.sections(_ex, [192] * 6))
-ck("the closing window has no moment: the previs text keeps one stamp per hop",
-   HT.compile_previs([{"beat": "@a walks."}, {"beat": "@a sits."}], [192, 192])[0].count("At ") == 2)
+ck("the closing window has no moment: one action range per hop, the closing window a carry",
+   HT.compile_previs([{"beat": "@a walks."}, {"beat": "@a sits."}], [192, 192])[0]
+   == ("At 00:00.000-00:02.833, @a walks. At 00:02.833-00:03.750, " + HT.carry_text("@a")
+       + " At 00:03.750-00:05.667, @a sits. At 00:05.667-00:06.583, " + HT.carry_text("@a")))
 ck("run() ties a hop's end wherever a next window exists (the closing one included)",
    "[(-(_ht.WINDOW + _xtra), _k + 1)] if _k + 1 < len(_wp)" in src)
 ck("4 x 8 s: a 702-frame film", HT.film_frames([192] * 4) == 702, HT.film_frames([192] * 4))
@@ -123,13 +125,16 @@ plan = [
 ]
 plan[-1]["moment_end"] = "<Subject 1> chops again and (S1) says, <d>[English] Right. Soup won't make itself.</d>"
 text, lay = HT.compile_previs(plan, [192] * 4)
-ck("one timed line per window, in order", text.count("At ") == 4, text)
-ck("plain moments sit on their window: 00:00.000, 00:05.667, 00:08.500, each later one the same take",
-   all(s in text for s in ("At 00:00.000 <Subject 1> chops",
-                           "At 00:05.667 The same take continues as <Subject 1> leans",
-                           "At 00:08.500 The same take continues as <Subject 1> lifts")), text)
-ck("a speaking moment is led in so the window lands mid-line (window B 2.833 -> 1.833)",
-   "At 00:01.833 The same take continues as <Subject 1> turns to the window" in text, text)
+ck("one action range per beat, in order (plus carry ranges)", text.count(", <Subject 1> ") == 7, text)
+ck("plain beats start right AFTER their window (window start + 22 f): 06.583, 09.417",
+   all(s in text for s in ("At 00:00.000-00:01.833, <Subject 1> chops",
+                           "At 00:06.583-00:08.500, <Subject 1> leans",
+                           "At 00:09.417-00:11.333, <Subject 1> lifts")), text)
+ck("a window between two plain beats is the earlier beat settling",
+   "At 00:05.667-00:06.583, " + HT.carry_text("<Subject 1>") in text
+   and "At 00:08.500-00:09.417, " + HT.carry_text("<Subject 1>") in text, text)
+ck("a speaking moment is led in so the window lands mid-line (window B 2.833 -> 1.833), no carry range there",
+   "At 00:01.833-00:05.667, <Subject 1> turns to the window" in text, text)
 ck("there is no closing MOMENT (00150 cut to reach one): moment_end does not reach the previs",
    "chops again" not in text, text[-160:])
 no_moment = HT.compile_previs([{"beat": "First thing. Second thing."}, {"beat": "Third. Fourth."}], [192, 192])[0]
@@ -154,14 +159,18 @@ ck("a plain beat's spoken line never reaches the previs (no dangling '(S1) says,
 # text names only pictures gives its audio branch nothing to do but invent a
 # voice (chain_00147: 6 invented words, all in the first 4 s).
 ck("plain beats: one stamp per window, each beat to its end; the last beat's own sound reaches no window",
-   plain == ("At 00:00.000 @cook chops herbs. @cook turns to the window. "
-             "At 00:02.833 The same take continues as @cook looks out of the window. @cook steps to the sink. "
-             "At 00:05.667 The same take continues as @cook sips."), plain)
+   plain == ("At 00:00.000-00:02.833, @cook chops herbs. @cook turns to the window. "
+             "At 00:02.833-00:03.750, " + HT.carry_text("@cook") + " "
+             "At 00:03.750-00:05.667, @cook looks out of the window. @cook steps to the sink. "
+             "At 00:05.667-00:06.583, " + HT.carry_text("@cook") + " "
+             "At 00:06.583-00:08.500, @cook sips. "
+             "At 00:08.500-00:09.417, " + HT.carry_text("@cook")), plain)
 ck("_last_sentence still reads a pronoun ending (kept for moment_end's split)",
    HT._last_sentence("@dex steps out. He walks toward the camera.") == "@dex walks toward the camera.",
    HT._last_sentence("@dex steps out. He walks toward the camera."))
 ck("without moments: each beat's first sentence, one per hop",
-   no_moment == "At 00:00.000 First thing. At 00:02.833 The same take continues as third.", no_moment)
+   no_moment == ("At 00:00.000-00:02.833, First thing. At 00:02.833-00:03.750, " + HT.carry_text("")
+                 + " At 00:03.750-00:05.667, Third. At 00:05.667-00:06.583, " + HT.carry_text("")), no_moment)
 
 print("\nthe moment carries its beat's sound, so the audio branch has a target")
 # chain_00147's kept previs (seed 219378) invented "Looks to be I'm hard." (5
@@ -194,8 +203,9 @@ _on = HT.compile_previs([{"beat": "@dex walks. The low hum of the refrigerator."
                          {"beat": "@dex turns. He walks toward the camera down the street."}],
                         [192, 192])[0]
 ck("sound=False restores the exact old text (the A/B lever)",
-   _off == ("At 00:00.000 @dex walks. At 00:02.833 The same take continues as @dex turns. "
-            "@dex walks toward the camera down the street."), _off)
+   _off == ("At 00:00.000-00:02.833, @dex walks. At 00:02.833-00:03.750, " + HT.carry_text("@dex")
+            + " At 00:03.750-00:05.667, @dex turns. @dex walks toward the camera down the street."
+            + " At 00:05.667-00:06.583, " + HT.carry_text("@dex")), _off)
 ck("and the default is the sound-carrying one", "The low hum of the refrigerator." in _on, _on)
 _eat = HT.moments([{"beat": "@mina slows by a stall. A sizzling grill, the vendor calling out orders."},
                    {"beat": "@mina holds the skewer up. (S1) says, <d>[English] Here goes.</d> She bites. "
@@ -319,6 +329,30 @@ ck("frames before the hop and the next hop are untouched",
 busy = torch.rand(40, H, W, 3)
 ck("a seam with no still pixels is left alone", HT.seam_bend(before.clone(), 10, 50, busy) is None)
 
+print("\nbody grade (a second before the cut against a second after)")
+prev_g = torch.full((80, 16, 16, 3), 0.40)
+prev_g[-HT.WINDOW:] = 0.20                                   # the tail window, which must not be the sample
+inc_g = torch.full((80, 16, 16, 3), 0.50)                    # the next hop's body, 25.5/255 hotter
+inc_g[:HT.WINDOW] = 0.70                                     # its head window, a third color
+prev_g[:, :4, :4] = torch.rand(80, 4, 4, 3)
+inc_g[:, :4, :4] = torch.rand(80, 4, 4, 3)
+kept = prev_g.clone()
+graded, hs, hd = HT.body_grade(prev_g, inc_g, HT.WINDOW)
+ck("the hop shift is the body a second back minus the body a second on",
+   hs is not None and abs(float(hs.mean()) * 255 + 25.5) < 0.3,
+   None if hs is None else (hs * 255).tolist())
+ck("the head window takes the extra shift onto that same color",
+   hd is not None and abs(float(hd.mean()) * 255 + 51.0) < 0.3,
+   None if hd is None else (hd * 255).tolist())
+ck("a second after the cut matches a second before it",
+   abs(float(graded[HT.FPS, 8, 8, 0]) - 0.40) * 255 < 0.3)
+ck("the head window's grade matches that color and keeps a flat picture",
+   abs(float(graded[5, 8, 8, 0]) - 0.40) * 255 < 0.3
+   and abs(float(graded[5, 8, 8, 0] - graded[6, 10, 10, 0])) * 255 < 0.3)
+ck("the previous hop is not modified", torch.equal(prev_g, kept))
+ck("no still pixels leaves the hop alone",
+   HT.body_grade(torch.rand(80, 16, 16, 3), torch.rand(80, 16, 16, 3), HT.WINDOW)[1] is None)
+
 print("\ndeflicker (the frame-17 dip every guided head has)")
 film = bg.repeat(80, 1, 1, 1).clone()
 film[:, :8, :8] = torch.rand(80, 8, 8, 3)                      # motion in one corner
@@ -333,6 +367,15 @@ ck("one- and two-frame blinks are removed", float((film - ref)[:, 8:, 8:].abs().
    "%.2f/255" % (float((film - ref)[:, 8:, 8:].abs().max()) * 255))
 ck("a level change that lasts is kept", abs(float((film[45] - film[35])[8:, 8:].mean()) * 255 - 6.0) < 0.3)
 ck("the largest correction is reported", abs(fix * 255 - 3.0) < 0.3, "%.2f" % (fix * 255))
+
+_ct = HT.carry_text("@x")
+ck("a window's range carries the beat on: no settle/hold/still/pause/stop/stare (user 22:05: hop 1 tail froze)",
+   not hasattr(HT, "settle_text") and _ct.startswith("@x carries on")
+   and not any(wd in _ct.lower() for wd in ("settle", "hold", "still", "pause", "stop", "stare", "freez")), _ct)
+_pt = HT.compile_previs([{"beat": "@x walks."}, {"beat": "@x sits."}, {"beat": "@x grabs a skewer."}], [68, 68, 68], 24)[0]
+ck("the compiled previs carries no settle/hold words, and each beat still starts after its window",
+   not any(wd in _pt.lower() for wd in ("settle", "holds", "pause", "stare")) and _pt.count("carries on") >= 2
+   and "At 00:03.750-" in _pt and "@x grabs a skewer." in _pt, _pt)
 
 print("\ndetail settle (chain_00144: detail swelled +12% after join 1)")
 torch.manual_seed(2)
@@ -367,20 +410,20 @@ ck("a panning, rainy shot is not a cut", HT.previs_cuts(pan) == [], HT.previs_cu
 cut = pan.clone()
 cut[37:] = torch.stack([torch.roll(scene_b, shifts=t, dims=1) for t in range(23)])
 ck("a hard cut to another shot is found at its first new frame", HT.previs_cuts(cut) == [37], HT.previs_cuts(cut))
-ck("run() renders the previs again on a cut, PREVIS_TRIES at most, keeping the least-cut take",
-   "for _try in range(_ht.PREVIS_TRIES):" in src and "_ht.previs_cuts(_p_imgs[:_p_len])" in src
-   and "_rank < _best[5]" in src)
-ck("a previs that cuts on every try is a warning in the log and in info",
-   "ht_previs_warn.append(" in src and "check the film there" in src)
-ck("a cut the text asks for (same place twice) stops the re-rolls (chain_00150: 13.38/13.42/13.62 s)",
-   HT.same_cut([321], [322]) and HT.same_cut([314], [327]) and "if _again:" in src)
+ck("the previs is ONE take: no retake loop, no seed stride, no same_cut (2026-10-14)",
+   "PREVIS_TRIES" not in src and not hasattr(HT, "PREVIS_TRIES") and not hasattr(HT, "same_cut")
+   and "for _try in range(" not in src and "_p_seed = _p_seed0\n" in src
+   and "_p_seed0 + _try" not in src and "rendering it again on the next seed" not in src)
+ck("the cut detector only logs: WARNING for a cut inside a window, info between windows",
+   "_ht.previs_cuts(_p_imgs[:_p_len])" in src
+   and "if w <= _c < w + _ht.WINDOW), None)" in src
+   and "WARNING: hand-tie previs {_si + 1}: cut at f{_c}" in src
+   and "between windows (no hop is tied there)" in src
+   and "ht_previs_warn.append((_si + 1, _p_seed, _in_win))" in src and "check the film there" in src)
 _w = HT.layout([192] * 6)["windows"]
 ck("window_cuts finds the cuts inside a window",
    HT.window_cuts([314, 321, 200, 191], _w) == [] and HT.window_cuts([145, 210], _w) == [145, 210]
    and HT.window_cuts([136, 158], _w) == [], HT.window_cuts([314, 321, 200, 191, 145, 210, 136, 158], _w))
-ck("run() re-rolls on EVERY cut (00154's hop 1 copied one between windows), window cuts rank the takes",
-   "_cuts = _ht.previs_cuts(_p_imgs[:_p_len])" in src and "_rank < _best[5]" in src
-   and "window_cuts(_cuts" in src)
 _walk = torch.stack([torch.roll(scene_a, shifts=6 * t, dims=1) for t in range(60)])     # a fast handheld walk
 _walk += 0.03 * torch.randn_like(_walk)
 _wcut = _walk.clone()
@@ -389,11 +432,6 @@ ck("a fast walk is not a cut", HT.previs_cuts(_walk) == [], HT.previs_cuts(_walk
 ck("a cut inside a fast walk is found (00154 f66: 3.6x under the old median test)",
    HT.previs_cuts(_wcut) == [30], HT.previs_cuts(_wcut))
 _w5 = HT.layout([192] * 5)["windows"]
-ck("no cut is kept as the text's any more: a cut at a window re-rolls like any other (2026-10-13)",
-   "moment_cuts" not in src and not hasattr(HT, "moment_cuts") and "each on a moment" not in src
-   and "            if _cuts:" + chr(10) + "                # A cut that survives every take" in src)
-ck("a cut that moved, or a new one, is not the same cut",
-   not HT.same_cut([321], [261, 327]) and not HT.same_cut([100], [200]) and not HT.same_cut([], [321]))
 
 print("\nthe cut sits at the window START (the previous hop's tail span is dropped)")
 # raw hops of chain_00142: the tail span, guided at -22, stepped -11/255; the head,
@@ -435,8 +473,9 @@ ck("one continuous sound across the window switches at the picture cut", HT.audi
 ck("run() tones a hop on its head window only (its tail span is not delivered)",
    "_ht.tone_match(imgs, _tone_head, None)" in src
    and "_tone_head = _wp[_k]" in src)
-ck("run() bends the outgoing hop to the incoming one, then deflickers each section",
-   "_ht.seam_bend(master_imgs, ht_hop_start, write_pos, imgs)" in src
+ck("run() does not repaint the incoming hop, and does not bend that join",
+   "_ht.body_grade(" not in src
+   and "_ht.seam_bend(master_imgs, ht_hop_start, write_pos, imgs)" not in src
    and "_ht.deflicker(master_imgs[a:b])" in src)
 ck("run() settles detail at each tied cut, never at a restart",
    "ht_cuts.append(int(write_pos))" in src and "_ht.detail_settle(master_imgs, _c)" in src
@@ -511,7 +550,7 @@ e = HT.settings_errors(22, "off", big, [192] * 7)
 ck("7 hops of 8 s are not refused: they chain into two sections", e == [], e)
 ck("run() pins a chained previs on the previous hop's real frames and uses them as window 0",
    "MiniMaxH3AddGuide, \"the chained previs pin\"" in src and "image=prev_imgs, audio=None if _mute else prev_audio" in src
-   and "pics[0] = prev_imgs[-_ht.WINDOW:].clone()" in src and '**({"from": _from} if _from else {})' in src)
+   and "if not _ht.SEAM_SOUND_ONLY:\n                    pics[0] = prev_imgs[-_ht.WINDOW:].clone()" in src and '**({"from": _from} if _from else {})' in src)
 ck("run() ties a section's last hop at its start only",
    "if _k + 1 < len(_wp) else []" in src and "_store.tensor_digest(_wp[_k + 1]) if _tl else None" in src)
 ck("anchor=extend on shot 1 is refused (nothing to continue)",
@@ -561,10 +600,11 @@ _car = [
              "She nods. Footsteps, traffic hum, a car horn far off."},
 ]
 _ct, _cl = HT.compile_previs(_car, [192] * 5)
-ck("every later moment is the same take going on, not a new shot",
-   _ct.count(HT.CONTINUE) == 4 and _ct.startswith("At 00:00.000 @carolyn walks"), _ct)
+ck("one shot: no bare stamp anywhere, every clock is a range",
+   _ct.startswith("At 00:00.000-") and not re.search(r"At \d\d:\d\d\.\d{3}(?!-)", _ct), _ct)
 ck("the taste beat plays to its swallow inside its own moment, with no stamp of its own",
-   "chews slowly with her lips closed. @carolyn swallows" in _ct and _ct.count("At ") == 5, _ct)
+   "chews slowly with her lips closed. @carolyn swallows" in _ct
+   and _ct.count("At ") == 5 + 5, _ct)
 ck("an ending is a person's action, never the beat's sound",
    HT._end_sentence("@a walks. He sits. Traffic hum, footsteps.") == "@a sits."
    and HT._end_sentence("@a walks. Traffic hum, footsteps.") == ""
@@ -574,7 +614,27 @@ ck("an authored moment gets no ending of its own",
                                        {"beat": "@x runs."}], [192, 192])[0])
 _full = HT.compile_previs([{"beat": "@x walks. @x sits."}] * 6, [192] * 6)
 ck("one stamp per window and no more (each extra stamp was a cut: eeebcad, 4.83/7.54/10.50 s)",
-   _full[0].count("At ") == 6 and _full[0].count("@x sits") == 6, _full[0])
+   _full[0].count(", @x walks") == 6 and _full[0].count("@x sits") == 6
+   and _full[0].count(HT.carry_text("@x")) == 4
+   and "At 00:14.167-00:15.083, @x walks" in _full[0], _full[0])
+
+print("\nprevis law (2026-10-14): one shot of contiguous ranges, beats after their windows")
+_RG = re.compile(r"At (\d\d):(\d\d\.\d{3})-(\d\d):(\d\d\.\d{3}), ")
+def _ranges(txt):
+    return [(int(a) * 60 + float(b), int(c) * 60 + float(d)) for a, b, c, d in _RG.findall(txt)]
+for _nm, _tx, _ly in (("Carolyn 5", _ct, _cl), ("lab 4", text, lay), ("x6", _full[0], _full[1])):
+    _r = _ranges(_tx)
+    ck("%s: ranges start at 0, touch end to start and end at the previs end" % _nm,
+       bool(_r) and _r[0][0] == 0.0 and all(abs(_r[i][1] - _r[i + 1][0]) < 1e-9 for i in range(len(_r) - 1))
+       and abs(_r[-1][1] - _ly["previs"] / float(HT.FPS)) < 1e-3 and len(_r) == _tx.count("At "), _r)
+    ck("%s: no bare single stamp (a bare At is a camera cut)" % _nm,
+       not re.search(r"At \d\d:\d\d\.\d{3}(?!-)", _tx))
+_r = _ranges(_ct)
+_starts = {round(a * HT.FPS) for a, _ in _r}
+ck("Carolyn 5: every plain beat k>0 starts at window k + 22",
+   all((w + HT.WINDOW) in _starts for w in _cl["windows"][1:4]), (sorted(_starts), _cl["windows"]))
+ck("the stamp grammar is gone from the previs (no 'The same take continues as')",
+   not hasattr(HT, "CONTINUE") and "The same take continues" not in _ct)
 ck("no voice reaches the previs (gibberish from 'the chatter of the crowd')",
    not re.search(r"chatter|calling out", _ct), _ct)
 
@@ -612,8 +672,7 @@ ck("a chained section's first hop keeps its head; so does any later hop; so does
    not HT.free_head(0, True) and not HT.free_head(1, False) and not HT.free_head(0, False, True))
 ck("run() drops the head tie for it, and the head from its key",
    "_free = _ht.free_head(_k, ht_chained[_si], start_image is not None)" in src
-   and "_ties = ([] if (_free or _seam_prev) else [(0, _k)])" in src
-   and "_seam_prev = (not _free) and _ht_seam_prev_hop(i, hop_restart)" in src
+   and "_ties = ([] if _free else [(0, _k)])" in src
    and "_store.tensor_digest(_wp[_k]) if _hd else None" in src
    and "_store.audio_digest(_ws[_k]) if _hd else None" in src)
 ck("run() does not tone-match a free hop to a window it was never tied to",
@@ -647,8 +706,8 @@ ck("a quiet hop that talks: fails", not HT.judge_sound([], "so this is the best 
 ck("a better draft scores higher",
    HT.judge_sound(_line, "What's up everybody welcome back okay here")[1]
    > HT.judge_sound(_line, "What's up everybody")[1])
-ck("the sound first is on, and the previs is smaller and muted, by default",
-   HT.SOUND_FIRST and HT.PREVIS_MUTE and HT.SOUND_TRIES >= 2
+ck("v3: the sound first is OFF by default (opt-in), the previs is smaller and muted",
+   (not HT.SOUND_FIRST) and HT.PREVIS_MUTE and HT.SOUND_TRIES >= 2
    and HT.PREVIS_RESOLUTION.startswith("512p") and HT.SOUND_DRAFT_RESOLUTION.startswith("448p"))
 _t0 = torch.full((48, 8, 6, 3), 0.5)
 _ts = torch.full((22, 4, 3, 3), 0.6)
@@ -704,24 +763,41 @@ ck("hear.py takes the GPU when CUDA is up, else the CPU",
 ck("early_words flags only the NEW line inside the overlap",
    HT.early_words(["hi", "there"], [("so", 0.1, 0.3), ("Hi", 0.5, 0.7), ("there", 1.2, 1.4)], 0.917)
    == [("hi", 0.5)] and HT.early_words(["hi"], [("Hi", 1.0, 1.2)], 0.917) == [])
-ck("ht_seam_fix is appended last and off by default",
-   '"ht_seam_fix": (["off", "on"], {' in src and 'ht_seam_source="prev_hop", ht_seam_fix="off", unique_id=None' in src)
-ck("ht_seam_fix v2 keys every hop (hop 1 renders longer and its line moved)",
-   'if _sfix:' + chr(10) + '                    hop_payload["ht_seam_fix"] = [2,' in src)
+ck("ht_seam_fix is off by default, and unique_id stays last after the audio widgets",
+   '"ht_seam_fix": (["off", "on"], {' in src and 'ht_seam_fix="off"' in src
+   and "audio_model=None,\n            unique_id=None):" in src)
+ck("ht_seam_fix keys every hop, version 8 (seam source / gap order / guide carry removed)",
+   'if _sfix:' + chr(10) + '                    hop_payload["ht_seam_fix"] = [8,' in src)
+ck("ht_seam_fix v4: tone match and mean anchor off by default, tail discard kept, keyed",
+   HT.SEAMFIX_TONE_MATCH is False and HT.SEAMFIX_ANCHOR is False and HT.SEAMFIX_TAIL_EXTRA == 34
+   and "bool(_ht.SEAMFIX_TONE_MATCH), bool(_ht.SEAMFIX_ANCHOR)]" in src
+   and "if _sfix and _ht.SEAMFIX_ANCHOR:" in src and "if (_tone_head is None\n                        or _ht.free_head" in src)
+ck("startup line no longer claims a x0.75 anchor",
+   'latent mean anchor "' + chr(10) + '                  f"x{_ht.SEAMFIX_ANCHOR_STRENGTH})"' not in src)
+ck("every hop logs which voice ref it carries", '"[{TAG}] hop {i + 1}: voice ref "' in src.replace("f\"", "\""))
+_wfp = os.path.join(HERE, "workflows", "HandTieClips_HandTie_SeamFix_v2.json")
+_sla = [n for n in __import__("json").load(open(_wfp, encoding="utf-8"))["nodes"] if n.get("type") == "H3SLAAttention"]
+ck("SeamFix_v2: SLA protect_audio on, so the voice ref's audio tokens survive 65% sparsity",
+   bool(_sla) and all(n["widgets_values"][4] is True for n in _sla))
 # ht_seam_fix v2 (recover, 2026-10-14)
-ck("v2: a 24-frame tail discard keeps 1 + 4k and covers the 22-frame tail",
-   HT.SEAMFIX_TAIL_EXTRA % 4 == 0 and HT.SEAMFIX_TAIL_EXTRA >= HT.WINDOW
+ck("v2: the tail discard is whole 17-frame blocks and covers the 22-frame tail",
+   HT.SEAMFIX_TAIL_EXTRA % 17 == 0 and HT.SEAMFIX_TAIL_EXTRA >= HT.WINDOW and "_dsteps = int(frames) // 17 * 5" in src
    and "render_length = hop_length + _xtra" in src and "sampled = _drop_latent_tail(sampled, _xtra)" in src)
-ck("v2: the line starts at 1.3 s under seam fix, 1.0 off",
-   HT.SEAMFIX_LINE_START_S == 1.3 and HT.LINE_START_S == 1.0)
+ck("v3: the line starts at 1.0 s with seam fix on or off (v1 timing)",
+   HT.SEAMFIX_LINE_START_S == 1.0 and HT.LINE_START_S == 1.0)
 ck("v2: invented_words flags any word after the overlap",
    HT.invented_words([("so", 0.1, 0.3), ("Thanks", 1.5, 1.8)], 0.917) == [("Thanks", 1.5)]
    and HT.invented_words([("so", 0.1, 0.3)], 0.917) == [])
-ck("v2: anchor 0.3, off the carried overlap; picture-only Motion-Context; draft continues the carry",
-   HT.SEAMFIX_ANCHOR_STRENGTH_V2 == 0.3 and "skip=(_ht.SEAMFIX_ANCHOR_SKIP if _seam_prev else 0)" in src
-   and "picture_only=_sfix" in src and "_lock_audio_head(_dl, _pp0[1], overlap_n, render_length)" in src)
+ck("v3: anchor 0.3 kept; no hop opens on another (_seam_prev is always False); draft head lock off",
+   HT.SEAMFIX_ANCHOR_STRENGTH_V2 == 0.3 and "_seam_prev = False" in src
+   and "_pin_continue(" not in src[src.find("                if ht:\n                    # Window k at frame 0"):src.find("pin_mech_used = \"hand_tie\"")]
+   and not HT.SEAMFIX_PICTURE_ONLY and not HT.SEAMFIX_DRAFT_LOCK)
+ck("v3: the single-pass hop carries the voice ref on its own conditioning",
+   "ref_audios=hop_ref_audios," in src[src.find('"the reference conditioning"'):src.find('"the reference conditioning"') + 1200])
+ck("v3: the hop key records sound_first and the v2 sound switches",
+   "bool(sound_first), bool(_ht.SEAMFIX_PICTURE_ONLY)," in src)
 ck("a one-hop chain skips the previs and ties to no None window",
-   "if n <= 1 and not previs_only:" in src and "if _wp[_w] is not None]" in src)
+   "if len(_shots_full) <= 1 and not previs_only:" in src and "if _wp[_w] is not None]" in src)
 import torch as _tt
 import importlib as _il
 _rc = sys.modules.get(HT.__name__.rsplit(".", 1)[0] + ".h3_ref_chain")
@@ -758,6 +834,127 @@ ck("the writer no longer asks for closed lips after a line, nor does the lint",
 ck("run() compiles the hops through open_lips",
    "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames," in src)
 
+print("\nsound carry: hop k's sound crosses the join, its picture does not")
+ck("SEAM_SOUND_ONLY and SAVE_WINDOWS are on by default", HT.SEAM_SOUND_ONLY is True and HT.SAVE_WINDOWS is True)
+def _grab(name):
+    a = src.find("def " + name + "(")
+    b = src.find("\ndef ", a + 1)
+    return src[a:b]
+_ns = {"_HTC_PRIOR": "_htc_prior_kf"}
+exec(_grab("_mark_prior_keyframes") + "\n" + _grab("_strip_video_keyframes"), _ns)
+_prior = [["e", {"minimax_keyframes": [{"resolved_frame_index": 100, "latent": "anchor"}]}]]
+_m = _ns["_mark_prior_keyframes"](_prior)
+# what Motion-Context.apply returns: copies of the prior keyframes, then its picture
+# keyframes (one per latent step), then its sound keyframe (nodes.py:649)
+_after = [["e", {"minimax_keyframes": [dict(kf) for kf in _m[0][1]["minimax_keyframes"]]
+               + [{"resolved_frame_index": j, "latent": "hopk_pic%d" % j} for j in range(6)]
+               + [{"resolved_frame_index": -0.4, "audio_latent": "hopk_sound"}]}]]
+_c, _nv, _na = _ns["_strip_video_keyframes"](_after)
+_kf = _c[0][1]["minimax_keyframes"]
+ck("no picture keyframe from hop k survives the strip",
+   _nv == 6 and not any(str(k.get("latent", "")).startswith("hopk_pic") for k in _kf), _kf)
+ck("hop k's sound keyframe is kept", _na == 1 and any(k.get("audio_latent") == "hopk_sound" for k in _kf), _kf)
+ck("a picture keyframe that was on the conditioning before stays, untagged",
+   any(k.get("latent") == "anchor" for k in _kf) and not any("_htc_prior_kf" in k for k in _kf), _kf)
+ck("_pin_continue strips the picture in sound-only mode and refuses a missing sound guide",
+   "if sound_only:\n                cond = _mark_prior_keyframes(cond)" in src
+   and "cond, _nv, _na = _strip_video_keyframes(cond)" in src
+   and "Motion-Context added no sound keyframe" in src)
+ck("every tie is picture only off a muted previs (voice fix v7 kept)",
+   "_pv_muted = bool(_ht.PREVIS_MUTE) and not any(ht_speaks[_si])" in src
+   and "_wa = None if _pv_muted else _ws[_w]" in src and "_wimg = _wp[_w]" in src and "image=_wimg, audio=_wa," in src)
+ck("hop keys no longer chain the previous hop under hand-tie",
+   "None if (hop_restart or ht) else prev_key," in src and '"prev_hop_sound_v1"' not in src)
+
+print("\nties: every hand-tie hop opens on its previs window and ends on the next (end tie at -56)")
+_a = src.find("                    _ties = ([] if _free else")
+_b = src.find("_ties = [(_fi, _w) for _fi, _w in _ties if _wp[_w] is not None]", _a)
+_b = src.find("\n", _b)
+import textwrap as _tw
+_blk = _tw.dedent(src[_a:_b])
+def _ties_for(k, n_win, free=False):
+    class _H: pass
+    _h = _H(); _h.WINDOW = 22
+    ns = {"_free": free, "_k": k, "_xtra": 34, "_wp": ["w"] * n_win, "_ht": _h}
+    exec(_blk, ns)
+    return ns["_ties"]
+_got = {k: _ties_for(k, 5) for k in range(1, 3)}
+ck("hops 2..N-1 get a head tie at 0 and a tail tie at -(22+34) on window k+1",
+   all(_got[k] == [(0, k), (-56, k + 1)] for k in _got), _got)
+ck("hop 1 (free head) keeps its tail tie only", _ties_for(0, 5, free=True) == [(-56, 1)])
+ck("a section's last hop (no window k+1) is head-only", _ties_for(3, 4) == [(0, 3)])
+ck("the hand-tie log names head-only / tail-only, not 'the section's last hop'",
+   "(head only, at its start)" in src and "(tail only, at its end)" in src
+   and "its start; the section's last hop" not in src)
+ck("a tail tie is saved as a tail window (SAVE_WINDOWS covers every tie)",
+   '_role = "head" if _fi >= 0 else "tail"' in src)
+ck("each tie's guide window is saved as AddGuide encodes it",
+   "if _ht.SAVE_WINDOWS:" in src and "_guide_frames_as_used(_wimg, latent)" in src
+   and '"lanczos", "center"' in _grab("_guide_frames_as_used") and "while n % 17 != 5:" in _grab("_guide_frames_as_used")
+   and '"HANDTIECLIPS_windows"' in src)
+
+print("\nprevis cut lint: the Storyboard4 previs of the 17:26 run (seed 13069 cut f62/f126/f191, 117798 f195)")
+# Windows at f0/68/136/204: f62 sits before window 2's stamp, f126 before window 3's,
+# f191/f195 before window 4's. Each of those windows must be flagged.
+_sb4 = [{"beat": b, "duration": "8 s"} for b in ["@carolyn walks down a busy shopping street lined with colorful shop windows in the late afternoon sun, holding her phone out. @carolyn says, <d>[English] What's up, everybody, welcome back. Today is all about street food.</d> She grins at the camera and glances at the passing crowd. Traffic hum and footsteps.", '@carolyn keeps walking with the phone held out, the colorful shop windows sliding past behind her. @carolyn says, <d>[English] Look at this block, every window is a different color. I love it.</d> She slows to a stop beside a street food stall and smiles at the camera. Shop doors chiming, footsteps, a bus pulling away from the curb.', '@carolyn stands at the street food stall on the same street and takes a skewer from the vendor with her free hand. @carolyn says, <d>[English] This is the stall everyone talks about. Okay, here goes the first bite.</d> She raises the skewer toward the camera with a grin, the stall behind her. A sizzling grill and the clink of metal tongs.', '@carolyn steps back from the stall and takes a big bite of the skewer, then chews slowly with her lips closed, eyes shut, nodding at the camera. She swallows, opens her eyes wide and gives the camera a thumbs up beside the stall. The crunch of the skewer, traffic hum and footsteps.']]
+ck("PREVIS_CUT_LINT is off by default (wording cannot close a previs cut)", HT.PREVIS_CUT_LINT is False)
+_lint_default = HT.PREVIS_CUT_LINT
+HT.PREVIS_CUT_LINT = True  # the lint tests below exercise it switched on
+_ms = HT.moments(_sb4)
+_tr = HT.cut_triggers(_ms)
+ck("window 1 (no stamp before it) is not flagged", _tr[0] == [], _tr[0])
+ck("window 2 (f62 cut) flags the arrival at the stall",
+   any(k == "location" and "slows to a stop beside a street food stall" in p for k, p, _ in _tr[1]), _tr[1])
+ck("window 3 (f126 cut) flags the stall re-established and the stall behind her",
+   any(k == "location" and "stands at the street food stall" in p for k, p, _ in _tr[2])
+   and any(k == "framing" and "the stall behind her" in p for k, p, _ in _tr[2]), _tr[2])
+ck("window 4 (f191/f195 cut, both takes) flags stepping back from the stall",
+   any(k == "framing" and "steps back from the stall" in p for k, p, _ in _tr[3]), _tr[3])
+ck("the skewer taken in window 3 is not a state jump in window 4",
+   not any(k == "state" for k, _, _ in _tr[3]), _tr[3])
+_sm, _ch = HT.smooth_moments(_ms)
+ck("rewrites windows 2, 3 and 4 and nothing else", [c[0] for c in _ch] == [1, 2, 3], [c[0] for c in _ch])
+ck("window 2: the stall is walked up to", "walks up to a street food stall, stops beside it," in _sm[1], _sm[1])
+ck("window 3: she is still at the stall, not re-established on the same street",
+   _sm[2].startswith("@carolyn is still at the street food stall and takes a skewer") and "same street" not in _sm[2], _sm[2])
+ck("window 4: she stays at the stall", _sm[3].startswith("@carolyn leans back a little, still at the stall, and takes a big bite"), _sm[3])
+_af = HT.cut_triggers(_sm)
+ck("after the rewrite no location trigger is left at the stamps of windows 3-4 and no step-away",
+   not any(k == "location" for k, _, _ in _af[2] + _af[3]) and not any("steps back" in p for _, p, _ in _af[3]), _af)
+ck("the previs text carries the rewrites", "is still at the street food stall" in HT.compile_previs(_sb4, [192] * 4)[0])
+_save = HT.PREVIS_CUT_LINT
+HT.PREVIS_CUT_LINT = False
+ck("PREVIS_CUT_LINT=False leaves the previs text as before",
+   "stands at the street food stall on the same street" in HT.compile_previs(_sb4, [192] * 4)[0]
+   and HT.cut_lint_report(_sb4) == [])
+HT.PREVIS_CUT_LINT = _save
+ck("a held object with nothing that gave it is a state jump",
+   any(k == "state" for k, _, _ in HT.cut_triggers(["She walks down the street.", "She raises the cup to the camera."])[1]))
+ck("camera and time words are flagged",
+   {k for k, _, _ in HT.cut_triggers(["She walks.", "A wide shot reveals the street. Later she sits."])[1]} >= {"framing", "time"})
+_rep = HT.cut_lint_report(_sb4)
+ck("the log report names each window and the rewrite", any(l.startswith("previs window 4: framing") for l in _rep)
+   and any(l.startswith("previs window 3 rewritten for one take") for l in _rep), _rep)
+HT.PREVIS_CUT_LINT = _lint_default
+ck("run() logs the report per section", "for _w in _ht.cut_lint_report([_pshots[j] for j in _sec]):" in src)
+
+print("\nremoved 2026-10-14: ht_seam_source, gap_order, guide_carry")
+_it = ast.parse(src)
+_opt = None
+for _n in ast.walk(_it):
+    if isinstance(_n, ast.Dict) and any(isinstance(k, ast.Constant) and k.value == "swap_refs" for k in _n.keys):
+        _opt = [k.value for k in _n.keys if isinstance(k, ast.Constant)]
+ck("audio_model is the last optional input, and swap_refs still precedes the audio widgets",
+   bool(_opt) and _opt[-1] == "audio_model"
+   and _opt[_opt.index("swap_refs") + 1] == "audio_refine", (_opt or [])[-4:])
+ck("no ht_seam_source / gap_order / guide_carry widget",
+   bool(_opt) and not ({"ht_seam_source", "gap_order", "guide_carry"} & set(_opt)))
+ck("no gap order or guide carry code left in run()",
+   not any(t in src for t in ("_gap_plan", "_gap_out", "_gap_bridge", "gap_render_order", "gap_role(",
+                              "_ht_guide_carry", "_gcarry", "_ht_seam_prev_hop", "_seam_src", "_snd_carry")))
+ck("hand_tie.py has no GAP_ORDER / gap_render_order / gap_role",
+   not any(hasattr(HT, a) for a in ("GAP_ORDER", "gap_render_order", "gap_role")))
+
 print("\nthe module stays ComfyUI-free")
 tree = ast.parse(open(os.path.join(HERE, "hand_tie.py"), encoding="utf-8").read())
 mods = {n.module if isinstance(n, ast.ImportFrom) else a.name
@@ -765,15 +962,81 @@ mods = {n.module if isinstance(n, ast.ImportFrom) else a.name
         for a in (n.names if isinstance(n, ast.Import) else [n])}
 ck("imports only stdlib + torch", mods <= {"re", "torch", "torch.nn.functional"}, sorted(m for m in mods if m))
 
-# ht_seam_source is drawn in the RUN panel's join & pin group, labelled SEAM SOURCE.
 import io as _io
 _rp = _io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "js", "editor", "run_panel.js"), encoding="utf-8").read()
-_jp = _rp[_rp.find('["join & pin"'):]
-_jp = _jp[:_jp.find("]]")]
-ck("run_panel.js draws ht_seam_source in join & pin, after pin_mech",
-   '"ht_seam_source"' in _jp and _jp.find('"pin_mech"') < _jp.find('"ht_seam_source"'))
-ck("run_panel.js labels it seam source", 'ht_seam_source: "seam source"' in _rp)
+ck("run_panel.js no longer lists ht_seam_source, gap_order or guide_carry",
+   not any(t in _rp for t in ('"ht_seam_source"', '"gap_order"', '"guide_carry"')))
+
+print("\nsolo re-render keeps the full previs (render_through/render_from, 2026-10-14)")
+# 19:38:04 log: render_through=3 gave "hops 1-3, previs 226f at 480x896" vs the full
+# run's "hops 1-4, previs 294f at 448x800", so the previs key missed. run() now plans
+# every section from the full plan (_shots_full/_lengths_full); this replays that plan.
+def _pv_plan(shots, lens, W=736, H=1280):
+    out = []
+    for sec in HT.sections(shots, lens):
+        fr = [lens[j] for j in sec]
+        txt, lay = HT.compile_previs([shots[j] for j in sec], fr, HT.FPS)
+        out.append((sec, txt, lay["previs"], lay["windows"],
+                    HT.previs_canvas(W, H, fr, lay["previs"], (448, 800)),
+                    HT.window_speaks([shots[j] for j in sec], len(lay["windows"]))))
+    return out
+_sb = [{"beat": "@a walks."}, {"beat": "@a stops."}, {"beat": "@a sits."}, {"beat": "@a waves."}]
+_full = _pv_plan(_sb, [124] * 4)
+_trunc = _pv_plan(_sb[:3], [124] * 3)
+ck("the old truncated plan really differs (the bug this guards)", _full != _trunc,
+   [(p[2], p[4]) for p in _full + _trunc])
+_pshots, _plens = list(_sb), [124] * 4      # what run() plans from at render_through=3
+ck("previs length, windows, canvas, text identical with and without render_through/render_from",
+   _pv_plan(_pshots, _plens) == _full)
+_src_n = src.replace("\r\n", "\n")
+ck("run() plans previs sections from the full plan, not the render range",
+   "_shots_full = list(shots)" in _src_n and "_lengths_full = list(lengths)" in _src_n
+   and "_pshots, _plens = _shots_full, _lengths_full" in _src_n
+   and "enumerate(_ht.sections(_pshots, _plens))" in _src_n
+   and "_ht.compile_previs([_pshots[j] for j in _sec], _frames, FPS)" in _src_n
+   and "_ht.window_speaks([_pshots[j] for j in _sec]" in _src_n
+   and "if len(_shots_full) <= 1 and not previs_only:" in _src_n)
+ck("the previs seed is per section start hop, not the render range",
+   "_p_seed0 = (((int(seed) + i) if seed_per_shot else int(seed))" in _src_n)
+ck("the last rendered hop keeps its tail discard as in the full run (same hop key)",
+   "if (_sfix and i + 1 < len(_shots_full) and locked is None) else 0)" in _src_n)
+
+print("\nqwen3-vl previs compiler + lead_clause + seam_feather (2026-10-16)")
+_lc = HT.lead_clause("@carolyn steps back from the stall and takes a big bite of the skewer, then chews slowly.")
+ck("lead_clause strips compound mid-hop payoff ('and takes a big bite..., then chews')",
+   _lc == "@carolyn steps back from the stall.", _lc)
+_parsed = HT.parse_previs_llm_moments(
+    "1: @carolyn walks down the street.\n2: She continues past the shopfronts.\n",
+    [{"beat": "@carolyn walks down the street."},
+     {"beat": "@carolyn continues past the shopfronts and waves."},
+     {"beat": "@carolyn steps back from the stall and takes a big bite of the skewer."}],
+)
+ck("parse_previs_llm_moments restores @tag on pronoun lines and falls back to lead_clause on missing lines",
+   _parsed[0]["moment"] == "@carolyn walks down the street."
+   and _parsed[1]["moment"] == "@carolyn continues past the shopfronts."
+   and _parsed[2]["moment"] == "@carolyn steps back from the stall.",
+   [p.get("moment") for p in _parsed])
+
+_sf_m = torch.full((80, 16, 16, 3), 0.40)
+_sf_m[40:] = 0.44  # +10.2 / 255 step at cut=40
+_sf_pw = torch.full((22, 16, 16, 3), 0.40)
+_sf_step = HT.seam_feather(_sf_m, 40, _sf_pw, span=10, blend=16)
+ck("seam_feather closes the 1-frame step across the cut and leaves the hop bodies untouched",
+   _sf_step is not None
+   and float((_sf_m[40] - _sf_m[39]).abs().max()) * 255 < 1.5
+   and float((_sf_m[10] - 0.40).abs().max()) < 1e-6
+   and float((_sf_m[70] - 0.44).abs().max()) < 1e-6)
+_tf_m = torch.full((80, 8, 8, 3), 0.40)
+_tf_m[-22:] = 0.46  # +15.3 / 255 closing tail-guide flash
+HT.tail_feather(_tf_m, 80, window=22)
+ck("tail_feather flattens the closing -22 tail-guide flash on the final hop",
+   float((_tf_m[-1] - 0.40).abs().max()) * 255 < 0.5)
+ck("hand-tie v2.6: mod5-calibrated 3-step latent handoff + 17f ViT3D warm prefix + post-deflicker seam_feather (no sampler noise_mask)",
+   'hop_payload["ht_inpaint"] = "v2.6"' in src
+   and 'ref_k = src_5[:, :, k % 5:k % 5 + 1]' in src
+   and 'out["_vae_prefix"] = src_5' in src
+   and 'for _c in ht_cuts:\n                _ht.seam_feather(master_imgs, _c)' in src)
 
 print("\nall ok" if not FAILS else "\n%d FAILED: %s" % (len(FAILS), FAILS))
 sys.exit(1 if FAILS else 0)

@@ -36,6 +36,7 @@ tools/check_hand_tie.py runs without a server:
     tone_offsets()      the per-frame tone ramp (torch)
     tone_match()        a hop pulled onto its window's tone (torch)
     seam_bend()         the outgoing hop bent to meet the next one's first frame
+    body_grade()        the incoming hop graded to the body a second off the cut
     deflicker()         one- and two-frame level blinks taken out of a section
     detail_settle()     the swell of detail after a cut flattened
     settings_errors()   what hand-tie refuses, before anything samples
@@ -101,7 +102,12 @@ PREVIS_MUTE = True
 # words are caught on a draft costing a fraction of a hop (00165 hop 4, the Carolyn
 # run's gibberish). The check needs Whisper in the local Hugging Face cache; without
 # it the first draft is kept unchecked and the lock still holds the mouth.
-SOUND_FIRST = True
+# OFF by default since ht_seam_fix v3 (2026-10-14): the draft pass (TE reload, DiT swap,
+# 448p sample, audio decode, Whisper, up to SOUND_TRIES times) cost 1-2 min a hop and
+# v2 renders lost lip sync with it on. Hops now render picture and sound in one pass,
+# voice ref on the hop's own conditioning, Motion-Context carrying the sound on hops 2+.
+# Set True to opt back in.
+SOUND_FIRST = False
 SOUND_DRAFT_RESOLUTION = "448p (0.34 MP)"
 SOUND_TRIES = 3              # drafts before the best one is used anyway
 SOUND_RETRY_STRIDE = 15485863   # seed step between drafts: clear of hops and previs
@@ -499,43 +505,217 @@ def _lead_s(spoken_s):
     return min(LEAD_MAX_S, spoken_s / 2.0)
 
 
+# --- previs cut lint (2026-10-14) -------------------------------------------------
+# Every take of the Storyboard4 previs (17:26 run) cut 6-13 frames BEFORE a window
+# stamp: seed 13069 at f62 / f126 / f191 against stamps f68 / f136 / f204, seed 117798
+# at f195 (f204). H3 cuts where the text starts a new shot, and the moment behind a
+# stamp read as one: a place reached or re-established (window 1 "slows to a stop
+# beside a street food stall"; window 2 "stands at the street food stall on the same
+# street"), the camera distance or the background changed ("steps back from the
+# stall", "the stall behind her"). This lint reads the moments before the previs
+# renders, flags each such trigger per window, and rewrites the ones it can turn
+# into continuous action without changing what happens. Pure text, CPU only.
+# Set False by Grok bot, 2026-10-14 18:35, in the muted-window voice-fix edit.
+# User attested that attribution on 2026-10-15. Reason recorded then: Storyboard4
+# run 2, wording moved the cut and did not close it. Not a UI switch.
+PREVIS_CUT_LINT = False
+
+_ARRIVE = re.compile(
+    r"\b(?P<verb>slows to a stop|comes to a stop|stops|arrives|pulls up)"
+    r" (?P<prep>beside|at|in front of|next to|by) (?P<det>a|an|the) (?P<place>[^,.;]+?)"
+    r"(?=[,.;]| and\b|$)", re.I)
+_REESTABLISH = re.compile(
+    r"(?P<who>@[A-Za-z0-9_]+|<Subject \d+>|She|He|They) (?P<verb>stands|is standing|waits|sits)"
+    r" (?P<prep>at|beside|by|in front of|next to) the (?P<place>[^,.;]+?)"
+    r"(?P<same> on the same (?:street|road|block|corner))?(?= and\b|[,.;])", re.I)
+_STEP_AWAY = re.compile(
+    r"\b(?P<verb>steps back|steps away|walks away|backs away|moves away) from the (?P<place>[^,.;]+?)"
+    r" and\b", re.I)
+_BEHIND = re.compile(r",? the (?P<place>[^,.;]+?) behind (?:her|him|them)\b", re.I)
+_CAMERA = re.compile(
+    r"\b(wider|wide shot|wide angle|close-up|closeup|close up on|cut to|cuts to|new shot|"
+    r"another angle|from above|from behind|overhead|zooms?|pans? to|reveals?|reveal)\b", re.I)
+_TIME = re.compile(
+    r"\b(later|the next day|next morning|that night|that evening|hours|minutes later|"
+    r"meanwhile|afterwards|after a while|by now|soon after)\b", re.I)
+_PLACE_NOUN = re.compile(
+    r"\b(?:at|to|into|inside|beside|by|in front of|next to|outside|toward|towards)"
+    r" (?:a|an|the) ((?:[a-z]+ ){0,3}(?:stall|shop|store|market|cafe|restaurant|bar|kitchen|"
+    r"room|street|corner|park|station|counter|door|doorway|window|stand|truck|cart|booth|"
+    r"square|alley|bridge|beach|car|bus|train|office|hall|house|building|stage))\b", re.I)
+_HOLD = re.compile(r"\b(?:holding|holds|raises|lifts|waves|eats|bites|takes a (?:big )?bite of)"
+                   r" (?:the|her|his|their|a|an) ((?:(?!(?:from|toward|towards|to|with|and|at|of|beside|in|into|on|for)\b)[a-z]+ ?){1,2})", re.I)
+_GET = re.compile(r"\b(?:takes|picks up|grabs|is handed|receives|pulls out|accepts)"
+                  r" (?:the|her|his|their|a|an) ((?:(?!(?:from|toward|towards|to|with|and|at|of|beside|in|into|on|for)\b)[a-z]+ ?){1,2})", re.I)
+
+
+def _head(np):
+    return np.lower().split()[-1] if np.strip() else ""
+
+
+def cut_triggers(moments_):
+    """[[(kind, phrase, note)]] per window: text likely to make the previs cut at that
+    window's stamp. kinds: location, framing, time, state. Window 0 has no stamp
+    before it, so it is checked for framing / time only."""
+    out, seen_places, seen_things = [], set(), set()
+    for k, m in enumerate(moments_):
+        m = m or ""
+        fl = []
+        if k:
+            for a in _ARRIVE.finditer(m):
+                fl.append(("location", a.group(0), "reaches a new place inside the moment"))
+            for a in _REESTABLISH.finditer(m):
+                fl.append(("location", a.group(0), "re-establishes the place at the stamp"))
+            for p in _PLACE_NOUN.findall(m):
+                if _head(p) not in seen_places and not any(p.lower() in f[1].lower() for f in fl):
+                    fl.append(("location", p, "a place no earlier window shows"))
+            for a in _STEP_AWAY.finditer(m):
+                fl.append(("framing", a.group(0)[:-4], "changes the distance to the camera at the stamp"))
+            for a in _BEHIND.finditer(m):
+                fl.append(("framing", a.group(0).lstrip(", "), "asks for the background to be re-framed"))
+            for a in _HOLD.finditer(m):
+                h = _head(a.group(1))
+                got_here = any(_head(g) == h for g in _GET.findall(m))
+                if h not in seen_things and not got_here:
+                    fl.append(("state", a.group(0), "holds something no earlier window gave her"))
+        for a in _CAMERA.finditer(m):
+            fl.append(("framing", a.group(0), "a camera instruction inside the take"))
+        for a in _TIME.finditer(m):
+            fl.append(("time", a.group(0), "a time jump"))
+        seen_places |= {_head(p) for p in _PLACE_NOUN.findall(m)}
+        seen_places |= {_head(a.group("place")) for a in _ARRIVE.finditer(m)}
+        seen_things |= {_head(g) for g in _GET.findall(m)} | {_head(g) for g in _HOLD.findall(m)}
+        out.append(fl)
+    return out
+
+
+def smooth_moments(moments_):
+    """(moments, [(window, before, after)]): the rewrites that keep the action and make
+    it continuous. Anything not listed here is only warned about (cut_triggers)."""
+    out, changes, prev = [], [], ""
+    for k, m in enumerate(moments_):
+        new = m or ""
+        if k:
+            # "slows to a stop beside a stall" -> "walks up to a stall and stops beside
+            # it": the approach is spoken first, so the stall arrives by walking.
+            def _arr(a):
+                return "walks up to %s %s, stops %s it," % (a.group("det"), a.group("place"),
+                                                            a.group("prep"))
+            new = _ARRIVE.sub(_arr, new, count=1)
+            # "stands at the stall on the same street and" -> "is still at the stall and",
+            # when the previous window already reached that place.
+            def _re(a):
+                if _head(a.group("place")) in (prev or "").lower():
+                    return "%s is still %s the %s" % (a.group("who"), a.group("prep"), a.group("place"))
+                return a.group(0)
+            new = _REESTABLISH.sub(_re, new)
+            # "steps back from the stall and" -> "leans back a little, still at the stall,
+            # and": the body stays where the last window left it.
+            new = _STEP_AWAY.sub(lambda a: "leans back a little, still at the %s, and" % a.group("place"),
+                                 new)
+        if new != (m or ""):
+            changes.append((k, m, new))
+        out.append(new)
+        prev = (prev + " " + new)
+    return out, changes
+
+
+def cut_lint_report(shots, sound=None):
+    """Lines for the log: per window, what cut_triggers flags in the plan's moments,
+    what smooth_moments rewrote, and what is still flagged after the rewrite."""
+    if not PREVIS_CUT_LINT:
+        return []
+    ms = moments(shots, PREVIS_SOUND if sound is None else sound)
+    before = cut_triggers(ms)
+    after_ms, changes = smooth_moments(ms)
+    after = cut_triggers(after_ms)
+    done = {k for k, _, _ in changes}
+    lines = []
+    for k, fl in enumerate(before):
+        for kind, phrase, note in fl:
+            fixed = not any(p == phrase for _, p, _ in after[k])
+            lines.append("previs window %d: %s cut trigger %r (%s)%s"
+                         % (k + 1, kind, phrase, note,
+                            " -- rewritten" if (fixed and k in done) else " -- check the previs here"))
+    for k, b, a in changes:
+        lines.append("previs window %d rewritten for one take: %r -> %r" % (k + 1, b, a))
+    return lines
+
+
 def compile_previs(shots, hop_frames, fps=FPS, sound=None):
-    """The previs's timed description: `At MM:SS.mmm <moment>` per window.
+    """The previs's timed description: ONE shot written as back-to-back motion clocks.
 
-    A moment that carries a spoken line starts ahead of its window, by half the
-    line (at most LEAD_MAX_S), so the window lands inside the line rather than at
-    its first word: both hops tied to that window then share the middle of the
-    sentence, and each says its own end of it. A line in the closing moment
-    instead ENDS where the previs ends, so the film's last hop finishes it.
+    Previs law (2026-10-14). In H3's prompt format a bare `At MM:SS.mmm` is a camera
+    CUT ("that time is the edit"); a range `At MM:SS.mmm-MM:SS.mmm,` clocks motion
+    inside the current shot. The old one-stamp-per-window text cut 2-9 frames before
+    every window on every seed (f66/f131/f195 against stamps f68/f136/f204), so it
+    is written as ranges now: contiguous, from 00:00.000 to the previs's last frame,
+    no gap, no overlap, one shot, no camera cut.
 
-    `sound` defaults to PREVIS_SOUND and appends each beat's sound sentence to
-    its own moment. It does not disturb the lead-in arithmetic: `_spoken_s`
-    counts words only inside `<d>`, and a sound sentence has none.
+    Each window is the HAND-OFF between two hops, so it must show the previous beat
+    still carrying on, never the next beat starting (window 2 used to be "takes a
+    skewer", so hop 2 always ended holding one). So beat k's range starts right
+    AFTER window k (window start + WINDOW) and runs until window k+1, whose own
+    range is beat k carrying on (`carry_text`, built from the beat's subject, no new
+    action, and no settle/hold: "settles ... and holds it" froze her into a blank
+    stare at hop 1's tail, user 22:05); the closing window carries the last beat on.
+    Beat 0 starts at frame 0.
 
-    The previs is ONE take (2026-10-13). Every moment used to open on the person
-    again, a new place behind a new stamp: a shot list, and the previs cut there
-    on every take (f134 / f203 against windows 136 / 204, two seeds). A later
-    moment now reads as the same take going on (CONTINUE). A beat is played to
-    its end inside its own moment (`moments`), never under a stamp of its own:
-    one `At` per window, because every stamp is a place H3 cuts.
+    A beat whose moment carries a spoken line is the one exception: the line
+    crosses its window (split_crossing gives both hops their half of it), so that
+    beat starts up to LEAD_MAX_S (half the line) BEFORE its window, the previous
+    beat's range ends there, and that window has no carry range.
+
+    `sound` defaults to PREVIS_SOUND and appends each beat's sound sentence to its
+    own moment. Beat text is used as written (`moments`); nothing is reworded.
     """
     lay = layout(hop_frames)
-    rows = []
     ms = moments(shots, PREVIS_SOUND if sound is None else sound)
-    for k, (w, m) in enumerate(zip(lay["windows"], ms)):
+    if PREVIS_CUT_LINT:
+        # The moments rewritten for one take where that is safe (smooth_moments);
+        # what is left is logged by run() through cut_lint_report.
+        ms = smooth_moments(ms)[0]
+    win = lay["windows"]
+    end = int(lay["previs"])
+    segs = []          # (start frame, text), in order
+    last = None        # the latest beat written
+    for k, (w, m) in enumerate(zip(win, ms)):
         if not m:
             continue
-        t = w / float(fps)
         sp = _spoken_s(m)
-        if sp:
-            t = max(0.0, t - _lead_s(sp))
-        if k and rows:
-            m = CONTINUE + (m if m[:1] in "@<" else m[:1].lower() + m[1:])
-        rows.append("At %s %s" % (_stamp(t), m))
+        if not segs:
+            start = 0
+        elif sp:
+            # The line crosses window k: start it ahead of the window by half the line.
+            start = max(segs[-1][0] + 1, int(w) - int(round(_lead_s(sp) * fps)))
+        elif int(w) + WINDOW >= end:
+            # A full section's last window is the previs's last WINDOW frames: no
+            # room after it, so the last beat is written over its own window.
+            start = int(w)
+        else:
+            segs.append((int(w), carry_text(last)))
+            start = int(w) + WINDOW
+        segs.append((start, m))
+        last = m
+    if last is not None and len(win) > len(ms) and int(win[len(ms)]) > segs[-1][0]:
+        # The closing window: the last beat carries on through it.
+        segs.append((int(win[len(ms)]), carry_text(last)))
+    rows = []
+    for n, (a, txt) in enumerate(segs):
+        b = segs[n + 1][0] if n + 1 < len(segs) else end
+        if b <= a:
+            continue
+        rows.append("At %s-%s, %s" % (_stamp(a / float(fps)), _stamp(b / float(fps)), txt))
     return " ".join(rows), lay
 
 
-CONTINUE = "The same take continues as "   # a later moment, so the previs does not cut to it
+def carry_text(moment):
+    """A window's range: the beat before it carrying on, alive, with no new action of
+    its own. Never settle/hold/still/pause/stop/stare: those froze the hop's tail
+    into a blank stare at camera (2026-10-14, user 22:05)."""
+    who = _WHO.search(moment or "")
+    return ("%s carries on naturally with that motion, moving and relaxed, "
+            "in the same continuous shot." % (who.group(0) if who else "The subject"))
 
 
 _SID = re.compile(r"\(S\d+\)")
@@ -696,8 +876,35 @@ SEAMFIX_EARLY_PENALTY = 0.5     # score taken off an early draft, so a late one 
 # fix every hop that has a next hop renders SEAMFIX_TAIL_EXTRA frames more and drops
 # them (latent, picture and sound), so what is delivered and handed to the next hop
 # ends on clean frames. 24 = 6 latent steps: >= WINDOW and keeps length 1 + 4k.
-SEAMFIX_TAIL_EXTRA = 24
-SEAMFIX_LINE_START_S = 1.3      # a new line starts after the 0.92 s carried overlap + margin
+SEAMFIX_TAIL_EXTRA = 34  # two whole 17-frame/5-step blocks; any other count shifts the latent phase
+# v3: back to LINE_START_S (1.0). 1.3 only served the v2 draft lock; v1 synced at 1.0.
+SEAMFIX_LINE_START_S = LINE_START_S
+# v3: v2's picture-only Motion-Context (audio keyframe stripped) and frozen draft head
+# are off: they took the carried sound cue away from hops 2+ (no lip sync on hop 2).
+SEAMFIX_PICTURE_ONLY = False
+SEAMFIX_DRAFT_LOCK = False
+# Sound carry (2026-10-14): on a prev_hop seam, hop k+1 takes ONLY hop k's sound
+# guide from Motion-Context (its picture keyframes are stripped) and opens on its own
+# previs window, picture only. Speech carries across the join; no rendered picture
+# does, here or in a chained section's window 0 or the sound draft's opening.
+SEAM_SOUND_ONLY = True
+# End tie (2026-10-14, v6): every prev_hop seam hop that has a next window ties its
+# tail to window k+1 at -(WINDOW + SEAMFIX_TAIL_EXTRA), as hop 1 does. ee2b299 dropped
+# it (background melt on the stall / awning); without it hops 2-3 ended free and the
+# next hop's head window snapped the pose at joins 2/3 (seam bends -10..-13 /255 vs
+# -1.4 at the tied join 1). False restores the head-only behaviour.
+SEAMFIX_END_TIE = True
+# Gap order (GAP_ORDER, gap_render_order, gap_role) was REMOVED 2026-10-14 (user).
+# Save each hop's guide windows, exactly as AddGuide encodes them (17k+5 crop,
+# lanczos to the hop canvas), as PNGs under output/HANDTIECLIPS_windows/<run>/.
+SAVE_WINDOWS = True
+# v4 (2026-10-14): the per-hop corrections are off. With the previs and the
+# Motion-Context carry the hop already opens on the right level; v3 measured the
+# head tone match growing -2 -> -6 -> -10 /255 hop over hop (a constant darken on
+# a brighter, contrastier raw hop = the wet sheen), and the flash is a rise over
+# the incoming hop's first 2-4 frames, which a whole-hop offset cannot remove.
+SEAMFIX_TONE_MATCH = False   # prev-hop head tone match on prev_hop seam hops
+SEAMFIX_ANCHOR = False       # latent mean anchor to hop 1
 SEAMFIX_ANCHOR_STRENGTH_V2 = 0.3  # was 0.75; and never on the carried overlap latents
 SEAMFIX_ANCHOR_SKIP = 6         # latent steps of the 22-frame overlap (frames 0-20)
 SEAMFIX_ANCHOR_RAMP = 2         # latent steps over which the anchor fades in after it
@@ -929,6 +1136,80 @@ def seam_bend(master, start, cut, images):
     return step
 
 
+BODY_GRADE_S = 1.0       # sample the two bodies this far off the cut, not the contact frame
+
+
+def still_color(a, b, still=SEAM_STILL):
+    """Median color of pixels that hold still between two [H,W,C] frames.
+
+    None when too few hold still for the median to be a grade rather than motion.
+    """
+    mask = ((a.float() - b.float()).abs().amax(-1) < still)
+    if float(mask.float().mean()) < SEAM_MIN_STILL:
+        return None
+    return a.float()[mask].median(dim=0).values
+
+
+def _span_color(frames, still=SEAM_STILL):
+    """Median of the per-pair still colors across a span. None when none qualify."""
+    import torch  # noqa: PLC0415
+    cols = []
+    for t in range(int(frames.shape[0]) - 1):
+        c = still_color(frames[t], frames[t + 1], still)
+        if c is not None:
+            cols.append(c)
+    if not cols:
+        return None
+    return torch.stack(cols, dim=0).median(dim=0).values
+
+
+def body_grade(prev, incoming, overlap, fps=FPS):
+    """Grade the incoming hop onto the previous hop's body, a second off the cut.
+
+    Not called from run(). A full-frame shift of this size recoloured every hop
+    on seamAB_prev_hop_00029 (previs only): the body mean climbed about
+    R119, R137, R182, R189 across four hops, because the sample a second
+    before the cut sits on the hot end and that colour was added to the next
+    scene. Kept here so the measurement can be rerun. Do not wire it back as a
+    whole-hop add.
+
+
+    prev is the previous hop as it sits in the master, tail window included: the
+    last `overlap` frames are the shared window and are about to be overwritten.
+    A second before the cut is therefore the previous hop's own body, not that
+    window. A second after the cut is the incoming hop's body, just past its head
+    window. The cut frame and the previs window are not the samples.
+
+    The whole incoming hop takes the still-pixel difference of those two bodies,
+    one constant per channel. The head window then takes whatever extra its own
+    still-pixel color still needs, so the span between the two samples stops
+    carrying the previs window's grade. The picture is kept; only the grade moves.
+    prev is not modified, and seam_bend must not run on this join: it would drag
+    the second-before sample toward the contact frame.
+
+    -> (graded, hop_shift, head_shift). graded is incoming unchanged, and the
+    shifts are None, when a still-pixel sample cannot be trusted.
+    """
+    gap = int(round(float(fps) * BODY_GRADE_S))
+    overlap = int(overlap)
+    cut = int(prev.shape[0]) - overlap
+    i_prev = cut - gap
+    if i_prev < 1 or gap + 1 >= int(incoming.shape[0]) or overlap < 2:
+        return incoming, None, None
+    prev_c = still_color(prev[i_prev], prev[i_prev + 1])
+    next_c = still_color(incoming[gap], incoming[gap + 1])
+    if prev_c is None or next_c is None:
+        return incoming, None, None
+    hop_shift = (prev_c - next_c).to(device=incoming.device, dtype=incoming.dtype)
+    out = (incoming.float() + hop_shift.float().view(1, 1, 1, -1)).clamp(0.0, 1.0)
+    head_c = _span_color(out[:overlap])
+    head_shift = None
+    if head_c is not None:
+        head_shift = (prev_c.to(head_c.device) - head_c).to(dtype=incoming.dtype)
+        out[:overlap] = (out[:overlap] + head_shift.float().view(1, 1, 1, -1)).clamp(0.0, 1.0)
+    return out.to(dtype=incoming.dtype), hop_shift, head_shift
+
+
 def deflicker(master, frames=DEFLICKER, still=SEAM_STILL):
     """Remove level blinks of a frame or two, in place, over a finished section.
 
@@ -949,7 +1230,9 @@ def deflicker(master, frames=DEFLICKER, still=SEAM_STILL):
         a, b = master[t - 1].float(), master[t].float()
         lo = master[t - 2].float() if t >= 2 else a
         hi = master[t + 1].float() if t + 1 < n else b
-        mask = ((a - lo).abs().amax(-1) < still) & ((hi - b).abs().amax(-1) < still)
+        mask = (((a - lo).abs().amax(-1) < still)
+                & ((hi - b).abs().amax(-1) < still)
+                & ((b - a).abs().amax(-1) < still * 1.5))
         if float(mask.float().mean()) >= SEAM_MIN_STILL:
             d[t] = (b - a)[mask].median(dim=0).values.cpu()
     level = d.cumsum(0)
@@ -971,24 +1254,11 @@ CUT_SPAN = 3             # the motion yardstick: frames either side
 CUT_CELLS = 12           # coarse cells across the frame's short side: layout, not texture.
                          # A count, not a pixel size: 32 px cells caught 00156's snap at
                          # 512p and missed 00164's hop-7 cut at native (1.34x; 1.49x here)
-PREVIS_TRIES = 3         # previs renders before the least-cut one is used anyway
-PREVIS_RETRY_STRIDE = 104729   # seed step between tries: clear of every hop's own seed
+# PREVIS_TRIES removed 2026-10-14: the previs is one take, never re-rolled.
+PREVIS_RETRY_STRIDE = 104729   # the HOP retake's seed step (h3_ref_chain hop cut check); not the previs
 
 
-CUT_SAME_FRAMES = 24     # a cut this close to the last take's is the same cut
-
-
-def same_cut(before, now, near=CUT_SAME_FRAMES):
-    """True when a re-rendered previs cuts where the last take did.
-
-    A seed-driven cut moves when the seed changes; a cut the TEXT asks for does
-    not (chain_00150: three seeds cut at 13.38 / 13.42 / 13.62 s, each to the
-    moment "walks toward the camera"). Re-rolling that a third time costs a whole
-    previs render for nothing, so the loop stops when every cut of this take sits
-    within `near` frames of one in the last take.
-    """
-    return bool(before) and bool(now) and all(
-        any(abs(int(c) - int(b)) <= near for b in before) for c in now)
+# same_cut / CUT_SAME_FRAMES removed 2026-10-14 with the previs retake.
 
 
 # There is no "the text's cut" any more (moment_cuts, removed 2026-10-13). Every
@@ -998,7 +1268,7 @@ def same_cut(before, now, near=CUT_SAME_FRAMES):
 # leaves the hop before it pinned to two different shots, and that hop cuts or
 # morphs to reach the second (Carolyn's hop 1 at f171 on both seeds, the shifting
 # background). The previs is now one take, so such a cut re-rolls like any other;
-# `same_cut` still stops a cut the next seed repeats.
+# Since 2026-10-14 the previs is one take: cuts are only logged.
 
 
 def window_cuts(cuts, windows):
@@ -1209,3 +1479,189 @@ def hop_key_fields(head_digest, tail_digest, head_audio_digest=None, tail_audio_
         out["head_audio"] = str(head_audio_digest)
         out["tail_audio"] = str(tail_audio_digest)
     return out
+
+
+# --- Qwen3-VL Previs Compiler & Seam Feather (2026-10-16) -----------------------
+
+PREVIS_LAWS_SYSTEM = (
+    "You compile N shot beats into N continuous single-take previs bridge moments "
+    "for a MiniMax H3 video generator.\n"
+    "STRICT LAWS:\n"
+    "1. CONTINUOUS BRIDGE POSTURE ONLY (NO EARLY PAYOFFS): Each previs moment is "
+    "only a ~2.5s blocking/camera bridge. Keep ONLY where the subject is and how "
+    "their body and camera move continuously. Remove discrete mid-shot payoff "
+    "actions (eating, biting, chewing, drinking, picking up or grabbing objects, "
+    "opening doors) so they happen inside the full 8s shot, never early in the previs.\n"
+    "2. ONE UNBROKEN TAKE: Never write camera cuts ('cut to', 'new angle', 'wide shot'), "
+    "time jumps ('later'), or re-establish a location already reached. If beat k "
+    "continues at the same place as beat k-1, write 'is still at ...' or smooth "
+    "continuous motion.\n"
+    "3. SILENT MOUTHS: Remove all spoken dialogue (<d>...</d>), speech verbs "
+    "('says', 'talking', 'chatting'), and crowd voices ('chatter', 'calling out').\n"
+    "4. EXACT FORMAT: Output ONLY numbered lines `1: <one short sentence>`, "
+    "`2: <one short sentence>`, ... up to N. Keep every `@tag` or `<Subject N>` "
+    "token exactly as written in the input."
+)
+
+_COMPOUND_TAIL = re.compile(
+    r"(?:,\s*then\b|\s+then\b|,\s*before\b|\s+before\b|"
+    r",?\s+and\s+(?:takes?|bites?|chews?|eats?|sips?|drinks?|swallows?|grabs?|"
+    r"picks?\s+up|opens?|closes?|pulls?\s+out|raises?|lifts?)\b).*$",
+    re.I,
+)
+
+
+def lead_clause(beat):
+    """Extract only the opening posture/motion lead clause of a manual beat.
+
+    Used both as the deterministic fallback when no Qwen3-VL 4B/8B text encoder
+    is installed and as the safety fallback per shot. Drops spoken dialogue,
+    `_end_sentence`, and compound mid-hop payoff clauses (`, then ...`,
+    `and takes a big bite...`) so the previs guides camera + blocking without
+    rushing discrete prop actions into the 1.9 s gap.
+    """
+    first = _first_sentence(beat)
+    if not first:
+        return ""
+    trimmed = _COMPOUND_TAIL.sub("", first).rstrip(" ,;.")
+    if not trimmed:
+        trimmed = first.rstrip(" ,;.")
+    return trimmed + "."
+
+
+def format_previs_llm_prompt(shots):
+    """Build the numbered user prompt for the Qwen3-VL previs compiler."""
+    lines = []
+    for k, sh in enumerate(shots or [], 1):
+        beat = _no_speech(str((sh or {}).get("beat") or ""))
+        lines.append(f"{k}: {beat}")
+    return (
+        f"Rewrite these {len(lines)} shot beats into {len(lines)} continuous "
+        "single-take previs bridge moments following all 4 laws:\n"
+        + "\n".join(lines)
+    )
+
+
+def parse_previs_llm_moments(reply, shots):
+    """Parse Qwen3-VL's numbered bridge lines and return copies of `shots` with
+    `moment` populated for any shot that did not already author one.
+
+    Validates each line: preserves the beat's primary `@tag` / `<Subject N>`,
+    strips any stray `<d>` or speech cues, and falls back to `lead_clause` if
+    a line is missing or malformed.
+    """
+    parsed = {}
+    for raw_ln in str(reply or "").splitlines():
+        m = re.match(r"^\s*(\d+)\s*[:.)\-]\s*(.+?)\s*$", raw_ln)
+        if m:
+            idx = int(m.group(1)) - 1
+            txt = _no_speech(m.group(2)).strip()
+            if txt and not txt.endswith((".", "!")) :
+                txt += "."
+            if txt:
+                parsed[idx] = txt
+    out = []
+    for k, sh in enumerate(shots or []):
+        s = dict(sh or {})
+        if str(s.get("moment") or "").strip():
+            out.append(s)
+            continue
+        beat = str(s.get("beat") or "")
+        who = _WHO_RE.search(_no_speech(beat))
+        cand = parsed.get(k, "")
+        # Ensure the subject token is preserved and only one concise sentence is kept.
+        if cand:
+            cand = _first_sentence(cand)
+            if who and who.group(0) not in cand:
+                cand = _PRONOUN.sub(who.group(0), cand, count=1)
+                if who.group(0) not in cand:
+                    cand = ""
+        if not cand:
+            cand = lead_clause(beat)
+        if cand:
+            s["moment"] = cand
+        out.append(s)
+    return out
+
+
+SEAM_FEATHER_PRE = 16    # outgoing frames before the cut flattened onto the bridge
+SEAM_FEATHER_POST = 26   # incoming frames after the cut flattened onto the bridge
+
+
+def seam_feather(master, cut, prev_window=None, span=SEAM_FEATHER_PRE,
+                 blend=SEAM_FEATHER_POST, still=SEAM_STILL):
+    """Eliminate the dark-dip / bright-overshoot flash across a hand-tie cut (`master[cut]`).
+
+    Measured on `seamAB_prev_hop_00040` / `00043`:
+    - The last ~8 frames of the outgoing hop dip `-6 / 255` approaching the `-22`
+      tail guide, and Frame `0..1` of the incoming hop (H3's isolated 1-frame VAE
+      token) dips before overshooting across the 22-frame head guide (`0..21`).
+    - Bridging per-frame channel levels (`mean + std`) smoothly from a 4-frame
+      pre-dip anchor at `cut - pre` to a 4-frame post-guide anchor at `cut + post`
+      with a smoothstep target curve and cosine bell weight removes both the
+      Frame-0 dip and the 22-frame head-guide highlight overshoot while leaving
+      the hop bodies outside `[cut - pre, cut + post]` 100% untouched.
+    """
+    import torch  # noqa: PLC0415
+    n = int(master.shape[0])
+    cut = int(cut)
+    pre = min(max(2, int(span)), cut)
+    post = min(max(2, int(blend)), n - cut - 1)
+    if cut < 2 or cut + 2 > n or pre < 2 or post < 2:
+        return None
+    step, _share = seam_step(master[cut - 2:cut], master[cut:cut + 2], 0, still=still)
+    l_start = max(0, cut - pre - 3)
+    l_slice = master[l_start:cut - pre + 1].float()
+    r_end = min(n, cut + post + 4)
+    r_slice = master[cut + post:r_end].float()
+    l_mu = l_slice.mean(dim=(0, 1, 2), keepdim=True)[0]
+    r_mu = r_slice.mean(dim=(0, 1, 2), keepdim=True)[0]
+    l_sd = l_slice.std(dim=(0, 1, 2), keepdim=True, unbiased=False)[0].clamp(min=1e-4)
+    r_sd = r_slice.std(dim=(0, 1, 2), keepdim=True, unbiased=False)[0].clamp(min=1e-4)
+    total = pre + post
+    for k in range(1, total):
+        idx = cut - pre + k
+        t = (k + 0.5) / float(total)
+        ts = t * t * (3.0 - 2.0 * t)
+        t_mu = l_mu * (1.0 - ts) + r_mu * ts
+        t_sd = l_sd * (1.0 - ts) + r_sd * ts
+        f_idx = master[idx].float()
+        c_mu = f_idx.mean(dim=(0, 1), keepdim=True)
+        c_sd = f_idx.std(dim=(0, 1), keepdim=True, unbiased=False).clamp(min=1e-4)
+        dist = abs(k - pre) / float(pre if k < pre else post)
+        w = float(0.5 * (1.0 + torch.cos(torch.tensor(3.14159265 * min(1.0, dist))).item()))
+        gain = (t_sd / c_sd).clamp(0.85, 1.15)
+        matched = (f_idx - c_mu) * gain + t_mu
+        master[idx] = (f_idx * (1.0 - w) + matched * w).clamp(0.0, 1.0).to(master.dtype)
+    return step if step is not None else (l_mu - r_mu).reshape(-1).cpu()
+
+
+def tail_feather(master, end_pos, window=WINDOW):
+    """Flatten the `+14..+16 / 255` closing `-22` tail-guide flash on a section's
+    last hop (`master[end_pos - window : end_pos]`), in place.
+
+    Earlier hops have their `-22` tail span overwritten by the next hop; the last
+    hop of a section has no next hop, so its closing `-22` tail guide sits at the
+    end of the film (`seamAB_prev_hop_00040` `f680..701`: `92.2 -> 111.4`). Matching
+    both per-channel mean and std (black level + contrast) of the tail span to the
+    4 clean frames just before it removes both the brightness flare and the milky
+    shadow lift at the end of the film.
+    """
+    import torch  # noqa: PLC0415
+    end_pos = int(end_pos)
+    w = int(window)
+    if end_pos < w + 4 or end_pos > int(master.shape[0]):
+        return None
+    start = end_pos - w - 1
+    ref_slice = master[start - 4:start].float()
+    t_mu = ref_slice.mean(dim=(0, 1, 2), keepdim=True)[0]
+    t_sd = ref_slice.std(dim=(0, 1, 2), keepdim=True, unbiased=False)[0].clamp(min=1e-4)
+    for k in range(end_pos - start):
+        idx = start + k
+        wt = min(1.0, (k + 1) / 4.0)
+        f_idx = master[idx].float()
+        c_mu = f_idx.mean(dim=(0, 1), keepdim=True)
+        c_sd = f_idx.std(dim=(0, 1), keepdim=True, unbiased=False).clamp(min=1e-4)
+        matched = (f_idx - c_mu) * (t_sd / c_sd) + t_mu
+        master[idx] = (f_idx * (1.0 - wt) + matched * wt).clamp(0.0, 1.0).to(master.dtype)
+    return t_mu.reshape(-1)

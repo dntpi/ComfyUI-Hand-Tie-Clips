@@ -3995,3 +3995,180 @@ override rather than under it. `tools/check_workflows.py` pins the order.
 Reordering patch nodes moves the keys `_model_fingerprint` hashes, so the
 first run after updating re-renders every hop even with `cache_hops=on` --
 the fingerprint working, not a regression, and the release note says so.
+
+## 72. Standalone Guided SWAP and the nInfer v3 writer (2026-10-14)
+
+### 72.1 Why SWAP moved off `shot_plan` onto `swap_script` + `swap_refs`
+
+Previously, accepting a swap overwrote `shot_plan` with a single-shot JSON object,
+clobbering whatever multi-hop film was in the SCRIPT tab and writing a short
+one-paragraph beat rather than the full six-field H3 Ref2VA contract.
+
+Two trailing widgets (`swap_script` at `widgets_values[98]` and `swap_refs` at
+`widgets_values[99]`, appended after `ht_seam_fix` `[97]` and before `gap_order`
+`[100]` / `guide_carry` `[101]`) decouple SWAP completely from the chain:
+
+- **Write-time & render-time fail-closed contract (`swap_contract_errors`):**
+  Every swap prompt must emit all five required H3 headers in order
+  (`subject_definitions:`, `summary:`, `detailed_description:`,
+  `overall_soundscape:`, `non_diegetic_music:`), open `summary:` with
+  `[video generation + reference]`, include `[Shot 1]`, `(VISUAL)` (closing on
+  the mandatory drift clause), and `(SOUND)`, and avoid negations outside quoted
+  speech or plural pronouns (`they`/`them`/`their`). `run()` re-runs
+  `swap_contract_errors(swap, shape_only=True)` before any model call.
+- **Multi-person left-to-right (`L->R`) identity mapping:** The Swap tab provides
+  ordered `PEOPLE (L->R)` chips; `identities` maps 1-to-1 in screen order to
+  `<Subject 1..N>` and `<Picture 1..N>`, and `_ensure_swap_refs` puts those tags
+  first in `swap_refs`.
+- **Three-state `swap_refs`:** `""` -> `None` (register default, all wired
+  plates ride), `"[]"` -> `[]` (no plates ride, required for `keep_person` so a
+  wired face plate never leaks in), `"a, b"` -> `["a", "b"]` (explicit ordered
+  whitelist).
+
+### 72.2 Guided Swap alignment (`MiniMaxH3AddGuide` + `_swap_lora`)
+
+Alissonerdx's Character Swap (`minimax_h3_character_swap_v1.0_ref2va_r64_gl.safetensors`)
+and Head Swap (`minimax_h3_head_swap_v1.0_r32.safetensors`) LoRAs are guide-latent
+(`_gl`) models: in addition to `MiniMaxH3ReferenceToVideo` encoding `<Video 1>` and
+`<Picture 1..N>` on `minimax_refs`, the guide clip must be laid onto the generated
+timeline via `MiniMaxH3AddGuide` at `frame_idx=0` (`minimax_keyframes`), and the
+prompt must lead with `body_swap:` or `head_swap:`.
+
+Three wiring details in `h3_ref_chain.py` and `planner.py` make this automatic:
+
+1. **Trigger prefixes (`SWAP_TRIGGERS`):** `_extract_swap_widgets` prepends
+   `body_swap:` (`replace_person`) or `head_swap:` (`head_swap` / `face_only`)
+   to `swap_script`.
+2. **Auto-loaded Swap LoRA (`_swap_lora`):** When `swap` is active and not a dry
+   run, `_swap_lora(model, swap)` clones `model` via `LoraLoaderModelOnly`,
+   loads the matching Character or Head Swap LoRA at `1.0`, and runs
+   `H3AdaLNLoRAFix(mode="port")` *before* `_model_fingerprint(model)` hashes the
+   model into `chain_salt`. Clearing the swap leaves the upstream LoRA stack
+   untouched.
+3. **Full-clip `MiniMaxH3AddGuide(frame_idx=0)` (`ht` forced off):** Setting
+   `ht = (str(pin_mech) == "hand_tie") and not swap` prevents a node with
+   `pin_mech=hand_tie` from entering the previs keyframe branch on a swap; the
+   `elif swap and reference_video is not None:` branch lays
+   `reference_video[:min(len, render_length)]` onto `MiniMaxH3AddGuide` at
+   `frame_idx=0` and records `hop_payload["swap_guide"]` in the hop cache key.
+
+`tools/check_swap_render_path.py` pins the widget slot positions, the `if shots:`
+branch admission, the 3-state `swap_refs` parser, `ht` suppression, the
+`MiniMaxH3AddGuide(frame_idx=0)` call, and `_swap_lora` ordering.
+
+### 72.3 `nInfer` v3 writer upgrade and MTP prefix lock
+
+Replaced `qwen3_8_27b_nvfp4.ninfer` in `C:\ninfer\models\` with
+`Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-DFlash2-ninfer-v3.ninfer`
+(`groupwise-int` v3 container with BF16 Vision tower, MTP, and DFlash2 block
+diffusion speculative decoding). Because `nInfer`'s MTP head accepts ~100% of
+draft tokens at low temperature (`0.35`), a failed validation attempt could
+deterministically re-emit the same rejected prefix on retry. Raising the default
+writer temperature to `0.75` (`top_p: 0.95`) in `llm.py` and stepping
+temperature up by `+0.1` per repair attempt in `routes.py` breaks the prefix
+lock while keeping 5-frame vision and structured repair fast.
+
+### 72.4 Universal Refine v2.1 and Tiled Upsampler anti-grid merge (2026-10-15)
+
+Live GPU testing of the initial Refine v2 build (`comfyui.prev.log` 20:08) exposed
+two issues with `REFINE_V2_BUILD_PLAN.md`:
+1. Mapping `refine_denoise == 0.50 -> 0.25` made `0.25` and `0.50` identical, and
+   slicing post-shift `sigma <= 0.25` (`sigma = 0.2353`) at `shift=12` corresponded
+   to unshifted `denoise = 0.025` (97.5% through the schedule, well below the
+   $\sigma \in [0.63, 0.80]$ band where H3 forms skin and surface texture).
+2. Uncapped high-pass injection `x0 + w * (D - G_sigma(D))` allowed `x_ref`'s
+   high-frequency variance to exceed `x0`'s (`high-band fraction` climbing from
+   `0.4290` to `0.4413`).
+
+Refine v2.3 (`refine_blend.py`, `h3_ref_chain.py`, `js/editor/run_panel.js`) fixes
+both and incorporates the findings from `seamAB_prev_hop_00033_.mp4` (`full`,
+`tone=off`), `00034_.mp4` (`pin_only`, `tone=anchor`), `00035_.mp4`
+(Singularity + FlashGen 0.8, `full`, `tone=anchor`), and `00037_.mp4`
+(`tone_pull=0.35`):
+- When `refine_model` is an unpatched 30-step stock base (`not getattr(model, "patches", None)`),
+  entering at `sigma = 0.80` (80% noise) for 2 Euler steps under-converges chroma
+  (`00037` measured `R-B` warmth dropping 41% from `38.4` to `22.5` when pulled
+  by `tone_pull=0.35`). `_refine_sampled` now caps an unpatched stock
+  `refine_model` at `sigma <= min(denoise * 1.8, 0.45)` (`[0.45, 0.225, 0.0]` at
+  `0.25`) while keeping `BasicScheduler(steps, denoise)` (`[0.8000, 0.6316, 0.0]`)
+  on turbo models, with `tone_pull=0.0` and `cap_high=True` in `blend_video_detail`.
+- For `pin_mech=hand_tie` (`hand_tie.py`, `h3_ref_chain.py`), `_ht_qwen_previs_moments`
+  loads `qwen3vl_4b*.safetensors` or `qwen3vl_8b*.safetensors` before `qwen3vl_32b`
+  or the DiT touch VRAM, compiles manual beats into continuous single-take bridge
+  moments under `PREVIS_LAWS_SYSTEM` (with `lead_clause` deterministic fallback),
+  and immediately evicts the 4B/8B model from VRAM. `ht_warm_windows` encodes
+  previs windows `w >= 17` with a 17-frame (5-token) causal 3D-VAE warm-up prefix,
+  `seam_feather` bridges per-channel `mean + std` across `[cut - 10 .. cut + 16]`,
+  and `tail_feather` flattens the closing `-22` tail-guide flare on the final hop
+  (confirmed on `seamAB_prev_hop_00043_.mp4`; optical-flow cut bridging was
+  rejected due to ghosting).
+- In `_refine_blend_latent(..., freeze_audio=_do_aud, head_steps=_rfrozen)`, when
+  `refine_audio="freeze"` is active, `r_parts[1:]` (the untouched pre-refine audio
+  stream from `sampled`) is explicitly restored over `f_parts[1:]` so
+  `SamplerCustomAdvanced`'s `shift_video=12.0` vs `shift_audio=3.0` scaling can
+  never alter the hop's soundtrack.
+- For `Motion-Context` + `Refine v2.4` (`h3_ref_chain.py`): `_HTCMotionContext`
+  implements the latent-slice + end-aligned audio timeline pin natively in-house
+  (zero external `ComfyUI-H3-Motion-Context` dependency, credited in
+  `THIRD_PARTY_NOTICES.md`); `_pin_inpaint_head`
+  fills `latent[:, :, :v_steps]` with `prev_sampled[:, :, -v_steps:]` and holds
+  `steps 0..v_steps-2` at `vmask=0.0` during the main pass; `_calibrate_overlap_latent`
+  aligns Hop $k+1$'s opening `mod5`-matched `(mean, std)` to Hop $k$'s tail and
+  restores the exact 7-step `src_tail` causal prefix before refine and `vae.decode`;
+  `hop_is_start` skips `_refine_sampled` on Hop 1 (storing Hop 1's clean
+  `high_rms_stats`, matching `xyzDist`'s `shot_index == 1` bypass); Hops 2+ freeze
+  the overlap head and ramp `w: 0 -> 1` inside `0..overlap` so `w=1.0` on every
+  delivered frame (`f22+`); and `_bridge_motion_seam` closes any residual tail-dip
+  / opening-rebound across `[seam - 16 .. seam + 28]` in `master_imgs` (validated on
+  `seamAB_prev_hop_00052_.mp4` and `00053_.mp4`: seam `dL = -0.05..+0.14`,
+  `dStd = +0.02..+0.07`, `00053` end-of-film `grad = x0.999`). For `hand_tie`
+  continuation hops (`v2.5`), `seamAB_prev_hop_00059_.mp4` confirmed the multi-frame
+  post-cut brightening was cured (`p90` held at `191..192`), and exposed three
+  causes of the 1-frame flash at `f170 / f340 / f510`: (1) normalizing `cut_raw`
+  (`step 50`, `mod5 = 0`) against the 5-step `mod1..4` average `m_src` instead of
+  `src_5[:, :, 0:1]` (`step 45`, `mod5 = 0`) shifted `step 0`'s `ch0` from `+0.57`
+  to `+0.03`, causing `ViT3DDecoder` to decode `f0` at `luma = 115.8` (`+18 / 255`);
+  (2) decoding `Hop k+1` from a cold `ViT3DDecoder` start (`dec_overlap = None`);
+  and (3) `deflicker` running after `seam_feather` without checking `|b - a| < still * 1.5`,
+  adding a `+1.2..+2.7 / 255` step onto `f170 / f340 / f510`. `_ht_inpaint_head`
+  and `_calibrate_ht_latent` now calibrate each step `k` against its exact
+  `mod5 = k % 5` reference `src_5[:, :, k % 5]`, blend Hop $k$'s tail tokens into
+  `steps 0..2` with weights `[1.0, 0.5, 0.25]`, attach Hop $k$'s 5-token (`17f`)
+  pre-cut block as `_vae_prefix` so `_decode_av` warms up `ViT3DDecoder`
+  (`self.frame_overlap = 5` across `f170..f174`), and re-run `seam_feather` after
+  `deflicker` (visual joins confirmed on `00062`; in `v2.6`, `_ht_inpaint_head`
+  aligns only `cond` and leaves `latent["samples"]` / `latent["noise_mask"]`
+  untouched during `SamplerCustomAdvanced` so `KSamplerX0Inpaint` / `video_rows_t`
+  never perturbs the joint Audio-Video DiT during dialogue sampling). Retired
+  `join & pin` band-aids (`pin_to_qwen`, `ht_seam_fix`, `pin_renorm`, `pin_noise`,
+  `tone_compensate`, `tone_anchor`) are also hidden in `js/editor/run_panel.js`
+  (`REFINE_V2_HIDDEN`) while keeping all 105 widget slots intact. In
+  `js/h3_ref_chain.css` and `js/editor/ref_rail.js`, `.h3e-hopbar` now sets
+  `grid-column: 1 / -1` (preventing the 8-column `.h3e-ref` grid from crushing
+  `.h3e-hopbar-track` to 0px wide in column 3) and `cellsAt` subtracts
+  `bar.getBoundingClientRect().left` / reads `dataset.hop`.
+
+In `tiled_upsampler.py` and `video_upsampler.py`, `upsample_chain()` runs 2 steps on
+the `upsample_denoise` schedule fraction (`start_sigma=0.0`, giving `[0.5714, 0.3871, 0.0]`
+at `denoise=0.1` and `[0.7500, 0.5714, 0.0]` at `denoise=0.2` under H3's `shift=12`
+curve instead of `[0.2498, 0.1365, 0.0]` = `2.7%` schedule fraction) with
+`overlap_px = 192`, `detail_sigma = 0.0` (preserving 100% of `h3upscale`'s structural
+and tonal redraw instead of replacing scales `< 768 screen px` with the raw
+`LatentUpscaler` CNN output), `H3AdaLNLoRAFix(mode="port")`, immediate
+`_offload_text_encoder(clip, _up_model)` after encoding `_ug.CAPTION` (evicting
+25.8 GB of `MiniMaxH3TEModel_` before Chunk 0), and `finally:` model/VRAM cleanup.
+
+In `js/editor/writer_bar.js`, `js/editor/video_swap.js`, `routes.py`, `planner.py`,
+`h3_ref_chain.py`, `prompt_pack/SYSTEM_PROMPT.md`, `prompt_pack/AUTHORING_PROMPT.md`,
+and `prompt_pack/SWAP_PROMPT.md`, cleaned and fixed the `WRITE`, `Music Video`, and
+`SWAP` stack: wired `brief.value` and `chat.value` through `scenePrompt()` so clicking
+`Propose`, `Write beats`, `Write plan`, `Edit`, or `Write beats` on the MV Layout card
+never ignores the user's brief; exposed `stage: "edit"` (`write_edit`) via an `Edit`
+stage button and `Edit shots` composer chip; fixed `_songmap_summary` (`s["s"]`,
+`s["kind"]`, `m["grid"]`, `m["drift_f"]`, dict lyrics) and `stage == "solve"` section-kind
+propagation in `routes.py`; sanitized MV `anchor="restart"` on Hop 1 and rail-backed
+restarts in `_apply_skeleton` and `h3_ref_chain.py`; enriched `<rail>` with `retention`,
+`voice`, `source`, and `desc` alongside `INTENT_INFERENCE_GUIDE`; and attached
+background/wardrobe plates in `_swap_plan` while fixing header ordering in `SWAP_PROMPT.md`.
+
+

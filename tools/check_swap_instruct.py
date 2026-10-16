@@ -28,20 +28,42 @@ def ck(name, cond, detail=""):
         FAIL.append(name)
 
 
-# The scripted model's answer, in the shape D1q's instruct now asks for:
-# `<Subject 1>` DEFINED in the first sentence, `@her_face` cited as the
-# secondary handle, and the clip's movement kept.
+# The scripted model's answer, in the shape the instruct now asks for: the
+# COMPLETE six-field block, with the task type in `summary:`.
 #
-# It used to open "The subject spins ..., looking like @her_face" with the
-# identity named once and no subject label at all -- the shape the instruct
-# used to forbid anyway ("the frames have no @tag"). Four checks downstream
-# failed on the fixture rather than on the code, which is the fourth time this
-# project a stale test fixture has out-reported a real defect.
-GOOD = ("<Subject 1> is the person in <Video 1>, and the face, hair and skin tone of <Subject 1> come from "
-        "<Picture 1>. The subject spins across the kitchen tiles, looking like @her_face, arms flung wide as "
-        "the skirt flares and settles. The build, posture, hands and every garment of <Subject 1> are "
-        "<Video 1>'s own, and the neck and jaw meet <Video 1>'s collar. Boots squeak on tile, a fridge hums, "
-        "the spin slows to a standstill facing the window.")
+# It used to be a prose beat. Three checks downstream failed on the fixture
+# rather than on the code, which is the fourth time this project a stale test
+# fixture has out-reported a real defect. The contract gate added with the
+# rework rejects a prose beat outright, so a prose fixture here is no longer a
+# fixture -- it is the failure the gate exists to catch.
+
+
+def contract(defs, visual, prefix="[video generation + reference]"):
+    return ("subject_definitions:\n" + defs
+            + "\n\nsummary:\n" + prefix + " Replace the performer in <Video 1>, keeping the "
+            "scene, camera and the complete motion of the guide video."
+            + "\n\ndetailed_description:\n[Shot 1] 0 to 8 s\n(VISUAL) " + visual
+            + "\n(SOUND) The room tone.\n\noverall_soundscape:\nThe room tone."
+            + "\n\nnon_diegetic_music:\nN/A")
+
+
+HEAD_DEFS = ("<Subject 1> is the person in <Video 1>. The face, hair and skin tone of <Subject 1> "
+             "come from @her_face. <Subject 1> keeps the movement, the camera path and the shot "
+             "timing of <Video 1>.")
+GOOD_VISUAL = ("<Subject 1> spins across the kitchen tiles, arms flung wide as the skirt "
+               "flares and settles, boots squeaking on tile while a fridge hums low. The spin "
+               "slows to a standstill facing the window, hair, face and surface steady in "
+               "every frame with no texture crawling.")
+GOOD = contract(HEAD_DEFS, GOOD_VISUAL)
+
+KEEP_DEFS = ("<Subject 1> is the person in <Video 1>. The face, hair, skin, build and "
+             "clothing of <Subject 1> stay those of <Video 1> in every frame. <Video 1> "
+             "supplies the movement, the camera path, the shot timing and the setting.")
+KEEP_VISUAL = ("<Subject 1> spins across the kitchen tiles, arms flung wide, the skirt "
+               "flaring and settling as the spin slows. Boots squeak on tile, a fridge "
+               "hums low, and <Subject 1> comes to rest facing the window, the surface "
+               "steady in every frame.")
+KEEP = contract(KEEP_DEFS, KEEP_VISUAL)
 calls = []
 
 
@@ -57,47 +79,100 @@ def run(mode, replies, **kw):
     return asyncio.run(PL.write_swap_plan("spin", complete_fn=fc, duration="8 s", mode=mode, **kw))
 
 
-print("1. keep_person never carries the face")
-o = run("keep_person", [{"beat": "The subject spins across the kitchen tiles, arms flung wide, the skirt "
-                                  "flaring and settling as the spin slows. Boots squeak on tile, a fridge hums "
-                                  "low, and the subject comes to rest facing the window.",
-                         "directives": {"tail": "settle"}}])
+print("0. the gate fails closed")
+ck("a complete block passes", PL.swap_contract_errors(GOOD, identities=["her_face"]) == ([], []),
+   PL.swap_contract_errors(GOOD, identities=["her_face"]))
+ck("a prose beat is refused, naming the header",
+   any("not a complete H3 block" in e for e in
+       PL.swap_contract_errors("The subject spins across the tiles.", identities=["her_face"])[0]),
+   "a beat is what the gate exists to catch")
+ck("...and a typo'd header is caught, not compiled",
+   any("subject_definitions:" in e for e in
+       PL.swap_contract_errors(GOOD.replace("subject_definitions:", "subject definitions:"),
+                               identities=["her_face"])[0]))
+ck("the wrong task type is an error",
+   any("must open with" in e for e in
+       PL.swap_contract_errors(GOOD.replace("video generation + reference", "video editing"),
+                               identities=["her_face"])[0]))
+ck("the drift clause the instruct asks for is NOT a negation",
+   PL.swap_contract_errors(GOOD, identities=["her_face"]) == ([], [])
+   and any("negation" in e for e in
+           PL.swap_contract_errors(GOOD.replace("boots squeaking on tile", "no boots on tile"),
+                                   identities=["her_face"])[0]),
+   # Mutated on the sentence's own wording. The earlier version replaced "hold
+   # steady", which stopped existing when the clause was reworded -- so the
+   # mutation became a no-op, the gate returned clean, and the check passed
+   # without having proved anything. A text check whose mutation goes quiet is
+   # a check that has stopped checking.
+   "the gate must not reject the sentence its own instruct requires")
+
+print("\n0b. the render-time pass, which is the one that must hold")
+# shape_only is what run() calls, with no identity list. It has to catch the
+# misparse -- the one that silently prepends the register's identity prose --
+# and it has to pass a block whose identity is real but unknown to it.
+_TYPO = GOOD.replace("subject_definitions:", "subject definitions:")
+ck("a hand-edited swap is refused at render time",
+   any("not a complete H3 block" in e for e in PL.swap_contract_errors(_TYPO, shape_only=True)[0]),
+   "a hand-edit or a stale workflow is what the write-time gate cannot see")
+ck("...but a valid swap with an unknown identity is not refused for that",
+   PL.swap_contract_errors(GOOD, shape_only=True) == ([], []),
+   PL.swap_contract_errors(GOOD, shape_only=True))
+ck("the render-time pass still catches the task type",
+   any("must open with" in e for e in PL.swap_contract_errors(
+       GOOD.replace("video generation + reference", "video editing"), shape_only=True)[0]))
+ck("...and a dropped drift clause",
+   any("drift clause" in e for e in PL.swap_contract_errors(
+       GOOD.replace("steady in every frame with no texture crawling", "in place"),
+       shape_only=True)[0]))
+ck("...and plural pronouns",
+   any("two people" in e.lower() for e in PL.swap_contract_errors(
+       GOOD + "\n\nThey settle at the window.", shape_only=True)[0]))
+ck("the identity half is skipped, not stubbed",
+   PL.swap_contract_errors(GOOD, identities=[], shape_only=True) == ([], [])
+   and PL.swap_contract_errors(GOOD, identities=[], mode="replace_person") != ([], []),
+   "shape_only must skip the identity block, not quietly check nothing")
+
+print("\n1. keep_person never carries the face")
+o = run("keep_person", [{"beat": KEEP, "directives": {"tail": "settle"}}])
 ck("ok", o.get("ok"), o)
 ck("refs are explicitly [] (not absent -> register default)",
    json.loads(o["shot_plan"])["shots"][0].get("refs") == [], o.get("shot_plan"))
-o = run("keep_person", [{"beat": "The subject spins, looking like @her_face, " + GOOD[60:], "directives": {"tail": "settle"}},
-                        {"beat": "The subject spins across the kitchen tiles, arms flung wide, the skirt flaring "
-                                 "and settling as the spin slows. Boots squeak on tile, a fridge hums low, and the "
-                                 "subject comes to rest facing the window.", "directives": {"tail": "settle"}}])
+o = run("keep_person", [{"beat": contract(KEEP_DEFS, KEEP_VISUAL.replace(
+                                   "<Subject 1> spins", "<Subject 1> spins, looking like @her_face,")),
+                                   "directives": {"tail": "settle"}},
+                        {"beat": KEEP, "directives": {"tail": "settle"}}])
 ck("citing the identity under keep_person is repaired, not queued broken",
    o.get("ok") and len(calls) == 2 and "swaps nobody" in calls[1], (o.get("errors"), len(calls)))
-o = run("keep_person", [{"beat": "The subject spins in @kitchen, arms flung wide, the skirt flaring and settling "
-                                  "as the spin slows. Boots squeak on tile, a fridge hums low, and the subject "
-                                  "comes to rest facing the window.", "directives": {"tail": "settle"}}],
+o = run("keep_person", [{"beat": contract(KEEP_DEFS, KEEP_VISUAL.replace(
+                                   "The subject spins", "The subject spins in @kitchen,")),
+                                   "directives": {"tail": "settle"}}],
         background="picture", background_tag="kitchen")
 ck("keep_person with a picture background rides exactly that plate",
    o.get("ok") and json.loads(o["shot_plan"])["shots"][0].get("refs") == ["kitchen"], o)
 
 print("\n2. the validator holds the instruct's rules")
-once = {"beat": "The subject spins across the kitchen tiles looking like @her_face, arms flung wide as the "
-                "skirt flares and settles, boots squeaking on tile while a fridge hums low, the spin slowing "
-                "to a standstill facing the window in the late light.", "directives": {"tail": "settle"}}
+once = {"beat": contract("The subject spins across the kitchen tiles looking like @her_face.",
+                         GOOD_VISUAL), "directives": {"tail": "settle"}}
 o = run("head_swap", [once, dict(once, beat=GOOD)])
-ck("a missing subject label is an error and goes back once",
-   o.get("ok") and len(calls) == 2 and "define <Subject 1>" in calls[1],
+ck("a block that never defines <Subject 1> is an error and goes back once",
+   o.get("ok") and len(calls) == 2 and "<Subject 1>" in calls[1],
    # `calls[1] if len(calls) > 1 else ""` rather than `calls[1]`: when the rule
    # is removed the repair turn never happens, calls has one entry, and the
    # detail expression raised IndexError -- the check CRASHED on exactly the
    # failure it exists to report. That is the same failure as a check that
    # passes on nothing, wearing a louder hat.
    (len(calls), o.get("errors"), calls[1] if len(calls) > 1 else "(no repair turn)"))
-o = run("head_swap", [dict(once, beat=GOOD.replace("Boots squeak", "No hat, not smiling. Boots squeak"))])
-ck("a negation is linted", any("negation" in w for w in o.get("warnings") or []), o.get("warnings"))
+o = run("head_swap", [dict(once, beat=GOOD.replace("boots squeaking on tile", "no boots on tile"))])
+# Asserted on the result, not on the call count: a single-reply fixture retries
+# the same bad block until MAX_ATTEMPTS, so the number of turns is an artefact
+# of the loop's budget rather than of this rule.
+ck("a negation is repaired, not queued",
+   not o.get("ok") and any("negation" in e for e in o.get("errors") or []), o.get("errors"))
 o = run("head_swap", [dict(once, beat=GOOD + ' (S1) says, <d>[English] I will not stop now.</d>')])
-ck("...but not one inside a spoken line", not any("negation" in w for w in o.get("warnings") or []), o.get("warnings"))
-o = run("head_swap", [dict(once, beat="The subject spins, looking like @her_face. The face of @her_face is the subject's own.")])
-ck("a short beat is linted against the hop", any("words; a 8 s hop wants" in w for w in o.get("warnings") or []),
-   o.get("warnings"))
+ck("...but not one inside a spoken line", o.get("ok") and len(calls) == 1, (o.get("errors"), len(calls)))
+o = run("head_swap", [dict(once, beat=contract(HEAD_DEFS, "The subject spins, looking like @her_face."))])
+ck("a short detailed_description is linted against the hop",
+   any("words; a 8 s hop wants" in w for w in o.get("warnings") or []), o.get("warnings"))
 
 print("\n3. a caption that names the person is flagged")
 o = run("head_swap", [json.dumps({"shot_plan": {"shots": [dict(once, beat=GOOD)]}})
@@ -131,7 +206,7 @@ ck("the example reply no longer hard-codes camera hold / framing medium",
 ck("the table has no spoken-lines column", "| spoken lines |" not in doc)
 ck("speech has its syntax and its condition", "<d>[English]" in doc and "only when the brief gives" in doc)
 ck("two people and pronouns are covered", "a second" in doc and "never as" in doc)
-ck("the word count is not written into the beat", "write the count\ndown" not in doc and "never part of the beat" in doc)
+ck("the word count is not written into the script", "write the count\ndown" not in doc and "never part of the script" in doc)
 ck("the caption rule names what to leave out", "sex, age, build" in doc)
 
 # --- D1q: the rules the rewrite exists to get right -----------------------

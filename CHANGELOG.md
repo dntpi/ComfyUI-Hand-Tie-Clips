@@ -5,6 +5,154 @@ pack — the published package excludes them. Engineering detail lives in
 `docs/DEVLOG.md`. `docs/HANDOVER_*.md` and `BETA_NOTES.md` are historical
 and should not be read as the state of this release.
 
+## Unreleased — 2026-10-17
+
+### Built-In `_HTCMotionContext`, Refine v2.4, `hand_tie` v2.6 & `audio_refine`
+
+- **Built-in `_HTCMotionContext` (`h3_ref_chain.py`, `THIRD_PARTY_NOTICES.md`)** —
+  `pin_mech=motion_context` (and `auto`) now runs natively in-house on ComfyUI
+  Core's `minimax_keyframes` contract with zero external custom-node dependency
+  (credit to [NikoDemon80's ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
+  for the latent-slice + end-aligned audio timeline concept). Supports unlimited
+  chain length (30+ hops tested across continuous relays and `restart` cuts).
+- **Refine v2.4 & Motion-Context Join Locks (`h3_ref_chain.py`, `refine_blend.py`)** —
+  Added `_pin_inpaint_head`, `_calibrate_overlap_latent`, `_bridge_motion_seam`,
+  head-internal refine ramp (`0:0, overlap:1`), Hop-1 refine skip (`hop_is_start`),
+  and bit-for-bit audio freeze (`freeze_audio=_do_aud`).
+- **`hand_tie` v2.6 (`hand_tie.py`, `h3_ref_chain.py`)** —
+  `_ht_inpaint_head` aligns only `cond` (`pos == 0`, per-`mod5` phase-calibrated
+  to `src_5[:, :, k % 5]`, keeping 100% of the silent-mouth previs window and
+  leaving `latent` / `noise_mask` untouched during `SamplerCustomAdvanced`),
+  paired with `_calibrate_ht_latent` (`w_prev = [1.0, 0.5, 0.25]`), 17-frame
+  (`5`-token) `_vae_prefix` `ViT3DDecoder` warm-up decode in `_decode_av`,
+  `deflicker` cross-cut guard (`|b - a| < still * 1.5`), and post-`deflicker`
+  `seam_feather`.
+- **Per-hop `audio_refine` pass (`[99..104]`, `h3_ref_chain.py`)** —
+  Re-samples the audio branch (`audio_refine`, `audio_refine_denoise`,
+  `audio_refine_steps`, `audio_refine_cfg`, `audio_refine_sampler`,
+  `audio_refine_scheduler`) while holding the finished video latent 100% frozen
+  via `SetLatentNoiseMask` (`zeros` on video, `ones` on audio after pinned head
+  frames). Ideal for pairing with `realism_boost` (4–5 steps).
+- **Tiled Upsampler Schedule & VRAM Fix (`tiled_upsampler.py`, `video_upsampler.py`)** —
+  `upsample_chain()` and `HTCVideoUpsampler` now run `start_sigma = 0.0` (using
+  the true `upsample_denoise` schedule fraction on H3's `shift=12` curve:
+  `[0.5714, 0.3871, 0.0]` at `0.1`), `steps = 2`, `overlap_px = 192`,
+  `detail_sigma = 0.0` (keeping 100% of `h3upscale`'s structural redraw),
+  `H3AdaLNLoRAFix(mode="port")`, immediate `_offload_text_encoder(clip, _up_model)`
+  after encoding `_ug.CAPTION`, and `finally:` VRAM cleanup.
+- **UI Cleanup, `rides hops` Fix & Vue Nodes 2.0 Compatibility (`js/`)** —
+  Hid 14 redundant v1 refine and `join & pin` band-aids (`REFINE_V2_HIDDEN` in
+  `js/editor/run_panel.js`), fixed `.h3e-hopbar` (`grid-column: 1 / -1` and
+  `getBoundingClientRect()`-relative click/drag in `js/h3_ref_chain.css` and
+  `js/editor/ref_rail.js`), and hardened widget hiding/sizing for both Classic
+  LiteGraph and ComfyUI Vue Nodes 2.0.
+- **`WRITE`, `Music Video` (`Song` / `Lay out`) & `SWAP` Hardening (`planner.py`, `routes.py`, `js/editor/writer_bar.js`)** —
+  Connected `brief` and `chat` via `scenePrompt()`, exposed `Edit shots`
+  (`stage: "edit"`), added explicit JSON contract instructions + fence-aware
+  `_parse_obj()` to `write_propose` and `write_edit`, fixed `_songmap_summary`
+  and `solve` section-kind propagation, normalized MV `anchor="restart"` on
+  Hop 1 and rail-backed restarts before `_validate_anchors`, and added `<rail>`
+  metadata + `INTENT_INFERENCE_GUIDE`.
+
+### Standalone Guided SWAP (`swap_script`, `swap_refs`, `AddGuide`, auto-loaded Swap LoRAs)
+
+The **Swap** tab is now a completely standalone, one-hop guided identity swap
+tool built around Alissonerdx's guide-latent (`_gl`) Character & Head Swap
+LoRAs and the full six-field H3 Reference-to-Video contract. Writing or
+rendering a swap no longer touches `shot_plan`, `ref_plan`, or your upstream
+LoRA stack.
+
+- **Dedicated `swap_script` and `swap_refs` widgets (`[98]`, `[99]`)** —
+  Accepting a swap writes the compiled six-field H3 prompt into `swap_script`
+  and the active plate whitelist into `swap_refs`, leaving your multi-shot
+  `shot_plan` and `ref_plan` untouched. Clearing the swap from the **Swap** tab
+  (`Clear swap (use SCRIPT chain)`) empties both widgets and hands the node
+  straight back to your chain.
+- **Three-state `swap_refs` plate routing** — `""` keeps the register default
+  (every wired plate rides), `"[]"` rides zero plates (used by `keep_person` so
+  a face still on the rail never leaks onto a scene-only swap), and `"tag1,
+  tag2"` rides only the named plates in that exact `<Picture 1..N>` order.
+- **Full-clip `MiniMaxH3AddGuide(frame_idx=0)` alignment** — When a swap runs
+  with a reference clip loaded, `run()` lays `reference_video[:render_length]`
+  onto `MiniMaxH3AddGuide` at `frame_idx=0` (`minimax_keyframes`) so the
+  guide-latent swap LoRA tracks the performer's body mechanics, camera move,
+  lighting, and environment frame by frame. `hand_tie` (`ht`) is automatically
+  forced off for a swap even when `pin_mech=hand_tie` is selected on the node.
+- **Automatic Character / Head Swap LoRA loading (`_swap_lora`)** — `planner.py`
+  prepends `body_swap:` (for `Replace person`) or `head_swap:` (for `Head swap`
+  and `Face only`) to `swap_script`. At render time, `run()` clones `model` for
+  that single execution and loads
+  `minimax_h3_character_swap_v1.0_ref2va_r64_gl.safetensors` (`body_swap:`) or
+  `minimax_h3_head_swap_v1.0_r32.safetensors` (`head_swap:`) at strength `1.0`
+  via `LoraLoaderModelOnly` + `H3AdaLNLoRAFix(mode="port")` before computing
+  `_model_fingerprint(model)`. You never have to wire or unwire a swap LoRA in
+  your upstream graph when switching between a swap and a chain.
+- **Multi-person Left-to-Right (`PEOPLE L→R`) swaps** — Pick one or more
+  subject-bearing `@tag` chips on the **Swap** tab in left-to-right screen
+  order. They map 1-to-1 to `<Subject 1..N>` and `<Picture 1..N>` in
+  `subject_definitions:` and `detailed_description:`.
+- **Fail-closed six-field contract gate at write time and render time** —
+  `validate_swap()` and `swap_contract_errors(..., shape_only=True)` enforce all
+  five required H3 headers in order (`subject_definitions:`, `summary:`,
+  `detailed_description:`, `overall_soundscape:`, `non_diegetic_music:`),
+  require `summary:` to open with `[video generation + reference]`, require
+  `[Shot 1]`, `(VISUAL)` (closing on the mandatory drift clause), and `(SOUND)`,
+  and reject negations outside quoted speech and plural pronouns
+  (`they`/`them`/`their`).
+- **5-frame temporal vision** — Both `/h3_ref_chain/swap_plan` and
+  `/h3_ref_chain/swap_describe` now sample **5 evenly spaced frames** (up from
+  3) across the trimmed `[start, end]` clip window so the vision model sees the
+  full motion arc.
+
+### Local `nInfer` Writer Upgrade (Qwen3.8-27B Uncensored DFlash2 v3)
+
+- **Upgraded default `nInfer` model** — Switched `llm.py` and `htc_llm.json`
+  from `qwen3_8_27b_nvfp4.ninfer` to
+  `Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-DFlash2-ninfer-v3.ninfer`
+  (`WaveCut/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-DFlash2-NInfer-v3`,
+  `groupwise-int` v3 container with BF16 Vision tower, MTP, and DFlash2 block
+  diffusion speculative decoding). `llm.start_process` automatically falls back
+  to the newest `.ninfer` file in `C:\ninfer\models\` if a configured filename
+  is absent.
+- **Sampling & MTP retry step-up** — Raised default writer temperature from
+  `0.35` to `0.75` with `top_p: 0.95`, and added a `+0.1` temperature step-up
+  per repair retry (`min(1.0, 0.75 + (attempt - 1) * 0.1)`) in `routes.py` so
+  100% MTP speculative draft acceptance cannot lock repair attempts onto a
+  rejected prefix.
+
+### Universal Refine v2.3, `hand_tie` Qwen3-VL Previs Compiler & Tiled Upsampler Anti-Grid Upgrade
+
+- **Shifted/capped denoise + RMS-capped detail blend (`refine_blend.py`, `h3_ref_chain.py`)** —
+  `hop_refine=full/pin_only` schedules `refine_steps` steps on `_rmodel`'s
+  sigma-shifted (`shift=12`) schedule (`0.25` = `[0.8000, 0.6316, 0.0]` on a
+  turbo model, and capped to `sigma <= 0.45` = `[0.45, 0.225, 0.0]` when
+  `refine_model` is an unpatched 30-step stock base so 2 Euler steps never
+  under-converge or bleach skin warmth). `blend_video_detail(..., cap_high=True)`
+  keeps `x0`'s low-frequency background, layout, and colour ($\sigma = 2.0\text{ latent px}$)
+  while clamping the refined high-frequency RMS per frame and channel so it can
+  never exceed `x0` (`| detail=0` restores the legacy lerp).
+- **`hand_tie` Qwen3-VL Previs Compiler + Seam Feather (`hand_tie.py`, `h3_ref_chain.py`)** —
+  Before `qwen3vl_32b` or the H3 DiT touch VRAM, `hand_tie` auto-loads
+  `qwen3vl_4b*.safetensors` (~4 GB) or `qwen3vl_8b*.safetensors` (~8 GB) from
+  `models/text_encoders`, compiles manual shot beats into continuous single-take
+  bridge moments under `PREVIS_LAWS_SYSTEM` (stripping mid-hop payoff actions so
+  they happen inside the 8s hop rather than early in the previs), and immediately
+  evicts the 4B/8B model from VRAM (falling back to `lead_clause` if not
+  installed). `seam_feather` closes the still-pixel RGB step locally over `±12`
+  frames at each `hand_tie` cut and crossfades the first `6` frames of the shared
+  window to eliminate the 1-frame Frame-0 VAE mini-flash.
+- **Cleaned `REFINE` section in the RUN panel (`js/editor/run_panel.js`)** —
+  Hid the 8 redundant v1 refine/speed plumbing dials while keeping their raw
+  LiteGraph widget slots intact, leaving `hop_refine`, `refine_denoise`,
+  `refine_steps`, and `refine_blend`.
+- **Tiled Upsampler anti-grid merge (`tiled_upsampler.py`, `video_upsampler.py`)** —
+  Added `_highpass_detail_merge(..., sigma=8.0)` (`128 screen px`, matching the
+  tile seam scale) at the end of `redraw_chunk` to strip tile-to-tile
+  DC/colour/contrast grid seams against the full-frame 3D `LatentUpscaler`
+  output while preserving all mid-and-fine `h3upscale` detail. `upsample_chain()`
+  now uses 2-step low-sigma re-entry (`start_sigma = min(denoise * 2.5, 0.35)`,
+  `overlap_px = 192`, `detail_sigma = 8.0`) and automatic `H3AdaLNLoRAFix` porting.
+
 ## 2.2.0 — 2026-09-21
 
 Two new widgets, both appended last, so a 2.1.0 graph loads with every existing

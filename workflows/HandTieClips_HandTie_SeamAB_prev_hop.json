@@ -655,8 +655,9 @@
         "None",
         1.0,
         70000,
-        "prev_hop",
-        "off"
+        "off",
+        "",
+        ""
       ],
       "title": "H3 Ref2VA Chain - seam AB: prev_hop"
     },

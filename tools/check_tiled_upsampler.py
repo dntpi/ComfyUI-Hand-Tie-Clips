@@ -84,6 +84,12 @@ def self_checks(tu):
                            a[..., a0:], 5, tu.frames_in(5))
     ck("joining two overlapping cuts of one clip returns the clip",
        torch.allclose(jv, v) and torch.allclose(ja, a))
+    # Anti-grid high-pass detail merge: a constant DC offset on the tiled re-draw
+    # is rejected while 1-px checkerboard detail is kept.
+    base_u = torch.zeros(1, 4, 2, 32, 32)
+    dc_merged = tu._highpass_detail_merge(base_u, base_u + 0.5, sigma=2.0)
+    ck("_highpass_detail_merge strips constant tile DC/colour offset",
+       float(dc_merged.abs().max()) < 1e-5)
 
 
 # --- against their pack -----------------------------------------------------
@@ -214,7 +220,7 @@ def end_to_end(tu, mm):
     saved = (tu.load_upscaler, tu._device, tu.recipe_sigmas, tu.sample_tile)
     tu.load_upscaler = lambda name: net
     tu._device = lambda: torch.device("cpu")
-    tu.recipe_sigmas = lambda model, denoise=0.2: sigmas
+    tu.recipe_sigmas = lambda model, denoise=0.2, *a, **kw: sigmas
     tu.sample_tile = (lambda model, c, sampler, sg, v, a, noise, seed:
                       fake_draw(v, noise[0], sg, c))
     try:
@@ -344,7 +350,7 @@ def chain_checks(tu):
     # per restart segment, frames concatenated in order, count checked.
     calls = []
 
-    def fake_upsample(model, cond_at, lat, sampler, name, mp, denoise=0.2, guide=None, budget=None):
+    def fake_upsample(model, cond_at, lat, sampler, name, mp, denoise=0.2, guide=None, budget=None, **kw):
         v = lat["samples"].tensors[0]
         calls.append(int(v.shape[2]))
         return {"samples": lat["samples"]}

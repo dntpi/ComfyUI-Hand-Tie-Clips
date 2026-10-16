@@ -85,3 +85,16 @@ denoise 0.2 -- is the one the user proved in bbaudio-2025's
 [Comfyui-MMH3-UltimateUpscale](https://github.com/bbaudio-2025/Comfyui-MMH3-UltimateUpscale) graph (MIT).
 No code was copied from it; the checker compares the two end to end when that
 pack is installed and requires identical latents.
+
+## `_HTCMotionContext` in `h3_ref_chain.py` — built-in latent motion & audio pin
+
+**Concept credit: [NikoDemon80](https://github.com/NikoDemon80) ([`ComfyUI-H3-Motion-Context`](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)).**
+
+Earlier versions of Hand Tie Clips called out to an externally installed
+`ComfyUI-H3-Motion-Context` node to slice the previous hop's video and audio
+latents into ComfyUI Core's `minimax_keyframes` list. `_HTCMotionContext` in
+`h3_ref_chain.py` implements that keyframe placement natively on top of this
+pack's own `latents.py` and `refine_blend.py` helpers so `motion_context` works
+out of the box with zero external custom-node dependency and no registry or
+version-drift conflicts.
+

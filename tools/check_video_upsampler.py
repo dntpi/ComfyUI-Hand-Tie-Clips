@@ -143,6 +143,19 @@ def run_checks(V, tu, ug):
         ck("soundtrack handed back untouched", out_a is audio)
         ck("budget and denoise reach the upsampler", seen["budget"] == 40000 and seen["denoise"] == 0.1)
         ck("no LoRA -> no guide", seen["guide"] is None)
+        ck("the chain's re-draw: 2 steps on the denoise schedule, 192 px overlap, no detail merge",
+           seen.get("steps") == 2 and seen.get("start_sigma") == 0.0
+           and seen.get("overlap_px") == 192 and seen.get("detail_sigma") == 0.0,
+           str({k: seen.get(k) for k in ("steps", "start_sigma", "overlap_px", "detail_sigma")}))
+        chain_src = open(os.path.join(HERE, "tiled_upsampler.py"), encoding="utf-8").read()
+        chain_src = chain_src.split("def upsample_chain(", 1)[1]
+        ck("upsample_chain still calls it with those values (node follows the chain)",
+           "_chain_steps = 2 if float(denoise) > 0.0 else STEPS" in chain_src
+           and "steps=_chain_steps, start_sigma=0.0," in chain_src
+           and "overlap_px=192, detail_sigma=0.0)" in chain_src)
+        opt = V.HTCVideoUpsampler.INPUT_TYPES().get("optional") or {}
+        ck("no steps / start_sigma / tile_overlap widgets",
+           not ({"steps", "start_sigma", "tile_overlap"} & set(opt)), str(sorted(opt)))
         ck("audio latent sized to the clip's audio steps",
            seen["latent"]["samples"].tensors[1].shape[-1]
            == core.temporal_shape(107)[2])

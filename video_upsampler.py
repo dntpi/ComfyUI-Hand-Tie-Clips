@@ -110,8 +110,9 @@ class HTCVideoUpsampler:
                     "tooltip": "Output size as area, aspect kept (1 MP = 1024 x 1024)."}),
                 "denoise": ("FLOAT", {
                     "default": 0.1, "min": 0.0, "max": 1.0, "step": 0.005,
-                    "tooltip": ("Only used when start_sigma is 0: fraction of the schedule the "
-                                "re-draw covers (0.1.0 behaviour). 0 with start_sigma 0 only enlarges.")}),
+                    "tooltip": ("Fraction of the schedule the two re-draw steps cover, as the "
+                                "chain's upsample_denoise. 0.1 is the setting that held; 0 only "
+                                "enlarges.")}),
                 "lora": (["None"] + folder_paths.get_filename_list("loras"), {
                     "default": "None",
                     "tooltip": ("A LoRA on the re-draw. An h3upscale LoRA (read off its header) "
@@ -126,18 +127,6 @@ class HTCVideoUpsampler:
                 "sampler_name": (comfy.samplers.KSampler.SAMPLERS, {"default": "euler"}),
             },
             "optional": {
-                "steps": ("INT", {
-                    "default": 4, "min": 1, "max": 20,
-                    "tooltip": ("Re-draw steps, each over every tile. 4 = gentle, less burn. "
-                                "1 with start_sigma 0 = the 0.1.0 one-step recipe.")}),
-                "start_sigma": ("FLOAT", {
-                    "default": 0.45, "min": 0.0, "max": 1.0, "step": 0.01,
-                    "tooltip": ("Noise level the re-draw starts from, stepping down to 0. "
-                                "0.35-0.5 is gentle. 0 = use `denoise` instead (old behaviour).")}),
-                "tile_overlap": ("INT", {
-                    "default": 192, "min": 0, "max": 512, "step": 32,
-                    "tooltip": ("Overlap between tiles in px, snapped to 32. More = softer seams, "
-                                "more tiles. 128 = the 0.1.0 value.")}),
                 "audio": ("AUDIO", {"tooltip": "The clip's soundtrack. Passed through untouched."}),
                 "audio_vae": ("VAE", {"tooltip": (
                     "The H3 audio VAE. With it, the re-draw is conditioned on the real "
@@ -150,13 +139,12 @@ class HTCVideoUpsampler:
     FUNCTION = "run"
     CATEGORY = "Hand Tie Clips"
     DESCRIPTION = (
-        "Upsamples a finished clip with the chain's upsampler: H3 latent upscale, then one "
-        "light re-draw in tiles. An h3upscale LoRA gets its guide in that same step. "
+        "Upsamples a finished clip with the chain's upsampler: H3 latent upscale, then a "
+        "light two-step re-draw in tiles. An h3upscale LoRA gets its guide in those steps. "
         "tile_tokens lets a smaller card cut more tiles.")
 
     def run(self, model, clip, vae, images, prompt, upscale_model, megapixels, denoise,
-            lora, lora_strength, tile_tokens, sampler_name, audio=None, audio_vae=None,
-            steps=4, start_sigma=0.45, tile_overlap=192):
+            lora, lora_strength, tile_tokens, sampler_name, audio=None, audio_vae=None):
         import comfy.nested_tensor as nt
         import comfy.samplers
         import folder_paths
@@ -208,15 +196,15 @@ class HTCVideoUpsampler:
             factor = _ug.lora_factor(path)
             model = nodes.LoraLoaderModelOnly().load_lora_model_only(
                 model, str(lora), float(lora_strength))[0]
-            fix = getattr(nodes, "NODE_CLASS_MAPPINGS", {}).get("H3AdaLNLoRAFix")
-            if fix is not None and hasattr(model, "patches"):
-                try:
-                    res = fix.execute(model=model, mode="port")
-                    model = (res.args if hasattr(res, "args") else tuple(res))[0]
-                except Exception:
-                    pass
-        redraw = float(start_sigma) > 0.0 or float(denoise) > 0.0
-        if factor and redraw:
+        # As upsample_chain: port dense LoRA AdaLN patches (pruned DiTs).
+        fix = getattr(nodes, "NODE_CLASS_MAPPINGS", {}).get("H3AdaLNLoRAFix")
+        if fix is not None and hasattr(model, "patches"):
+            try:
+                res = fix.execute(model=model, mode="port")
+                model = (res.args if hasattr(res, "args") else tuple(res))[0]
+            except Exception:
+                pass
+        if factor and float(denoise) > 0.0:
             _ug.install()
 
             def decode(v):
@@ -231,20 +219,20 @@ class HTCVideoUpsampler:
               f"tile budget {int(tile_tokens)} tokens"
               + (f"; guided by {lora} (factor {factor})" if guide is not None else
                  f"; re-draw LoRA {lora}" if str(lora) != "None" else ""), flush=True)
+        # The chain's re-draw, exactly as upsample_chain calls it.
+        steps = 2 if float(denoise) > 0.0 else _tu.STEPS
         out = _tu.upsample(model, cond, latent, sampler, str(upscale_model),
                            float(megapixels), float(denoise), guide=guide,
-                           budget=int(tile_tokens), steps=int(steps),
-                           start_sigma=float(start_sigma), overlap_px=int(tile_overlap))
+                           budget=int(tile_tokens), steps=steps, start_sigma=0.0,
+                           overlap_px=192, detail_sigma=0.0)
         _tu._free(model)
         img = vae.decode(out["samples"].tensors[0])
         img = img.reshape(-1, img.shape[-3], img.shape[-2], img.shape[-1])[:n]
         report = (f"{n} frames {int(images.shape[2])}x{int(images.shape[1])} -> "
                   f"{int(img.shape[2])}x{int(img.shape[1])}"
                   + (f", guided ({lora})" if guide is not None else "")
-                  + (f", {int(steps)} step(s) from sigma {float(start_sigma):g}"
-                     if float(start_sigma) > 0.0 else
-                     f", {int(steps)} step(s) at denoise {float(denoise):g}")
-                  + f", tile budget {int(tile_tokens)}, overlap {_tu.snap_overlap(tile_overlap)}px")
+                  + f", {steps} step(s) at denoise {float(denoise):g}"
+                  + f", tile budget {int(tile_tokens)}, overlap 192px")
         print(f"[{TAG}] {report}", flush=True)
         return (img.float().cpu(), audio if audio is not None else silent_audio(n, H3_FPS),
                 report)

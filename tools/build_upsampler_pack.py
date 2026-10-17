@@ -39,7 +39,7 @@ OUT = (sys.argv[1] if len(sys.argv) > 1
        else os.path.join(os.path.expanduser("~"), "Desktop", "ComfyUI-H3-Video-Upsampler"))
 LORA_DIR = os.path.join(COMFY, "models", "loras", "h3upscale", "v2_x2")
 LORA = "h3upscale_v2_x2.safetensors"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 GH = "https://github.com/dntpi/ComfyUI-H3-Video-Upsampler"
 HF = "https://huggingface.co/sandpies/ComfyUI-H3-Video-Upsampler"
 HTC_GH = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"
@@ -83,8 +83,8 @@ def code():
                        ("video_upsampler.py", vu)):
         write(name, HEADER + text)
     write("__init__.py", HEADER + '''"""H3 Video Upsampler: a finished MiniMax H3 clip, upscaled with the H3 latent
-upscaler and one light re-draw in tiles. An h3upscale guide LoRA gets its guide
-inside that step."""
+upscaler and a light two-step re-draw in tiles. An h3upscale guide LoRA gets its
+guide inside those steps."""
 from .tiled_upsampler import register_folder as _register_folder
 from .video_upsampler import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
@@ -152,7 +152,7 @@ redistributing or using it commercially.
     write("pyproject.toml", f"""[project]
 name = "comfyui-h3-video-upsampler"
 version = "{VERSION}"
-description = "Upscale a finished MiniMax H3 clip: H3 latent upscaler + one light re-draw in tiles, with an h3upscale guide LoRA."
+description = "Upscale a finished MiniMax H3 clip: H3 latent upscaler + a light two-step re-draw in tiles, with an h3upscale guide LoRA."
 license = {{ file = "LICENSE" }}
 dependencies = []
 
@@ -164,8 +164,8 @@ PublisherId = "sandpies"
 DisplayName = "H3 Video Upsampler"
 """)
     body = f"""Upscale a **finished** MiniMax H3 clip (or any clip) in ComfyUI: the H3 latent
-upscaler enlarges it, then one light re-draw step in tiles restores detail. With the
-**h3upscale x2 LoRA** that step also gets the clip itself, at half the output size,
+upscaler enlarges it, then a light two-step re-draw in tiles restores detail. With the
+**h3upscale x2 LoRA** those steps also get the clip itself, at half the output size,
 as a guide -- so it restores the clip's own detail instead of inventing texture.
 Mouths, motion and the soundtrack come from your clip.
 
@@ -186,7 +186,7 @@ video and audio VAE).
 | widget | what it does |
 |---|---|
 | `megapixels` | output size, aspect kept (2 = about 1920x1080) |
-| `denoise` | how hard the one re-draw step works; **0.1** is the tested setting, 0 only enlarges |
+| `denoise` | fraction of the schedule the two re-draw steps cover; **0.1** is the setting that held, 0 only enlarges |
 | `lora` | `{LORA}` = guided re-draw (detected from its header). Any other LoRA just sits on the re-draw |
 | `tile_tokens` | **VRAM.** Largest sequence per tile; lower = more, smaller tiles, slower, less memory. 70000 is the default; try 40000 or 25000 on smaller cards |
 | `prompt` | defaults to the caption the LoRA was trained on; keep it with that LoRA |
@@ -201,7 +201,9 @@ video and audio VAE).
 ## What the LoRA does and does not do
 
 Tested by eye on H3 renders: guided at denoise 0.1, the 2 MP result beat the native
-render in a blind comparison. It is an **upscaler**: generating a video from noise
+render in a blind comparison (0.1.0, one step). 0.2.0 runs the re-draw exactly as
+Hand-Tie-Clips' chain upsampler does: two steps on the denoise schedule, 192 px
+tile overlap. It is an **upscaler**: generating a video from noise
 with it flickers every 17 frames (it was trained on 5-frame clips); refining an
 existing clip, as this node does, does not.
 

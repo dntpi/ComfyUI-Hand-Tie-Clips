@@ -4841,15 +4841,22 @@ class HandTieClips:
         if shots:
             if isinstance(shots[0], dict) and str(shots[0].get("anchor") or "") == "restart":
                 shots[0] = dict(shots[0], anchor="")
-            _reg_tags = [r["tag"] for r in ((_rp_for_refs or {}).get("refs") or [])
-                         if isinstance(r, dict) and r.get("tag") and r.get("file")]
-            if _reg_tags and not str(start_image_file or "").strip():
+            _reg = [r for r in ((_rp_for_refs or {}).get("refs") or [])
+                    if isinstance(r, dict) and r.get("tag") and r.get("file")]
+            if _reg and not str(start_image_file or "").strip():
                 for _si in range(1, len(shots)):
                     _sh = shots[_si]
                     if (isinstance(_sh, dict)
                             and str(_sh.get("anchor") or "") == "restart"
                             and _sh.get("refs") is None):
-                        shots[_si] = dict(_sh, refs=list(_reg_tags))
+                        # The refs scheduled on THIS hop (plus unscheduled ones),
+                        # as on any chain start. Handing a restart every tag
+                        # ignored `shots`: an MV with one plate per outfit put
+                        # all four outfits on every cut, and a white-suit face
+                        # surfaced mid-hop in a black-shirt section (2026-10-18).
+                        # Every tag only when nothing is scheduled here.
+                        _on = _refs.active_refs(_reg, _si, {r["slot"] for r in _reg})
+                        shots[_si] = dict(_sh, refs=[r["tag"] for r in (_on or _reg)])
         _validate_anchors(shots, start_image_file)
         _validate_last_frame_guide(last_frame_guide, start_image_file)
         if _rp_for_refs is not None:

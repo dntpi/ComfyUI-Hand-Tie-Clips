@@ -60,6 +60,14 @@ tags:
 - **`realism_boost: on`** runs a 2-stage split schedule inside the sampler (at `steps = 6`: **2 base steps** set composition, then **10 realism LoRA steps** paint skin and lighting with *no fresh noise*).
 - **Important Audio Note:** Because stage 2 adds no noise, the audio stream only gets those first 2 noisy steps and **will sound thin or under-converged on its own**. When using `realism_boost`, turn on **`audio_refine: on`** (under the **Soundtrack** group, `4–5` steps) — it re-samples the soundtrack cleanly while keeping your finished video 100% frozen.
 
+<div align="center">
+  <p><strong>Simple Mode (15s · Realism Boost + 2 MP Upsample) example</strong></p>
+  <video controls preload="metadata" width="50%" style="max-width:480px; border-radius:8px;" src="https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips/resolve/main/docs/img/simple-realism-boost-2mp-00008.mp4">
+    <source src="https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips/resolve/main/docs/img/simple-realism-boost-2mp-00008.mp4" type="video/mp4">
+    <source src="https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/simple-realism-boost-2mp-00008.mp4" type="video/mp4">
+  </video>
+</div>
+
 ### 2. Refine Pass (`hop_refine: full`) — Honest Limitations
 - Runs a gentle low-sigma detail pass per hop (supports wiring a stock 30-step H3 DiT to `refine_model` while your main wire runs a Turbo model).
 - **The honest truth on chain length:** `Refine` holds back relay degradation and keeps joins clean, pushing continuous `motion_context` chains to **5–6 clips on Turbo** before very visible texture changes appear, and **7–8 clips on non-Turbo**. Under `motion_context`, plan to transition to a cut (`anchor: "restart"`) every 4–5 clips or so to maintain the integrity of your textures (or use `pin_mech: hand_tie` for continuous single-take sequences).

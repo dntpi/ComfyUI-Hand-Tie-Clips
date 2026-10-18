@@ -213,6 +213,16 @@ const REFINE_V2_HIDDEN = new Set([
     "tone_anchor",
 ]);
 
+// Per-widget legacy combo values hidden from the RUN panel dropdowns while
+// remaining in Python's INPUT_TYPES so older saved workflows and unit tests
+// still validate cleanly.
+const HIDDEN_COMBO_OPTIONS = {
+    pin_mech: new Set(["addguide", "hand_tie_mc"]),
+};
+const COMBO_UI_ALIAS = {
+    pin_mech: { hand_tie_mc: "hand_tie", addguide: "auto" },
+};
+
 export function labelFor(w) {
     const n = String(w.name || "");
     return LABELS[n] || n.replace(/_/g, " ");
@@ -222,15 +232,23 @@ function comboField(node, w, onChange) {
     const values = widgetOptions(w).values;
     const opts = typeof values === "function" ? values(w, node) : values;
     if (!Array.isArray(opts)) return null;
+    const hidden = HIDDEN_COMBO_OPTIONS[w.name];
+    const alias = COMBO_UI_ALIAS[w.name] || {};
+    const norm = (v) => {
+        const sv = String(v ?? "");
+        return alias[sv] || sv;
+    };
     const s = el("select", "h3e-select");
     for (const opt of opts) {
-        const o = el("option", null, String(opt));
-        o.value = String(opt);
+        const so = String(opt);
+        if (hidden && hidden.has(so)) continue;
+        const o = el("option", null, so);
+        o.value = so;
         s.appendChild(o);
     }
-    s.value = String(w.value ?? "");
+    s.value = norm(w.value);
     s.addEventListener("change", () => commitWidget(node, w, s.value, onChange));
-    return { input: s, read: () => { s.value = String(w.value ?? ""); } };
+    return { input: s, read: () => { s.value = norm(w.value); } };
 }
 
 function toggleField(node, w, onChange) {

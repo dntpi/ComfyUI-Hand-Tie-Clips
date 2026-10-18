@@ -1026,7 +1026,8 @@ simpleNote.appendChild(el("div", "h3e-simple-help",
         // beat's first sentence, so a normal plan needs nothing here. In
         // `advanced` because hand-tie must not ask for more input than any
         // other plan (user 2026-10-09). A written value is kept in every mode.
-        if (String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie") {
+        if (String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie"
+                || String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie_mc") {
             const momentBox = (key, placeholder, hint) => {
                 const t = el("textarea", "h3e-beat h3e-moment");
                 t.rows = 2;

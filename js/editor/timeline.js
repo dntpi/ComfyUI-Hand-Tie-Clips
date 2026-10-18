@@ -221,7 +221,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
             missing,
             seedCtl: String(widgetByName(node, "control_after_generate")?.value || "fixed"),
             refsNow: parseJson(widgetByName(node, "ref_plan")?.value)?.refs || [],
-            tie: String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie",
+            tie: String(widgetByName(node, "pin_mech")?.value || "").startsWith("hand_tie"),
             frames: shots.map((s) => framesOf(s.duration
                 || widgetByName(node, "duration")?.value)),
         });
@@ -370,7 +370,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
         // function the forecast tests. NOT recomputed here: a second
         // implementation in the timeline is a second thing to disagree with the
         // renderer about, which is the failure this whole file exists to avoid.
-        const tieOn = String(widgetByName(node, "pin_mech")?.value || "") === "hand_tie";
+        const tieOn = String(widgetByName(node, "pin_mech")?.value || "").startsWith("hand_tie");
         const sections = tieOn
             ? tieSections(shots, shots.map((s) => framesOf(
                 s.duration || widgetByName(node, "duration")?.value)))
@@ -562,7 +562,7 @@ export function createTimeline(node, { editor, onChange } = {}) {
                 mark.classList.add("h3e-tl-click");
                 const ov = g.restart ? 0 : (b.overlap ?? t.ov);
                 // Hand-tie cuts the previous hop's tail, not this hop's head.
-                const tie = b.pin_mech === "hand_tie";
+                const tie = String(b.pin_mech || "").startsWith("hand_tie");
                 const cut = tie ? `trim=0&tail=${ov}` : `trim=${ov}`;
                 mark.addEventListener("click", () => openPlayer(
                     `join ${i}|${i + 1}${g.restart ? " (restart cut)" : ""}`,

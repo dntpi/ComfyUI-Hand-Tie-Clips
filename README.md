@@ -19,9 +19,15 @@ tags:
 
 *Six consecutive frames crossing the join between Hop 1 and Hop 2 — no cut, flash, or identity jump.*
 
-![The editor's tabs, with SCRIPT open on a ten-shot plan](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/editor-tabs.png)
+> 🚀 **[Launch the Interactive Node UI Demo in Your Browser (`docs/demo.html`)](https://dntpi.github.io/ComfyUI-Hand-Tie-Clips/demo.html)** — Click through **Script · Refs · Timeline · Media · Write · Swap** and the **`⚙` (`RUN`)** render-controls page live, toggle shot locks, solo-retake hops, and inspect the 10-hop `hand_tie` setup (compatible with both Classic LiteGraph and ComfyUI Vue Nodes 2.0).
 
-*Six workspace tabs (**Script · Refs · Timeline · Media · Write · Swap**) plus the **`⚙` (`RUN`)** render-controls page — compatible with both Classic LiteGraph and ComfyUI Vue Nodes 2.0.*
+<div align="center">
+  <p><strong>Hand-Tie 10x8s example</strong></p>
+  <video controls preload="metadata" width="50%" style="max-width:480px; border-radius:8px;" src="https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips/resolve/main/docs/img/hand-tie-10hop-00138.mp4">
+    <source src="https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips/resolve/main/docs/img/hand-tie-10hop-00138.mp4" type="video/mp4">
+    <source src="https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/hand-tie-10hop-00138.mp4" type="video/mp4">
+  </video>
+</div>
 
 ---
 
@@ -43,7 +49,7 @@ tags:
 | Mode | Status & Best Use Case | How It Works & Honest Tradeoffs |
 |---|---|---|
 | **`motion_context`** *(Default — Built-In)* | **Stable** — Unlimited chain length (30+ hops tested; continuous relays, dialogue, action & multi-scene cuts) | Built directly into Hand Tie Clips (no separate node install required; credit to [NikoDemon80's ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) for the latent-slice + end-aligned audio timeline design). Relays the previous hop's sampler AV latent into the next hop with in-latent head inpainting and distribution locking — and resets cleanly on `restart` cuts so films can run indefinitely. |
-| **`hand_tie`** *(Single-Take Previs)* | **Public Experimental** — Continuous one-location walking vlogs & tracking shots | Renders one low-res single-take bridge previs first and ties each full-res hop's opening and closing 0.9 s to those clean windows so hops never copy texture from each other.<br><br>**Previs Compiler Model (Recommended in `ComfyUI/models/text_encoders/`):** Drop any `qwen3vl_4b*.safetensors` or `qwen3vl_8b*.safetensors` into `models/text_encoders/` — e.g. [`qwen3vl_4b_fp8_scaled.safetensors` (Comfy-Org)](https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors), [`qwen3vl_4b` (silveroxides/K2Q)](https://huggingface.co/silveroxides/K2Q/tree/main/qwen3vl_4b), or [`qwen3vl_8b_int8_convrot.safetensors` (Comfy-Org)](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors). It loads at the start of the run to compile your beats into continuous bridge moments and unloads from VRAM before H3 starts.<br><br>**Caveat:** Because every hop must meet its bridge window, beats that ask for a sudden location change, hard camera angle jump, or fast prop action across a join can cause the previs to cut or morph. It works best when the camera and subject flow continuously in one setting, and may occasionally need a seed re-roll if a beat moves too far. |
+| **`hand_tie`** *(Single-Take Previs)* | **Public Experimental** — Continuous one-location walking vlogs & tracking shots ([🎬 10-Hop 72 s Example](https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/hand-tie-10hop-00138.mp4)) | Renders one low-res single-take bridge previs first and ties each full-res hop's opening and closing 0.9 s to those clean windows via 7 per-step Motion-Context keyframes (with muted-window audio stripping and ambient floor locking) so hops never copy texture from each other.<br><br>**Previs Compiler Model (Recommended in `ComfyUI/models/text_encoders/`):** Drop any `qwen3vl_4b*.safetensors` or `qwen3vl_8b*.safetensors` into `models/text_encoders/` — e.g. [`qwen3vl_4b_fp8_scaled.safetensors` (Comfy-Org)](https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors), [`qwen3vl_4b` (silveroxides/K2Q)](https://huggingface.co/silveroxides/K2Q/tree/main/qwen3vl_4b), or [`qwen3vl_8b_int8_convrot.safetensors` (Comfy-Org)](https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors). It loads at the start of the run to compile your beats into continuous bridge moments and unloads from VRAM before H3 starts.<br><br>**Caveat:** Because every hop must meet its bridge window, beats that ask for a sudden location change, hard camera angle jump, or fast prop action across a join can cause the previs to cut or morph. It works best when the camera and subject flow continuously in one setting, and may occasionally need a seed re-roll if a beat moves too far. |
 
 ---
 

@@ -752,6 +752,8 @@ def register():
         if proposal is not None and not isinstance(proposal, (dict, str)):
             proposal = None
         pin_mech = str(body.get("pin_mech") or "").strip()
+        if pin_mech == "hand_tie_mc":
+            pin_mech = "hand_tie"
         # MV is decided ONCE, here, and reaches every stage.
         #
         # It used to be decided per-stage from `bool(skeleton)`, so the MV

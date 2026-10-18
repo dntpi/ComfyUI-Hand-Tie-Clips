@@ -886,6 +886,45 @@ def _latent_cpu(lat):
         print(f"[{TAG}] could not move the hop latent to CPU ({e!r}); "
               f"keeping it on device", flush=True)
         out["samples"] = samples
+    for _k in ("_vae_prefix", "noise_mask"):
+        if _k in out and hasattr(out[_k], "cpu"):
+            try:
+                out[_k] = out[_k].cpu()
+            except Exception:
+                pass
+    return out
+
+
+def _cond_cpu(cond, keep_refs=False):
+    """Move conditioning tensors (`emb`, `minimax_keyframes`, optional `minimax_refs`)
+    to CPU so per-hop conditioning kept in `upsample_hops` never holds GPU VRAM."""
+    if not cond:
+        return cond
+    out = []
+    for emb, extra in cond:
+        emb_c = emb.detach().cpu() if hasattr(emb, "cpu") else emb
+        d = dict(extra) if isinstance(extra, dict) else {}
+        if not keep_refs:
+            d.pop("minimax_refs", None)
+        elif d.get("minimax_refs"):
+            refs_c = []
+            for blk in d["minimax_refs"]:
+                b = dict(blk)
+                for tk in ("latent", "audio_latent"):
+                    if tk in b and hasattr(b[tk], "cpu"):
+                        b[tk] = b[tk].detach().cpu()
+                refs_c.append(b)
+            d["minimax_refs"] = refs_c
+        if d.get("minimax_keyframes"):
+            kfs_c = []
+            for kf in d["minimax_keyframes"]:
+                k = dict(kf)
+                for tk in ("latent", "audio_latent"):
+                    if tk in k and hasattr(k[tk], "cpu"):
+                        k[tk] = k[tk].detach().cpu()
+                kfs_c.append(k)
+            d["minimax_keyframes"] = kfs_c
+        out.append([emb_c, d])
     return out
 
 
@@ -2031,7 +2070,7 @@ def _offload_text_encoder(clip, model):
         print(f"[{TAG}] VRAM purge skipped: {e}", flush=True)
 
 
-def _decode_av(video_vae, audio_vae, latent):
+def _decode_av(video_vae, audio_vae, latent, skip_audio=False):
     v_lat = latent
     drop_f = 0
     expected_f = 0
@@ -2059,7 +2098,16 @@ def _decode_av(video_vae, audio_vae, latent):
     imgs = VAEDecode().decode(video_vae, v_lat)[0]
     if drop_f > 0 and int(imgs.shape[0]) == expected_f + drop_f:
         imgs = imgs[drop_f:]
-    audio = vae_decode_audio(audio_vae, latent)
+    if skip_audio or audio_vae is None:
+        n_f = int(imgs.shape[0]) if isinstance(imgs, torch.Tensor) and imgs.ndim >= 1 else 1
+        sr = int(_alock.VAE_SR)
+        audio = {
+            "waveform": torch.zeros((1, 2, max(1, int(round(n_f / float(FPS) * sr)))),
+                                    dtype=torch.float32),
+            "sample_rate": sr,
+        }
+    else:
+        audio = vae_decode_audio(audio_vae, latent)
     return imgs, audio
 
 
@@ -3273,8 +3321,8 @@ def _calibrate_overlap_latent(sampled, pin_latent, overlap_n, hop_no=0):
             != tuple(v_prev.shape[1:2]) + tuple(v_prev.shape[3:])):
         return sampled
 
-    src_5 = v_prev[:, :, -5:]
-    open_5 = v_cur[:, :, v_steps:v_steps + 5]
+    src_5 = v_prev[:, :, -v_steps - 5:-v_steps] if p_total >= v_steps + 5 else v_prev[:, :, -5:]
+    open_5 = v_cur[:, :, 5:10] if (p_total >= v_steps + 5 and t_total >= 10) else v_cur[:, :, v_steps:v_steps + 5]
     m_src = src_5.mean(dim=(2, 3, 4), keepdim=True)
     m_open = open_5.mean(dim=(2, 3, 4), keepdim=True)
     s_src = src_5.std(dim=(2, 3, 4), keepdim=True).clamp(min=1e-5)
@@ -3284,14 +3332,14 @@ def _calibrate_overlap_latent(sampled, pin_latent, overlap_n, hop_no=0):
     body = v_cur[:, :, v_steps:]
     body_cal = (body - m_open) * gain + m_src
     n_body = int(body.shape[2])
-    weights = torch.full((n_body,), 0.35, device=v_cur.device, dtype=torch.float32)
+    weights = torch.zeros((n_body,), device=v_cur.device, dtype=torch.float32)
     hold_n = min(6, n_body)
     taper_n = min(14, max(0, n_body - hold_n))
     weights[:hold_n] = 1.0
     if taper_n > 0:
         t = torch.linspace(0.0, 1.0, taper_n + 2, device=v_cur.device, dtype=torch.float32)[1:-1]
         w_cos = 0.5 * (1.0 + torch.cos(math.pi * t))
-        weights[hold_n:hold_n + taper_n] = 0.35 + 0.65 * w_cos
+        weights[hold_n:hold_n + taper_n] = w_cos
     w_view = weights.view(1, 1, n_body, 1, 1)
     v_cur[:, :, v_steps:] = body * (1.0 - w_view) + body_cal * w_view
     v_cur[:, :, :v_steps] = v_prev[:, :, -v_steps:]
@@ -3407,11 +3455,96 @@ def _ht_inpaint_head(latent, cond, prev_sampled, overlap_n):
     return latent, out_cond, aligned, None
 
 
+def _ht_mc_inpaint_head(latent, cond, prev_sampled, overlap_n, vae=None,
+                        audio_ctx=24, head_speaks=False):
+    """Previs-driven `_HTCMotionContext` head join (`pin_mech=hand_tie_mc`).
+
+    Unpacks Hop k+1's 7-step Previs head window latent (`pos == 0` in `cond`,
+    locally `mod5`-calibrated in `(mean, std)` to Hop k's pre-cut block `src_5`)
+    into 7 per-step `minimax_keyframes` (`pos = 0, 1, 5, 9, 13, 17, 18`) and
+    attaches Hop k's end-aligned `audio_kf` via `_HTCMotionContext.apply()`,
+    while keeping 100% Generation-1 Previs spatial picture and preserving the
+    Previs tail-window guide keyframe (`pos >= overlap_n`).
+    """
+    if latent is None or prev_sampled is None or not cond:
+        return latent, cond, 0, None
+    t_parts = _latents.from_dict(latent)
+    p_parts = _latents.from_dict(prev_sampled)
+    if not t_parts or not p_parts or len(t_parts) < 2 or len(p_parts) < 2:
+        return _ht_inpaint_head(latent, cond, prev_sampled, overlap_n)
+    v_steps = int(_rblend.whole_steps_for_frames(overlap_n) or 0)
+    if v_steps < 2:
+        return latent, cond, 0, None
+    t_vid = _stream_5d(t_parts[0])
+    p_vid = _stream_5d(p_parts[0])
+    t_total = int(t_vid.shape[2])
+    p_total = int(p_vid.shape[2])
+    if (t_total <= v_steps + 5 or p_total < v_steps + 5
+            or tuple(t_vid.shape[1:2]) + tuple(t_vid.shape[3:])
+            != tuple(p_vid.shape[1:2]) + tuple(p_vid.shape[3:])):
+        return _ht_inpaint_head(latent, cond, prev_sampled, overlap_n)
+
+    p_f = p_vid.float().to(device=t_vid.device)
+    src_5 = p_f[:, :, -v_steps - 5:-v_steps]
+
+    kf_cal = None
+    spoken_audio_kfs = []
+    for _emb, extra in cond:
+        for kf in (extra.get("minimax_keyframes") or ()):
+            pos = int(kf.get("resolved_frame_index", kf.get("frame_index", -1)))
+            k_lat = kf.get("latent")
+            if (kf_cal is None and pos == 0 and isinstance(k_lat, torch.Tensor)
+                    and k_lat.ndim == 5 and int(k_lat.shape[2]) == v_steps
+                    and tuple(k_lat.shape[1:2]) + tuple(k_lat.shape[3:])
+                    == tuple(t_vid.shape[1:2]) + tuple(t_vid.shape[3:])):
+                kf_f = k_lat.float().to(device=t_vid.device)
+                kf_cal = kf_f.clone()
+                for k in range(v_steps):
+                    ref_k = src_5[:, :, k % 5:k % 5 + 1]
+                    m_ref = ref_k.mean(dim=(2, 3, 4), keepdim=True)
+                    s_ref = ref_k.std(dim=(2, 3, 4), keepdim=True).clamp(min=1e-5)
+                    kk = kf_f[:, :, k:k + 1]
+                    mk = kk.mean(dim=(2, 3, 4), keepdim=True)
+                    sk = kk.std(dim=(2, 3, 4), keepdim=True).clamp(min=1e-5)
+                    kf_cal[:, :, k:k + 1] = (kk - mk) * (s_ref / sk).clamp(0.85, 1.15) + m_ref
+                kf_cal = kf_cal.to(device=p_parts[0].device, dtype=p_parts[0].dtype)
+            if head_speaks and "audio_latent" in kf and pos < int(overlap_n):
+                spoken_audio_kfs.append(dict(kf))
+
+    if kf_cal is None:
+        return _ht_inpaint_head(latent, cond, prev_sampled, overlap_n)
+
+    v_guide = _stream_5d(p_parts[0]).clone()
+    v_guide[:, :, -v_steps:] = kf_cal
+    g_parts = list(p_parts)
+    g_parts[0] = v_guide.reshape(p_parts[0].shape)
+    mc_guide_latent = dict(prev_sampled)
+    mc_guide_latent["samples"] = _latents.rebuild(prev_sampled["samples"], g_parts)
+
+    out_cond, _trim = _HTCMotionContext().apply(
+        conditioning=cond, vae=vae, latent=latent,
+        context_length=str(overlap_n),
+        audio_context_length=(int(audio_ctx) if head_speaks else 0),
+        context_latent=mc_guide_latent,
+    )
+    if not head_speaks:
+        out_cond = _strip_audio_keyframes(out_cond)
+    elif spoken_audio_kfs:
+        out_cond = _strip_audio_keyframes(out_cond)
+        out_cond = [
+            [emb, dict(extra, minimax_keyframes=list(extra.get("minimax_keyframes") or ()) + spoken_audio_kfs)]
+            for emb, extra in out_cond
+        ]
+    return latent, out_cond, v_steps, None
+
+
 def _calibrate_ht_latent(sampled, prev_sampled, overlap_n, hop_no=0):
     """Lock a `hand_tie` continuation hop's opening latent `(mean, std)` and 3-step handoff to Hop k.
 
-    1. Calibrates the body (`steps v_steps:`) against Hop k's pre-cut 5-step block
-       (`src_5 = steps -v_steps-5:-v_steps`, `mod5 = 0..4`), tapering to 35%.
+    1. Calibrates the opening (`steps v_steps:`) against Hop k's pre-cut 5-step block
+       (`src_5 = steps -v_steps-5:-v_steps`, `mod5 = 0..4`), cosine-tapering to 0.0%
+       over 14 steps so the hop's own tail (`src_5` for Hop k+2) stays 100.0% native
+       with zero hop-over-hop compounding across 10+ hops.
     2. Across the 7-step head window (`steps 0..v_steps-1`), calibrates each step
        `k` against its exact `mod5 = k % 5` reference `src_5[:, :, k % 5]`, blends
        Hop k's tail tokens into `steps 0, 1, 2` with weights `[1.0, 0.5, 0.25]`,
@@ -3446,14 +3579,14 @@ def _calibrate_ht_latent(sampled, prev_sampled, overlap_n, hop_no=0):
     gain = (s_src / s_open).clamp(0.85, 1.15)
 
     v_cal = (v_cur - m_open) * gain + m_src
-    weights = torch.full((t_total,), 0.35, device=v_cur.device, dtype=torch.float32)
+    weights = torch.zeros((t_total,), device=v_cur.device, dtype=torch.float32)
     hold_n = min(v_steps, t_total)
-    taper_n = min(14, max(0, t_total - hold_n))
+    taper_n = min(14, max(0, t_total - hold_n - 12))
     weights[:hold_n] = 1.0
     if taper_n > 0:
         t = torch.linspace(0.0, 1.0, taper_n + 2, device=v_cur.device, dtype=torch.float32)[1:-1]
         w_cos = 0.5 * (1.0 + torch.cos(math.pi * t))
-        weights[hold_n:hold_n + taper_n] = 0.35 + 0.65 * w_cos
+        weights[hold_n:hold_n + taper_n] = w_cos
     w_view = weights.view(1, 1, t_total, 1, 1)
     v_cur = v_cur * (1.0 - w_view) + v_cal * w_view
 
@@ -3461,23 +3594,10 @@ def _calibrate_ht_latent(sampled, prev_sampled, overlap_n, hop_no=0):
         ref_k = src_5[:, :, k % 5:k % 5 + 1]
         m_ref = ref_k.mean(dim=(2, 3, 4), keepdim=True)
         s_ref = ref_k.std(dim=(2, 3, 4), keepdim=True).clamp(min=1e-5)
-        tk = tail_v[:, :, k:k + 1]
-        mt = tk.mean(dim=(2, 3, 4), keepdim=True)
-        st = tk.std(dim=(2, 3, 4), keepdim=True).clamp(min=1e-5)
-        t_cal = (tk - mt) * (s_ref / st).clamp(0.85, 1.15) + m_ref
-
         ck = v_cur[:, :, k:k + 1]
         mc = ck.mean(dim=(2, 3, 4), keepdim=True)
         sc = ck.std(dim=(2, 3, 4), keepdim=True).clamp(min=1e-5)
-        c_cal = (ck - mc) * (s_ref / sc).clamp(0.85, 1.15) + m_ref
-
-        w_prev = (1.0, 0.5, 0.25)[k] if k < 3 else 0.0
-        if w_prev > 0.0:
-            mix = t_cal * w_prev + c_cal * (1.0 - w_prev)
-            mm = mix.mean(dim=(2, 3, 4), keepdim=True)
-            sm = mix.std(dim=(2, 3, 4), keepdim=True).clamp(min=1e-5)
-            c_cal = (mix - mm) * (s_ref / sm).clamp(0.85, 1.15) + m_ref
-        v_cur[:, :, k:k + 1] = c_cal
+        v_cur[:, :, k:k + 1] = (ck - mc) * (s_ref / sc).clamp(0.85, 1.15) + m_ref
 
     s_parts = list(s_parts)
     s_parts[0] = v_cur.to(dtype=s_parts[0].dtype).reshape(s_parts[0].shape)
@@ -3517,6 +3637,45 @@ def _ht_qwen_previs_moments(shots_in, dry=False, seed=42):
         print(f"[{TAG}] hand-tie previs compiler: reusing cached bridge moments",
               flush=True)
         return [dict(s) for s in _PREVIS_LLM_CACHE[cache_key]]
+    # Per-shot moment cache (in-memory + disk-backed in the hop cache dir): if
+    # only one shot's beat was edited (e.g. soloing Shot 10) or ComfyUI was
+    # restarted, keep the already-compiled moments for every unchanged shot so
+    # earlier sections' previs prompts stay 100% byte-identical.
+    _shot_cache = _PREVIS_LLM_CACHE.setdefault("__per_shot__", {})
+    _disk_cache_path = None
+    if not dry:
+        try:
+            import folder_paths as _fp_mc  # noqa: PLC0415
+            _disk_cache_path = os.path.join(
+                _fp_mc.get_temp_directory(), CACHE_SUBDIR, "_previs_moments.json"
+            )
+            if not _shot_cache and os.path.isfile(_disk_cache_path):
+                with open(_disk_cache_path, encoding="utf-8") as _f:
+                    for _b, _m in (json.load(_f) or {}).items():
+                        _shot_cache[(_b, "")] = str(_m)
+        except Exception:
+            _disk_cache_path = None
+    if _shot_cache and all(k in _shot_cache for k in cache_key):
+        print(f"[{TAG}] hand-tie previs compiler: reusing per-shot cached bridge moments",
+              flush=True)
+        _res = []
+        for s, k in zip(shots_in, cache_key):
+            d = dict(s or {})
+            d["moment"] = _shot_cache[k]
+            _res.append(d)
+        _PREVIS_LLM_CACHE[cache_key] = [dict(s) for s in _res]
+        return _res
+    _pre_seeded = []
+    for s, k in zip(shots_in, cache_key):
+        d = dict(s or {})
+        if not str(d.get("moment") or "").strip() and k in _shot_cache:
+            d["moment"] = _shot_cache[k]
+        _pre_seeded.append(d)
+    if all(str((s or {}).get("moment") or "").strip() for s in _pre_seeded):
+        print(f"[{TAG}] hand-tie previs compiler: reusing cached bridge moments for unchanged shots",
+              flush=True)
+        _PREVIS_LLM_CACHE[cache_key] = [dict(s) for s in _pre_seeded]
+        return _pre_seeded
     reply = ""
     chosen = None
     if not dry:
@@ -3574,9 +3733,20 @@ def _ht_qwen_previs_moments(shots_in, dry=False, seed=42):
                   "using deterministic lead-clause compiler", flush=True)
             mm.cleanup_models_gc()
             mm.soft_empty_cache()
-    compiled = _ht.parse_previs_llm_moments(reply, shots_in)
+    compiled = _ht.parse_previs_llm_moments(reply, _pre_seeded)
     if not dry and reply:
         _PREVIS_LLM_CACHE[cache_key] = [dict(s) for s in compiled]
+        for orig_k, comp_s in zip(cache_key, compiled):
+            m_str = str((comp_s or {}).get("moment") or "").strip()
+            if m_str:
+                _shot_cache[orig_k] = m_str
+        if _disk_cache_path:
+            try:
+                os.makedirs(os.path.dirname(_disk_cache_path), exist_ok=True)
+                with open(_disk_cache_path, "w", encoding="utf-8") as _f:
+                    json.dump({k[0]: v for k, v in _shot_cache.items() if k[0]}, _f, indent=2)
+            except Exception:
+                pass
     src_label = chosen if (chosen and reply) else "lead-clause"
     for idx, sh in enumerate(compiled, 1):
         print(f"[{TAG}]   previs bridge {idx} ({src_label}): {sh.get('moment', '')}",
@@ -3883,12 +4053,14 @@ class HandTieClips:
                 # anywhere but the end silently reassigns every later value in
                 # every saved workflow. Adding options to an existing combo is
                 # safe; adding a widget is not.
-                "pin_mech": (["auto", "motion_context", "addguide", "hand_tie"], {
+                "pin_mech": (["auto", "motion_context", "addguide", "hand_tie", "hand_tie_mc"], {
                     "default": "auto",
                     "tooltip": ("How hops are joined. auto uses Motion-Context when available, AddGuide "
                                 "otherwise. Forcing one fails rather than falling back. hand_tie renders one "
                                 "previs per section and ties every hop to it at both ends, so no hop reads "
-                                "another and texture does not compound (needs a shot plan, overlap 0.9 s)."),
+                                "another and texture does not compound (needs a shot plan, overlap 0.9 s). "
+                                "hand_tie_mc uses the previs window as a per-step Motion-Context guide with "
+                                "end-aligned audio carry."),
                 }),
                 # APPENDED, never inserted -- see the note above `pin_mech`.
                 "tone_anchor_ref": (["hop1", "still"], {
@@ -4430,6 +4602,9 @@ class HandTieClips:
         # hop. Everything a hop is, the previs is too, so this is the cheap look
         # at the one generate the whole section is tied to (chain_00135's previs
         # split between two kitchens and every hop followed it).
+        ht_mc = (str(pin_mech) in ("hand_tie", "hand_tie_mc")) and not swap
+        if str(pin_mech) == "hand_tie_mc" and not swap:
+            pin_mech = "hand_tie"
         previs_only = str(dry_run) == "previs"
         if previs_only and str(pin_mech) != "hand_tie":
             raise ValueError(
@@ -5542,6 +5717,8 @@ class HandTieClips:
         _win_dir = [None]    # output/HANDTIECLIPS_windows/<run>, made on first save
 
         ht_pos = {}          # hop index -> (section, position in it)
+        ht_sections = []     # section -> [hop indices]
+        ht_previs_keys = {}  # section -> _p_key used
         ht_layouts = []
         ht_previs_raw = []
         ht_windows = {}      # section -> (window pictures, window sounds)
@@ -5549,6 +5726,9 @@ class HandTieClips:
         ht_previs_info = []
         ht_previs_media = []
         ht_previs_warn = []     # (section, seed, cuts) of a previs cut INSIDE a window
+        _ht_pv_hi_ref = [None]  # Previs 1's high-frequency RMS ceiling
+        _ht_pv_lat = {}         # section -> sampled previs latent (for chained spine alignment)
+        _ht_pre_ref2va = {}     # hop index -> pre-encoded (cond, latent) while Qwen 32B is in VRAM
         # Each section's previs renders no bigger than one of its hops, and no
         # bigger than the PREVIS_RESOLUTION tier (hand_tie.previs_canvas); each
         # hop drafts its sound first unless something else owns the audio
@@ -5575,9 +5755,12 @@ class HandTieClips:
             ht_chained = []      # section -> continues the hop before it
             ht_speaks = []       # section -> [window carries a planned line]
             for _si, _sec in enumerate(_ht.sections(_pshots, _plens)):
+                ht_sections.append(list(_sec))
                 ht_chained.append(_ht.chained(_pshots, _sec))
                 _frames = [_plens[j] for j in _sec]
                 _text, _lay = _ht.compile_previs([_pshots[j] for j in _sec], _frames, FPS)
+                if ht_chained[-1]:
+                    _text = _ht.chain_previs_text(_text, [_pshots[j] for j in _sec], _lay, FPS)
                 for _w in _ht.cut_lint_report([_pshots[j] for j in _sec]):
                     print(f"[{TAG}] hand-tie section {_si + 1}: {_w}", flush=True)
                 _first, _last = _pshots[_sec[0]] or {}, _pshots[_sec[-1]] or {}
@@ -5602,12 +5785,13 @@ class HandTieClips:
                 print(f"[{TAG}] hand-tie: tone_compensate={tone_mode} is replaced by the "
                       f"hand-tie tone match (each hop pulled onto its windows)", flush=True)
 
-        def _ht_previs(i):
+        def _ht_previs(i, pre_encode_hop=None):
             """Render (or load) the hand-tie previs for hop i's section, and cut it
             into windows. Called at the section's first hop, after that hop's
             prompt is assembled: the previs carries the same references, subject
             prose, voices and prefix/suffix, so it is assembled the same way,
             from those same values (read here at call time)."""
+            nonlocal prev_imgs
             _si = ht_pos[i][0]
             _lay = ht_layouts[_si]
             pblock = ht_previs_raw[_si]
@@ -5618,12 +5802,22 @@ class HandTieClips:
                 ht_windows[_si] = ([None] * _nw, [None] * _nw)
                 print(f"[{TAG}] hand-tie: one-hop chain, previs skipped (no joins)", flush=True)
                 return
-            # A chained section continues the film: its previs is pinned at frame 0
-            # on the last 22 frames hop i-1 actually rendered (picture and sound),
-            # and those frames ARE its first window, so the join between sections
-            # is an ordinary hand-tie join. Nothing earlier moves.
+            # A chained section continues the film: when the previous section
+            # closed with a window W_end, pin directly onto W_end (at native
+            # previs resolution with its 17f causal 3D-VAE warm prefix) so the
+            # spine never bounces 512p -> full-res hop -> 512p. Fall back to
+            # prev_imgs only when a full 6-hop section had no closing window.
             _chain = ht_chained[_si]
-            if _chain and prev_imgs is None:
+            _prev_sec_wins = ht_windows.get(_si - 1) if _chain else None
+            _prev_sec_lay = ht_layouts[_si - 1] if (_chain and _si > 0) else None
+            _prev_w_end = (_prev_sec_wins[0][-1]
+                           if (_prev_sec_wins and _prev_sec_wins[0]
+                               and _prev_sec_lay and _prev_sec_lay.get("closing")
+                               and _prev_sec_wins[0][-1] is not None)
+                           else None)
+            _prev_w_warm = ((ht_warm_windows.get(_si - 1) or {}).get(len(_prev_sec_wins[0]) - 1)
+                            if _prev_w_end is not None else None)
+            if _chain and prev_imgs is None and _prev_w_end is None:
                 if not previs_only:
                     raise RuntimeError(f"{TAG}: hand-tie section {_si + 1} continues hop {i}, "
                                        "which has no frames yet.")
@@ -5631,7 +5825,8 @@ class HandTieClips:
                       "dry_run=previs does not render; skipped", flush=True)
                 ht_windows[_si] = None
                 return
-            _from = ({"frames": _store.tensor_digest(prev_imgs),
+            _chain_pin_imgs = _prev_w_end if _prev_w_end is not None else prev_imgs
+            _from = ({"frames": _store.tensor_digest(_chain_pin_imgs),
                       "sound": _store.audio_digest(prev_audio)} if _chain else None)
             if ref_plan_refs:
                 pblock = _refs.resolve_tags(
@@ -5675,7 +5870,8 @@ class HandTieClips:
             _hit = None
             if hop_store is not None:
                 _p_key = _store.hop_key(None, {
-                    "chain": chain_salt, "previs": pblock, "len": _p_len, "fmt": "ranges_v1",
+                    "chain": chain_salt, "previs": pblock, "len": _p_len,
+                    "fmt": ("ranges_v2_mc" if _chain else "ranges_v1"),
                     "seed": _p_seed, "steps": _p_steps,
                     "refs": {k: _store.tensor_digest(t)
                              for k, t in sorted((hop_images or {}).items())},
@@ -5690,8 +5886,92 @@ class HandTieClips:
                     **({"mute": True} if _mute else {}),
                 })
                 _hit = hop_store.get(_p_key)
+                if _hit is None and _si < len(ht_sections):
+                    _sec_idxs = ht_sections[_si]
+                    _sec_has_kept = any(
+                        bool((_shots_full[_j] or {}).get("locked")) or _j < replay_before
+                        for _j in _sec_idxs if _j < len(_shots_full)
+                    )
+                    if _sec_has_kept:
+                        # A section with locked or replayed hops (e.g. soloing Shot 10
+                        # after changing steps, sampler, LoRAs, or Shot 10's beat) MUST
+                        # reuse the cached previs those hops were tied to rather than
+                        # re-rendering the previs and breaking every locked hop's windows.
+                        _excl_w0 = (_store.tensor_digest(_prev_w_end)
+                                    if (_chain and _prev_w_end is not None) else None)
+                        _want_wins = set()
+                        _cand_keys = []
+                        for _j in _sec_idxs:
+                            if _j >= len(_shots_full):
+                                continue
+                            _sh_j = _shots_full[_j] or {}
+                            if not (_sh_j.get("locked") or _j < replay_before):
+                                continue
+                            _sname_j = str(_sh_j.get("id") or f"shot{_j + 1}")
+                            _pin_j = hop_store.get_pointer(_sname_j)
+                            _pm_j = (hop_store.meta(_pin_j) or {}) if _pin_j else {}
+                            _pk_j = _pm_j.get("ht_previs_key")
+                            if _pk_j and _pk_j not in _cand_keys:
+                                _cand_keys.append(_pk_j)
+                            for _wd in (_pm_j.get("ht_windows") or ()):
+                                if _wd and _wd != "None" and _wd != _excl_w0:
+                                    _want_wins.add(str(_wd))
+                        _ptr_pv = hop_store.get_pointer(f"__previs_{_si + 1}")
+                        if _ptr_pv and _ptr_pv not in _cand_keys:
+                            _cand_keys.append(_ptr_pv)
+                        try:
+                            for _fn in sorted(
+                                os.listdir(hop_store.root),
+                                key=lambda x: os.path.getmtime(os.path.join(hop_store.root, x)),
+                                reverse=True,
+                            ):
+                                if not _fn.endswith(".json") or _fn.startswith("ptr_"):
+                                    continue
+                                _ck = _fn[:-5]
+                                if _ck in _cand_keys:
+                                    continue
+                                _cm = hop_store.meta(_ck) or {}
+                                if _cm.get("previs") == _si + 1:
+                                    _cand_keys.append(_ck)
+                        except OSError:
+                            pass
+                        for _ck in _cand_keys:
+                            _chit = hop_store.get(_ck)
+                            if _chit is None:
+                                continue
+                            _cimgs = _chit[0]
+                            if tuple(_cimgs.shape[:3]) != (int(_p_len), int(pv_h), int(pv_w)):
+                                continue
+                            if _want_wins:
+                                _ccuts = _ht.previs_cuts(_cimgs[:_p_len])
+                                _cdigs = set()
+                                for _w in _lay["windows"]:
+                                    if _w + _ht.WINDOW <= int(_cimgs.shape[0]):
+                                        _cdigs.add(_store.tensor_digest(_cimgs[_w:_w + _ht.WINDOW]))
+                                    _wc = [c for c in _ccuts if _w < c < _w + _ht.WINDOW]
+                                    if _wc:
+                                        _c0 = _wc[0]
+                                        _we = (_c0 if (_c0 - _w) <= (_ht.WINDOW // 2) and (_c0 + _ht.WINDOW) <= _p_len
+                                               else (_c0 - _ht.WINDOW if (_c0 - _ht.WINDOW) >= 0 else _w))
+                                        if _we != _w and _we + _ht.WINDOW <= int(_cimgs.shape[0]):
+                                            _cdigs.add(_store.tensor_digest(_cimgs[_we:_we + _ht.WINDOW]))
+                                if not _want_wins.issubset(_cdigs):
+                                    continue
+                            _hit = _chit
+                            _p_key = _ck
+                            break
             if _hit is not None:
-                _p_imgs, _p_wav, _p_sr, _ = _hit
+                ht_previs_keys[_si] = _p_key
+                if hop_store is not None and _p_key:
+                    hop_store.set_pointer(f"__previs_{_si + 1}", _p_key)
+                _p_imgs, _p_wav, _p_sr, _p_cached_lat = _hit
+                if _p_cached_lat is not None:
+                    _ht_pv_lat[_si] = _p_cached_lat
+                    if _si == 0 and _ht_pv_hi_ref[0] is None:
+                        _cpv = _latents.from_dict(_p_cached_lat)
+                        if _cpv:
+                            _ht_pv_hi_ref[0] = _rblend.high_rms_stats(
+                                _stream_5d(_cpv[0]), sigma=2.0)
                 print(f"[{TAG}] hand-tie previs {_si + 1}: loaded from cache "
                       f"({int(_p_imgs.shape[0])}f, seed {_p_seed}, key {_p_key[:8]})",
                       flush=True)
@@ -5700,15 +5980,20 @@ class HandTieClips:
                       f"(seed {_p_seed}, {_p_steps} steps, {pv_w}x{pv_h}"
                       + (", muted" if _mute else "") + ")", flush=True)
                 _push_preview(unique_id, f"previs {_si + 1} sampling…", hop=i + 1, total=n)
+                _pv_mc_hold = 0
                 if _pc is None:
+                    _pv_ref_size = ("0.50 MP"
+                                    if (int(pv_w) * int(pv_h) <= 524288
+                                        and str(ref_image_size) in ("0.75 MP", "1.0 MP"))
+                                    else ref_image_size)
                     packed = _core_call(
                         MiniMaxH3ReferenceToVideo, "the hand-tie previs",
                         clip=clip, vae=vae, audio_vae=audio_vae, prompt=pblock,
                         width=int(pv_w), height=int(pv_h), length=_p_len,
-                        ref_image_size=ref_image_size, ref_images=hop_images,
+                        ref_image_size=_pv_ref_size, ref_images=hop_images,
                         ref_videos=hop_videos,
                         ref_video_audios=(hop_video_audios or None),
-                        ref_audios=hop_ref_audios,
+                        ref_audios=(None if _mute else hop_ref_audios),
                     )
                     _pc, _pl = _result(packed)[0], _result(packed)[1]
                     del packed
@@ -5724,12 +6009,47 @@ class HandTieClips:
                             vae=vae, audio_vae=None, image=start_image[:1], audio=None,
                         ))[0]
                     if _chain:
+                        _saved_prev_imgs = prev_imgs
+                        if _prev_w_end is not None:
+                            prev_imgs = _prev_w_end
                         _pc = _result(_core_call(
                             MiniMaxH3AddGuide, "the chained previs pin",
                             positive=_pc, latent=_pl, frame_idx=0,
                             vae=vae, audio_vae=None if _mute else audio_vae,
                             image=prev_imgs, audio=None if _mute else prev_audio,
                         ))[0]
+                        prev_imgs = _saved_prev_imgs
+                        if (_si - 1) in _ht_pv_lat and _prev_sec_lay and _prev_sec_lay.get("closing"):
+                            try:
+                                _pv_pin_lat = _ht_pv_lat[_si - 1]
+                                if 0 in _ht_pv_lat:
+                                    _, _pv_anc0 = _condition_pin_latent(
+                                        _ht_pv_lat[0], None, mode="off")
+                                    _pv_pin_lat, _ = _condition_pin_latent(
+                                        _pv_pin_lat, _pv_anc0, mode="band")
+                                _pc, _ = _HTCMotionContext().apply(
+                                    conditioning=_pc, vae=vae, latent=_pl,
+                                    context_length=str(_ht.WINDOW),
+                                    audio_context_length=0,
+                                    context_latent=_pv_pin_lat,
+                                )
+                                if _mute:
+                                    _pc = _strip_audio_keyframes(_pc)
+                                _pl, _pv_mc_hold, _ = _pin_inpaint_head(
+                                    _pl, _pv_pin_lat, _ht.WINDOW)
+                            except Exception:
+                                _pv_mc_hold = 0
+                        elif _prev_w_warm is not None and vae is not None:
+                            try:
+                                _w39 = _guide_frames_as_used(_prev_w_warm, _pl)
+                                _wlat = vae.encode(_w39)
+                                _kfs = _pc[0][1].get("minimax_keyframes") if _pc else None
+                                if _kfs and isinstance(_wlat, torch.Tensor) and int(_wlat.shape[2]) > 5:
+                                    _sliced = _wlat[:, :, 5:].contiguous()
+                                    if _sliced.shape == _kfs[-1]["latent"].shape:
+                                        _kfs[-1] = dict(_kfs[-1], latent=_sliced)
+                            except Exception:
+                                pass
                     if _mute:
                         # Frozen silence: the picture is denoised, the sound is
                         # not, so nobody in the previs talks.
@@ -5739,6 +6059,11 @@ class HandTieClips:
                         _pl = _splice_locked_audio(_pl, _encode_locked_slice(
                             audio_vae, _sil, 0.0, _p_len / float(FPS), int(_pa[1].shape[-1])))
                         del _pa, _sil
+                    # Encode the section's first hop while Qwen 32B (`clip`) is
+                    # already in VRAM so we do not evict the DiT and reload 32B
+                    # immediately after the previs finishes.
+                    if pre_encode_hop is not None and not previs_only and not _sh.get("locked"):
+                        _ht_pre_ref2va[i] = pre_encode_hop()
                     _offload_text_encoder(clip, model)
                 if _p_steps not in sigma_cache:
                     sigma_cache[_p_steps] = _result(_core_call(
@@ -5753,7 +6078,31 @@ class HandTieClips:
                     SamplerCustomAdvanced, "the previs sampler",
                     noise=_pn, guider=_pg, sampler=sampler,
                     sigmas=sigma_cache[_p_steps], latent_image=_pl))[0]
-                _p_imgs, _p_audio = _decode_av(vae, audio_vae, _ps)
+                if _pv_mc_hold > 0:
+                    _ps = dict(_ps)
+                    _ps.pop("noise_mask", None)
+                _ps_parts = _latents.from_dict(_ps)
+                if _ps_parts and len(_ps_parts) >= 1:
+                    if _si == 0 and _ht_pv_hi_ref[0] is None:
+                        _ht_pv_hi_ref[0] = _rblend.high_rms_stats(
+                            _stream_5d(_ps_parts[0]), sigma=2.0)
+                    elif _si > 0 and _chain:
+                        if (_si - 1) in _ht_pv_lat:
+                            _ps = _calibrate_overlap_latent(
+                                _ps, _ht_pv_lat[_si - 1], _ht.WINDOW, hop_no=_si + 1)
+                            _ps_parts = _latents.from_dict(_ps)
+                        if _ht_pv_hi_ref[0] is not None and _ps_parts:
+                            _vpv = _stream_5d(_ps_parts[0])
+                            _vpv_capped = _rblend.blend_video_detail(
+                                _vpv, _vpv, [1.0] * int(_vpv.shape[2]), sigma=2.0,
+                                cap_high=True, high_rms_ref=_ht_pv_hi_ref[0])
+                            _ps_parts = list(_ps_parts)
+                            _ps_parts[0] = _vpv_capped.reshape(_ps_parts[0].shape)
+                            _ps = dict(_ps)
+                            _ps["samples"] = _latents.rebuild(_ps["samples"], _ps_parts)
+                    _ht_pv_lat[_si] = _latent_cpu(_ps)
+                _p_imgs, _p_audio = _decode_av(
+                    vae, audio_vae, _ps, skip_audio=bool(_mute and not previs_only))
                 _p_imgs = _p_imgs.contiguous().cpu()
                 _p_wav = _p_audio["waveform"].contiguous().cpu()
                 _p_sr = int(_p_audio["sample_rate"])
@@ -5761,7 +6110,10 @@ class HandTieClips:
                 mm.soft_empty_cache()
                 if hop_store is not None:
                     hop_store.put(_p_key, _p_imgs, _p_wav, _p_sr,
-                                  {"previs": _si + 1, "block": pblock[:400]})
+                                  {"previs": _si + 1, "block": pblock[:400]},
+                                  latent=_ht_pv_lat.get(_si))
+                    hop_store.set_pointer(f"__previs_{_si + 1}", _p_key)
+                    ht_previs_keys[_si] = _p_key
                     # The hops key on these frames' digests, so they must
                     # be the bytes a cache hit returns.
                     _p_imgs, _p_wav = _store.as_stored(_p_imgs, _p_wav)
@@ -5791,17 +6143,29 @@ class HandTieClips:
             pics, snds = [], []
             warm_pics = {}
             for _wk, w in enumerate(_lay["windows"]):
-                pics.append(_p_imgs[w:w + _ht.WINDOW].clone())
-                if w >= _ht.GRID:
+                w_eff = w
+                _w_cuts = [c for c in _cuts if w < c < w + _ht.WINDOW]
+                if _w_cuts:
+                    _c0 = _w_cuts[0]
+                    if (_c0 - w) <= (_ht.WINDOW // 2) and (_c0 + _ht.WINDOW) <= _p_len:
+                        w_eff = _c0
+                    elif (_c0 - _ht.WINDOW) >= 0:
+                        w_eff = _c0 - _ht.WINDOW
+                    if w_eff != w:
+                        print(f"[{TAG}] hand-tie previs {_si + 1}: shifted window {_wk + 1} "
+                              f"slice f{w}-{w + _ht.WINDOW - 1} -> f{w_eff}-{w_eff + _ht.WINDOW - 1} "
+                              f"to avoid internal cut at f{_c0}", flush=True)
+                pics.append(_p_imgs[w_eff:w_eff + _ht.WINDOW].clone())
+                if w_eff >= _ht.GRID and not any(w_eff - _ht.GRID < c <= w_eff for c in _cuts):
                     # 17-frame (5-token) causal 3D-VAE warm-up prefix before window `w`
                     # so `vae.encode` encodes the 22-frame window mid-stream rather
                     # than cold at Frame 0 (zero-padded).
-                    warm_pics[_wk] = _p_imgs[w - _ht.GRID:w + _ht.WINDOW].clone()
+                    warm_pics[_wk] = _p_imgs[w_eff - _ht.GRID:w_eff + _ht.WINDOW].clone()
                 if not ht_speaks[_si][_wk]:
                     # Picture only: the previs's sound here is a line nobody wrote.
                     snds.append(None)
                     continue
-                _a0, _ad = _ht.window_audio(w)
+                _a0, _ad = _ht.window_audio(w_eff)
                 _s0 = int(round(_a0 * _p_sr))
                 _s1 = _s0 + int(round(_ad * _p_sr))
                 snds.append({"waveform": _p_wav[..., _s0:_s1].contiguous(),
@@ -5814,8 +6178,13 @@ class HandTieClips:
                 # is the real thing.
                 if not _ht.SEAM_SOUND_ONLY:
                     pics[0] = prev_imgs[-_ht.WINDOW:].clone()
-                snds[0] = {"waveform": prev_audio["waveform"].clone(),
-                           "sample_rate": int(prev_audio["sample_rate"])}
+                if _prev_w_end is not None and tuple(_prev_w_end.shape[1:3]) == tuple(pics[0].shape[1:3]):
+                    pics[0] = _prev_w_end.clone()
+                    if _prev_w_warm is not None and tuple(_prev_w_warm.shape[1:3]) == tuple(pics[0].shape[1:3]):
+                        warm_pics[0] = _prev_w_warm.clone()
+                if prev_audio is not None and (not bool(_ht.PREVIS_MUTE) or any(ht_speaks[_si])):
+                    snds[0] = {"waveform": prev_audio["waveform"].clone(),
+                               "sample_rate": int(prev_audio["sample_rate"])}
             ht_windows[_si] = (pics, snds)
             ht_warm_windows[_si] = warm_pics
             ht_previs_info.append((_si + 1, _p_len, _lay["windows"], pblock))
@@ -6297,8 +6666,42 @@ class HandTieClips:
                 pbar.update(1)
                 continue
 
+            def _hop_ref2va():
+                # Every argument by NAME, none by position. Passing the first
+                # seven positionally worked here and broke for a user on a
+                # different ComfyUI build: their core orders the parameters
+                # differently, so the seventh positional landed on
+                # `ref_image_size` and the keyword collided with it --
+                # "got multiple values for argument 'ref_image_size'", raised
+                # on hop 1 before anything sampled. Core's signature is not
+                # ours to depend on; its parameter names are the contract.
+                packed = _core_call(
+                    MiniMaxH3ReferenceToVideo, "the reference conditioning",
+                    clip=clip, vae=vae, audio_vae=audio_vae, prompt=block,
+                    width=int(width), height=int(height), length=render_length,
+                    ref_image_size=ref_image_size,
+                    ref_images=hop_images,
+                    ref_videos=hop_videos,
+                    # Paired by ordinal with ref_videos. The pin clip, when
+                    # pin_to_qwen appends one, takes the next number and simply
+                    # has no entry here -- it is the previous hop's picture and
+                    # has no soundtrack of its own.
+                    ref_video_audios=(hop_video_audios or None),
+                    # Row voices are already folded in, at the ordinals the
+                    # citations above were written against.
+                    ref_audios=hop_ref_audios,
+                )
+                c, lat = _result(packed)[0], _result(packed)[1]
+                if refmod_image_blocks or refmod_video_blocks:
+                    # ReferenceToVideo encoded the decode. Put the stored
+                    # latent back in that slot before anything else copies it.
+                    c = _refmod.splice_blocks(
+                        c, hop_images, hop_videos,
+                        refmod_image_blocks, refmod_video_blocks)
+                return c, lat
+
             if ht and ht_pos[i][0] not in ht_windows:
-                _ht_previs(i)
+                _ht_previs(i, pre_encode_hop=_hop_ref2va)
             if previs_only:
                 pbar.update(1)
                 continue
@@ -6496,6 +6899,8 @@ class HandTieClips:
                         _store.audio_digest(_ws[_k + 1]) if _tl else None))
                     if i > 0 and _hd:
                         hop_payload["ht_inpaint"] = "v2.6"
+                        if ht_mc:
+                            hop_payload["ht_mc"] = "v3"
                     if sound_first:
                         # Which draft is kept depends on the canvas, the tries and
                         # whether anything listened.
@@ -6592,45 +6997,12 @@ class HandTieClips:
                         f"Render hops 1-{replay_before} first, or set "
                         "render_from back to 0.")
 
-            def _hop_ref2va():
-                # Every argument by NAME, none by position. Passing the first
-                # seven positionally worked here and broke for a user on a
-                # different ComfyUI build: their core orders the parameters
-                # differently, so the seventh positional landed on
-                # `ref_image_size` and the keyword collided with it --
-                # "got multiple values for argument 'ref_image_size'", raised
-                # on hop 1 before anything sampled. Core's signature is not
-                # ours to depend on; its parameter names are the contract.
-                packed = _core_call(
-                    MiniMaxH3ReferenceToVideo, "the reference conditioning",
-                    clip=clip, vae=vae, audio_vae=audio_vae, prompt=block,
-                    width=int(width), height=int(height), length=render_length,
-                    ref_image_size=ref_image_size,
-                    ref_images=hop_images,
-                    ref_videos=hop_videos,
-                    # Paired by ordinal with ref_videos. The pin clip, when
-                    # pin_to_qwen appends one, takes the next number and simply
-                    # has no entry here -- it is the previous hop's picture and
-                    # has no soundtrack of its own.
-                    ref_video_audios=(hop_video_audios or None),
-                    # Row voices are already folded in, at the ordinals the
-                    # citations above were written against.
-                    ref_audios=hop_ref_audios,
-                )
-                c, lat = _result(packed)[0], _result(packed)[1]
-                if refmod_image_blocks or refmod_video_blocks:
-                    # ReferenceToVideo encoded the decode. Put the stored
-                    # latent back in that slot before anything else copies it.
-                    c = _refmod.splice_blocks(
-                        c, hop_images, hop_videos,
-                        refmod_image_blocks, refmod_video_blocks)
-                return c, lat
-
             this_sampled = None
             # What upsample needs from this hop: the latent it DELIVERED and
             # the conditioning that made it.
             up_latent = up_cond = None
             if cached is not None:
+                _ht_pre_ref2va.pop(i, None)
                 imgs, wav, sr, cached_latent = cached
                 audio = {"waveform": wav, "sample_rate": sr}
                 # Carry the stored sampler latent forward exactly as a render
@@ -6655,11 +7027,17 @@ class HandTieClips:
                       flush=True)
                 if upsample_on:
                     # A cached hop kept its latent but not its conditioning;
-                    # the upsampler's re-draw wants the one that made it.
+                    # the upsampler's re-draw wants the one that made it (unless
+                    # a guide LoRA or denoise=0 is active, which never reads up_cond).
                     up_latent = cached_latent
-                    up_cond = _hop_ref2va()[0]
+                    if float(upsample_denoise) > 0.0 and not upsample_guide_factor:
+                        up_cond = _cond_cpu(_hop_ref2va()[0], keep_refs=True)
+                        _offload_text_encoder(clip, model)
+                    else:
+                        up_cond = None
             else:
-                cond, latent = _hop_ref2va()
+                cond, latent = (_ht_pre_ref2va.pop(i)
+                                if i in _ht_pre_ref2va else _hop_ref2va())
                 # The conditioning as Ref2VA built it, before any pin or guide
                 # is added to it. `refine_cond=base` pulls the second pass
                 # toward this -- the references and the text, nothing about the
@@ -6707,9 +7085,19 @@ class HandTieClips:
                             try:
                                 if _win_dir[0] is None:
                                     import time as _time
-                                    _win_dir[0] = os.path.join(
+                                    import shutil as _shutil
+                                    _wroot = os.path.join(
                                         folder_paths.get_output_directory(),
-                                        "HANDTIECLIPS_windows",
+                                        "HANDTIECLIPS_windows")
+                                    if os.path.isdir(_wroot):
+                                        _old_runs = sorted(
+                                            os.path.join(_wroot, d) for d in os.listdir(_wroot)
+                                            if os.path.isdir(os.path.join(_wroot, d))
+                                        )
+                                        for _od in _old_runs[:-1]:
+                                            _shutil.rmtree(_od, ignore_errors=True)
+                                    _win_dir[0] = os.path.join(
+                                        _wroot,
                                         _time.strftime("%Y%m%d_%H%M%S"))
                                 _role = "head" if _fi >= 0 else "tail"
                                 _wd = _save_ht_window(
@@ -6735,11 +7123,18 @@ class HandTieClips:
                           + (f"; sound at window {', '.join(_heard)}" if _heard else " only")
                           + ")", flush=True)
                     if i > 0 and not _free and prev_sampled is not None:
-                        latent, cond, _mc_inpaint_hold, _mc_prior_mask = _ht_inpaint_head(
-                            latent, cond, prev_sampled, overlap_n)
+                        if ht_mc:
+                            latent, cond, _mc_inpaint_hold, _mc_prior_mask = _ht_mc_inpaint_head(
+                                latent, cond, prev_sampled, overlap_n,
+                                vae=vae, audio_ctx=audio_ctx,
+                                head_speaks=bool(ht_speaks[_si][_k]))
+                        else:
+                            latent, cond, _mc_inpaint_hold, _mc_prior_mask = _ht_inpaint_head(
+                                latent, cond, prev_sampled, overlap_n)
                         if _mc_inpaint_hold > 0:
                             print(f"[{TAG}] hop {i + 1}: hand-tie head aligned to Hop {i} "
-                                  "pre-cut block; step 0 seeded from Hop k cut token",
+                                  + ("via Previs-driven Motion-Context (7 per-step keyframes + ambient audio tail)"
+                                     if ht_mc else "pre-cut block; step 0 seeded from Hop k cut token"),
                                   flush=True)
                 elif swap and reference_video is not None:
                     # Guided swap (Alissonerdx BFS / H3EncodeLD._add_guide):
@@ -7298,7 +7693,9 @@ class HandTieClips:
                     # differ, and the upsampler redraws what was delivered.
                     up_latent = (this_sampled if refined_for_pin is None
                                  else _latent_cpu(sampled))
-                    up_cond = base_cond
+                    up_cond = (_cond_cpu(base_cond, keep_refs=True)
+                               if (float(upsample_denoise) > 0.0 and not upsample_guide_factor)
+                               else None)
 
                 # base_cond is deleted with cond because it is usually the
                 # same object: keeping the name alive would hold one hop's
@@ -7319,7 +7716,8 @@ class HandTieClips:
                                   {"hop": i + 1, "of": n, "block": block[:400],
                                    "pin_mech": pin_mech_used,
                                    "prev_key": None if (hop_restart or ht) else prev_key,
-                                   **({"ht_windows": [hop_payload["head"], hop_payload["tail"]]}
+                                   **({"ht_windows": [hop_payload["head"], hop_payload["tail"]],
+                                       "ht_previs_key": ht_previs_keys.get(ht_pos[i][0])}
                                       if ht else {})},
                                   latent=this_sampled)
                     hop_store.set_pointer(
@@ -7349,6 +7747,15 @@ class HandTieClips:
                 # is closed by seam_bend at the master write.
                 _si, _k = ht_pos[i]
                 _wp, _ws = ht_windows[_si]
+                if locked is None:
+                    _h_free = _ht.free_head(_k, ht_chained[_si], start_image is not None)
+                    _h_sp = bool(ht_speaks[_si][_k]) if not _h_free else True
+                    _t_sp = bool(ht_speaks[_si][_k + 1]) if (_k + 1 < len(ht_speaks[_si])) else False
+                    wav = _ht.calm_hop_audio(
+                        wav, sr, has_line=bool(_ht.hop_words(block)),
+                        head_speaks=_h_sp, tail_speaks=_t_sp,
+                        overlap_n=overlap_n, fps=FPS)
+                    audio = {"waveform": wav, "sample_rate": sr}
                 _tone_head = _wp[_k]
                 # (prev-hop head tone match / SEAMFIX_TONE_MATCH skip: removed with
                 # ht_seam_source; every hand-tie hop matches its previs head window.)
@@ -7700,6 +8107,15 @@ class HandTieClips:
         # losing a render that has already cost every hop -- and says so.
         upsample_note = ""
         if upsample_on and upsample_hops:
+            # Release hop-loop state (previs windows, warm prefixes, previs latents,
+            # and predecessor tail tensors) and unload resident models before
+            # upsampling starts so the upsampler gets clean RAM and VRAM headroom.
+            ht_windows.clear()
+            ht_warm_windows.clear()
+            _ht_pv_lat.clear()
+            _ht_pre_ref2va.clear()
+            prev_imgs = prev_audio = prev_sampled = None
+            _tu._free_all_gpu()
             if any(h["stand_in"] for h in upsample_hops):
                 print(f"[{TAG}] upsample: hop_refine=pin_only cached the "
                       "refined latent, not the delivered one; cached hops are "
@@ -7749,11 +8165,11 @@ class HandTieClips:
                     # The caption alone, no references: what the LoRA learned
                     # the guide under. Width/height/length only size the
                     # latent this discards.
-                    _cap_cond = _result(_core_call(
+                    _cap_cond = _cond_cpu(_result(_core_call(
                         MiniMaxH3ReferenceToVideo, "the h3upscale caption",
                         clip=clip, prompt=_ug.CAPTION, width=int(width),
                         height=int(height), length=5,
-                        ref_image_size=ref_image_size))[0]
+                        ref_image_size=ref_image_size))[0], keep_refs=True)
                     _offload_text_encoder(clip, _up_model)
                     _up_guide = _tu.Guide(
                         factor=int(upsample_guide_factor), cond=_cap_cond,

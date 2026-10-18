@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hand Tie Clips — GitHub Page + Interactive Node Preview</title>
+<style>
+  :root[data-theme="dark"] {
+    --bg-canvas: #0d1117;
+    --bg-card: #161b22;
+    --bg-subtle: #1c2128;
+    --border: #30363d;
+    --border-accent: #d29922;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --link: #58a6ff;
+    --green: #3fb950;
+    --amber: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+  }
+  :root[data-theme="light"] {
+    --bg-canvas: #ffffff;
+    --bg-card: #f6f8fa;
+    --bg-subtle: #eaeef2;
+    --border: #d0d7de;
+    --border-accent: #9a6700;
+    --text: #1f2328;
+    --text-muted: #656d76;
+    --link: #0969da;
+    --green: #1a7f37;
+    --amber: #9a6700;
+    --red: #cf222e;
+    --purple: #8250df;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    background: var(--bg-canvas);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .action-btn {
+    background: var(--bg-subtle);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .action-btn.primary { background: #238636; color: #fff; border-color: #2ea043; }
+  .container {
+    max-width: 1020px;
+    margin: 28px auto 80px;
+    padding: 32px 40px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-canvas);
+  }
+  .concept-banner {
+    background: var(--bg-subtle);
+    border-left: 4px solid var(--green);
+    padding: 12px 16px;
+    margin-bottom: 28px;
+    border-radius: 0 6px 6px 0;
+    font-size: 13.5px;
+    color: var(--text-muted);
+  }
+  .concept-banner strong { color: var(--text); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+  h1, h2, h3 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; }
+  h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); margin-top: 0; }
+  h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); margin-top: 32px; }
+  h3 { font-size: 1.18em; margin-top: 22px; }
+  p { margin-top: 0; margin-bottom: 16px; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 85%;
+    background: var(--bg-subtle);
+    padding: 0.2em 0.4em;
+    border-radius: 6px;
+  }
+  pre {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+  }
+  pre code { background: none; padding: 0; font-size: 100%; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 9px 13px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-card); font-weight: 600; }
+  tr:nth-child(even) td { background: rgba(128,128,128,0.04); }
+  img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; margin: 12px 0; }
+  .caption { font-size: 13px; color: var(--text-muted); font-style: italic; margin-top: -6px; margin-bottom: 18px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+  }
+  .badge.green { border-color: var(--green); color: var(--green); }
+  .badge.amber { border-color: var(--amber); color: var(--amber); }
+  .badge.purple { border-color: var(--purple); color: var(--purple); }
+  .callout {
+    background: var(--bg-card);
+    border-left: 4px solid var(--amber);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 14px 0 18px;
+    font-size: 14px;
+  }
+  details {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+  }
+  summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+  details[open] summary { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .do-dont td:first-child { color: var(--red); font-weight: 500; }
+  .do-dont td:last-child { color: var(--green); font-weight: 500; }
+
+  /* ===================================================================== */
+  /* INTERACTIVE COMFYUI NODE SIMULATOR (Authentic .h3e-root styling)      */
+  /* ===================================================================== */
+  .sim-wrap {
+    margin: 22px 0 28px;
+    border-radius: 8px;
+    background: #18181b;
+    border: 1px solid #323236;
+    box-shadow: 0 12px 36px rgba(0,0,0,0.55);
+    overflow: hidden;
+    color: #e8e8e8;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .sim-titlebar {
+    background: #232329;
+    border-bottom: 1px solid #333;
+    padding: 7px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .sim-titlebar-left { display: flex; align-items: center; gap: 8px; }
+  .sim-dot { width: 9px; height: 9px; border-radius: 50%; background: #5fbf7a; display: inline-block; }
+  .sim-hint {
+    font-size: 11px;
+    color: #e8ff47;
+    background: rgba(232,255,71,0.1);
+    border: 1px solid rgba(232,255,71,0.35);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .sim-pins {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 14px;
+    background: #141416;
+    border-bottom: 1px solid #262626;
+    font-size: 11px;
+    color: #9a9a9a;
+  }
+  .sim-pin-col { display: flex; flex-wrap: wrap; gap: 10px; }
+  .sim-pin { display: inline-flex; align-items: center; gap: 4px; }
+  .sim-pin i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .h3e-sim {
+    --h3-bg: #0a0a0a;
+    --h3-panel: #111111;
+    --h3-sunken: #0d0d0d;
+    --h3-border: #2a2a2a;
+    --h3-border-soft: #1c1c1c;
+    --h3-text: #e8e8e8;
+    --h3-muted: #9a9a9a;
+    --h3-faint: #6a6a6a;
+    --h3-accent: #e8ff47;
+    --h3-on-accent: #101010;
+    --h3-warn: #ffb020;
+    --h3-ok: #5fbf7a;
+    background: var(--h3-bg);
+    padding: 10px;
+    font-size: 13px;
+  }
+  .h3e-statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #0d0d0d;
+    border: 1px solid var(--h3-border);
+    padding: 5px 10px;
+    font-size: 11.5px;
+    color: var(--h3-muted);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    margin-bottom: 8px;
+    border-radius: 3px;
+  }
+  .h3e-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    border-bottom: 1px solid var(--h3-border);
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+  }
+  .h3e-btn {
+    background: #141414;
+    color: var(--h3-text);
+    border: 1px solid var(--h3-border);
+    border-radius: 3px;
+    padding: 5px 11px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.1s;
+  }
+  .h3e-btn:hover { border-color: #555; }
+  .h3e-btn.h3e-on {
+    background: var(--h3-accent);
+    color: var(--h3-on-accent);
+    border-color: var(--h3-accent);
+    font-weight: 700;
+  }
+  .h3e-tabcount {
+    font-size: 10.5px;
+    opacity: 0.85;
+    padding: 0 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.08);
+  }
+  .h3e-btn.h3e-on .h3e-tabcount {
+    background: rgba(0,0,0,0.18);
+    color: #101010;
+  }
+  .h3e-spacer { flex: 1; }
+  .sim-surface { display: none; }
+  .sim-surface.active { display: block; }
+
+  /* Authentic D2 Horizontal Filmstrip + Single Selected Shot Card (.h3e-filmstrip + .h3e-poster) */
+  .h3e-filmstrip {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    padding: 4px 0 8px;
+    margin-bottom: 8px;
+  }
+  .h3e-poster {
+    flex: 0 0 auto;
+    width: 116px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px;
+    background: var(--h3-panel);
+    border: 1px solid var(--h3-border);
+    border-radius: 3px;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    user-select: none;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .h3e-poster:hover { border-color: #6a7325; }
+  .h3e-poster.h3e-on {
+    border-color: var(--h3-accent);
+    background: #17190e;
+    box-shadow: 0 0 0 1px rgba(232,255,71,0.25);
+  }
+  .h3e-poster-thumb {
+    height: 62px;
+    background: var(--h3-sunken);
+    border: 1px solid var(--h3-border-soft);
+    border-radius: 2px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .h3e-poster-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+  }
+  .h3e-poster-no {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--h3-accent);
+    letter-spacing: 0.04em;
+  }
+  .h3e-poster-meta {
+    font-size: 11px;
+    color: var(--h3-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .h3e-poster-beat {
+    font-size: 11px;
+    color: var(--h3-muted);
+    line-height: 1.32;
+    height: 2.64em;
+    overflow: hidden;
+  }
+  .h3e-poster-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 3px;
+  }
+  .h3e-mini {
+    background: #141414;
+    color: var(--h3-text);
+    border: 1px solid var(--h3-border);
+    border-radius: 2px;
+    padding: 1px 6px;
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .h3e-mini.h3e-on-solo {
+    background: var(--h3-accent);
+    color: #101010;
+    border-color: var(--h3-accent);
+  }
+  .h3e-mini.h3e-on-lock {
+    color: var(--h3-warn);
+    border-color: var(--h3-warn);
+  }
+  .h3e-queue-line {
+    font-size: 11.5px;
+    color: var(--h3-text);
+    margin-bottom: 6px;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+  .h3e-active-card {
+    background: linear-gradient(90deg, rgba(232,255,71,0.06), transparent 140px), var(--h3-panel);
+    border: 1px solid rgba(232,255,71,0.55);
+    border-left: 4px solid var(--h3-accent);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-top: 4px;
+  }
+
+  /* Shot cards */
+  .sim-card {
+    background: var(--h3-panel);
+    border: 1px solid var(--h3-border);
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 8px;
+  }
+  .sim-card.locked { border-color: var(--h3-warn); }
+  .sim-card.solo { border-color: var(--h3-accent); box-shadow: inset 0 0 0 1px var(--h3-accent); }
+  .sim-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 7px;
+    font-size: 12px;
+  }
+  .sim-num {
+    background: var(--h3-accent);
+    color: #101010;
+    font-weight: 800;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 2px;
+  }
+  .sim-textarea {
+    width: 100%;
+    background: #090909;
+    color: var(--h3-text);
+    border: 1px solid var(--h3-border);
+    border-radius: 3px;
+    padding: 7px 9px;
+    font-size: 12.5px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 48px;
+    margin-bottom: 8px;
+  }
+  .sim-axes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 6px;
+  }
+  .sim-field label {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--h3-muted);
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .sim-select, .sim-input {
+    width: 100%;
+    background: #090909;
+    color: var(--h3-text);
+    border: 1px solid var(--h3-border);
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+  /* Ref rail rows */
+  .sim-ref-row {
+    display: grid;
+    grid-template-columns: 44px 110px 110px 130px 90px 1fr;
+    gap: 8px;
+    align-items: center;
+    background: var(--h3-panel);
+    border: 1px solid var(--h3-border);
+    padding: 8px 10px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+  }
+  .sim-ord {
+    background: #1c1c1c;
+    border: 1px solid #3a3a3a;
+    color: var(--h3-accent);
+    font-weight: 700;
+    font-size: 11px;
+    text-align: center;
+    padding: 4px 0;
+    border-radius: 3px;
+  }
+  .sim-forecast {
+    background: rgba(95, 191, 122, 0.1);
+    border: 1px solid rgba(95, 191, 122, 0.4);
+    color: #5fbf7a;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  .sim-run-group {
+    background: var(--h3-panel);
+    border: 1px solid var(--h3-border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+  }
+  .sim-run-group summary {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--h3-accent);
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <div id="optA" class="pane active">
+    <div class="concept-banner">
+      <strong>Interactive Node Preview Built Right In:</strong>
+      Try clicking through <strong>Script · Refs · Timeline · Media · Write · Swap · ⚙ RUN</strong> in the live node below! You can toggle shot locks, solo a shot, switch join modes (`motion_context` vs `hand_tie`), test the Swap modes, or open `⚙ RUN` and watch the node's status bar &amp; retake forecast react in real time.
+    </div>
+
+    <h1>Hand Tie Clips — Multi-Shot Studio for MiniMax H3</h1>
+    <p><strong>Multi-hop MiniMax H3 video from one ComfyUI node.</strong> Author shot cards, manage reference stills and voices on a visual rail, lock or solo-retake individual hops from a lossless cache, run guided character/head swaps, and upscale to 2 MP.</p>
+
+    <div class="badges">
+      <span class="badge green">✓ Zero Pip Dependencies</span>
+      <span class="badge amber">✓ Built-In Motion-Context &amp; Hand-Tie</span>
+      <span class="badge purple">✓ Classic LiteGraph &amp; Nodes 2.0</span>
+      <span class="badge green">✓ Lossless Hop Cache &amp; Solo Retake</span>
+    </div>
+
+    <img src="https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/seam-frames.png" alt="Six consecutive frames across a join">
+    <div class="caption">Six consecutive frames crossing the join between Hop 1 and Hop 2 — no cut, flash, or identity jump.</div>
+
+    <!-- =================================================================== -->
+    <!-- 10-HOP HAND-TIE VIDEO EXAMPLE (chain_00138_)                         -->
+    <!-- =================================================================== -->
+    <div style="text-align:center; margin:16px 0;">
+      <div style="font-weight:600; margin-bottom:6px;">Hand-Tie 10x8s example</div>
+      <video controls preload="metadata" width="50%" style="max-width:480px; width:50%; margin:0 auto; border-radius:8px; border:1px solid var(--border); background:#000;">
+        <source src="https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips/resolve/main/docs/img/hand-tie-10hop-00138.mp4" type="video/mp4">
+        <source src="https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/hand-tie-10hop-00138.mp4" type="video/mp4">
+      </video>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- INTERACTIVE NODE SIMULATOR                                          -->
+    <!-- =================================================================== -->
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-top:32px; border-bottom:1px solid var(--border); padding-bottom:0.3em; margin-bottom:16px;">
+      <h2 style="margin:0; border:none; padding:0;">Interactive Node Preview — Click the Tabs &amp; ⚙ RUN</h2>
+      <div style="display:flex; gap:6px;">
+        <button class="action-btn primary" id="preset-10hop" onclick="loadPreset('loradaddy10')">🎬 Load 10-Hop Hand-Tie Example</button>
+        <button class="action-btn" id="preset-4hop" onclick="loadPreset('carolyn4')">Load 4-Hop Street Vlog (motion_context)</button>
+        <button class="action-btn" id="preset-simple" onclick="setScriptMode('simple')">✨ Load Simple 1-Clip + Realism Boost</button>
+      </div>
+    </div>
+
+    <div class="sim-wrap">
+      <div class="sim-titlebar">
+        <div class="sim-titlebar-left">
+          <span class="sim-dot"></span>
+          <span>H3 Ref2VA Chain (HandTieClips)</span>
+        </div>
+        <span class="sim-hint">✨ Interactive Demo — Click any tab, lock button, or ⚙ RUN</span>
+      </div>
+      <div class="sim-pins">
+        <div class="sim-pin-col">
+          <span class="sim-pin"><i style="background:#b39ddb"></i>model</span>
+          <span class="sim-pin"><i style="background:#ffd54f"></i>clip</span>
+          <span class="sim-pin"><i style="background:#ef5350"></i>vae</span>
+          <span class="sim-pin"><i style="background:#ef5350"></i>audio_vae</span>
+          <span class="sim-pin"><i style="background:#b39ddb"></i>refine_model</span>
+          <span class="sim-pin"><i style="background:#b39ddb"></i>upsample_dit</span>
+          <span class="sim-pin"><i style="background:#b39ddb"></i>audio_model</span>
+        </div>
+        <div class="sim-pin-col">
+          <span class="sim-pin">images<i style="background:#64b5f6"></i></span>
+          <span class="sim-pin">audio<i style="background:#81c784"></i></span>
+          <span class="sim-pin">info<i style="background:#81c784"></i></span>
+          <span class="sim-pin">contact_sheet<i style="background:#64b5f6"></i></span>
+        </div>
+      </div>
+
+      <div class="h3e-sim">
+        <!-- Row 1: Permanent Status Bar -->
+        <div class="h3e-statusbar">
+          <span id="sim-digest">768×1344 (9:16) · 8s ×4 (29.2s) · 8 steps euler/simple · pin: motion_context · cache on</span>
+          <span style="color:#5fbf7a; font-weight:700;">● Ready</span>
+        </div>
+
+        <!-- Row 2: Tab Strip + Gear + Pin -->
+        <div class="h3e-tabs">
+          <button class="h3e-btn h3e-on" id="tabbtn-script" onclick="simTab('script')">Script <span class="h3e-tabcount" id="cnt-script">4</span></button>
+          <button class="h3e-btn" id="tabbtn-refs" onclick="simTab('refs')">Refs <span class="h3e-tabcount">3</span></button>
+          <button class="h3e-btn" id="tabbtn-timeline" onclick="simTab('timeline')">Timeline <span class="h3e-tabcount" id="cnt-tl">4/4</span></button>
+          <button class="h3e-btn" id="tabbtn-media" onclick="simTab('media')">Media</button>
+          <button class="h3e-btn" id="tabbtn-write" onclick="simTab('write')">Write</button>
+          <button class="h3e-btn" id="tabbtn-swap" onclick="simTab('swap')">Swap <span class="h3e-tabcount" id="cnt-swap"></span></button>
+          <span class="h3e-spacer"></span>
+          <button class="h3e-btn" id="tabbtn-run" onclick="simTab('run')" title="The render controls: canvas, sampler, cache, upscaler">⚙</button>
+          <button class="h3e-btn" id="sim-pinbtn" onclick="this.classList.toggle('h3e-on')" title="Pin the node's height">⇕</button>
+        </div>
+
+        <!-- SURFACE 1: SCRIPT -->
+        <div id="sim-script" class="sim-surface active">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <div>
+              <span style="font-size:11.5px; font-weight:700; letter-spacing:0.08em; color:#e8e8e8;">SCRIPT</span>
+              <span id="sim-script-sub" style="font-size:11.5px; color:#9a9a9a; margin-left:6px;">10 shots · 71.8s master</span>
+            </div>
+            <div style="display:flex; gap:4px;">
+              <button class="h3e-btn" id="btn-mode-simple" style="padding:3px 9px; font-size:11px;" onclick="setScriptMode('simple')">Simple</button>
+              <button class="h3e-btn h3e-on" id="btn-mode-shots" style="padding:3px 9px; font-size:11px;" onclick="setScriptMode('shots')">Shots</button>
+              <button class="h3e-btn" id="btn-add-shot" style="padding:3px 9px; font-size:11px;" onclick="addSimShot()">+ shot</button>
+              <button class="h3e-btn" style="padding:3px 9px; font-size:11px;" onclick="loadPreset(activeTag === '@mina' ? 'carolyn4' : 'loradaddy10')">Templates</button>
+            </div>
+          </div>
+
+          <!-- SHOTS MODE VIEW -->
+          <div id="sim-shots-view">
+            <div class="h3e-queue-line" id="sim-queue-line">NEXT QUEUE re-renders none · 10 cached</div>
+            <div class="h3e-filmstrip" id="sim-score-strip"></div>
+            <div id="sim-cards-box"></div>
+            <details style="margin-top:8px; background:transparent; border:none; padding:2px 0;">
+              <summary style="font-size:11px; color:#9a9a9a; letter-spacing:0.08em;">JSON</summary>
+              <pre id="sim-json-box" style="margin-top:6px; font-size:11px; max-height:160px; overflow:auto; background:#090909; border:1px solid #262626;"></pre>
+            </details>
+          </div>
+
+          <!-- SIMPLE MODE VIEW (Standard MMH3 ref2va / t2va Prompting + Realism Boost) -->
+          <div id="sim-simple-view" style="display:none;">
+            <div style="background:rgba(232,255,71,0.08); border:1px solid rgba(232,255,71,0.35); border-radius:4px; padding:7px 10px; margin-bottom:8px; font-size:11.5px; color:#e8e8e8;">
+              <strong style="color:var(--h3-accent);">✨ Simple Mode (Standard MMH3 <code>ref2va</code> / <code>t2va</code> Studio + Realism Boost):</strong> Paste any standard 6-field MiniMax H3 <code>ref2va</code> / <code>t2va</code> prompt (<code>subject_definitions:</code>, <code>summary:</code>, <code>detailed_description:</code>, etc.) or plain prose directly here with <code>chains = 1</code>. HTC passes structured H3 prompts straight through untouched while giving you the visual <code>REFS</code> rail, <strong><code>realism_boost: on</code></strong> (<code>steps = 6</code> → 2 base + 10 realism LoRA steps) + <strong><code>audio_refine: on</code></strong> (5 steps), and <strong>2 MP Guided Upsampling</strong>!
+            </div>
+            <div class="h3e-active-card">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11.5px;">
+                <span style="color:var(--h3-accent); font-weight:700;">STANDARD MMH3 6-FIELD PROMPT (ref2va / t2va) OR PLAIN PROSE</span>
+                <span style="color:#9a9a9a;">chains = 1 · 15.0s (362f) · steps = 6 (2 + 10 realism_boost) · audio_refine = on · upsample = on</span>
+              </div>
+              <textarea class="sim-textarea" id="sim-simple-text" style="min-height:175px; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; font-size:11.5px;">subject_definitions:
+&lt;Subject 1&gt; is the young woman in &lt;Picture 1&gt;. The collage grid is identity only. She has dark hair in an updo with loose face-framing strands and small flower clips, a white triangle bikini with blue flowers, blue string ties at the neck and hips, and bare feet.
+&lt;Subject 2&gt; is the nugget mascot in &lt;Picture 2&gt;, an orange breaded body, blue headband, yellow beak, round black eyes, small wings, and two feet.
+&lt;Subject 3&gt; is the beach in &lt;Picture 3&gt;: raked sand, blue court lines, a blue-padded volleyball net, palm trunks, and the ocean horizon.
+
+summary:
+[reference generation] &lt;Subject 1&gt; dances a fast body roll and hip circle on the kick at the center of &lt;Subject 3&gt; after dark, with a lighting truss, speaker stacks, a hexagonal neon panel, a full moon, string lights, and a crowd ring around the court. &lt;Subject 2&gt; bounces beside her on that same kick. Four cuts only change the angle. The camera arcs and pushes in, rolls low along the hip circle, pedestals into a hero view while her hands travel up the torso, then tracks her turn into a close call-me hand.
+
+retention_analysis:
+&lt;Subject 1&gt; (appears in [Shot 1], [Shot 2], [Shot 3], [Shot 4]): fully_preserved - her face, updo, flower clips, white floral bikini, blue string ties, and bare feet are retained.
+&lt;Subject 2&gt; (appears in [Shot 1], [Shot 2], [Shot 3], [Shot 4]): fully_preserved - the breaded orange body, blue headband, yellow beak, black eyes, small wings, and two feet are retained.
+&lt;Subject 3&gt; (appears in [Shot 1], [Shot 2], [Shot 3], [Shot 4]): partially_preserved - raked sand, blue court lines, the blue-padded net, palm trunks, and the ocean horizon stay; daylight becomes night and a stage, moon, string lights, and crowd occupy the court.
+
+detailed_description:
+Photoreal live-action night beach. &lt;Subject 1&gt; and &lt;Subject 2&gt; keep the rendered look of their reference images under practical neon and moonlight.
+[Shot 1] A high wide shot looks over a glow-stick crowd toward the sand. &lt;Subject 3&gt; shows raked sand, blue court lines, and the blue-padded net at frame-left, with palm trunks, the ocean, a full moon, a lighting truss, speaker stacks, and a hexagonal neon panel behind the pair. &lt;Subject 1&gt; is already mid-roll at center, weight in the hips, bare feet planted. &lt;Subject 2&gt; is at her camera-right side, wings already lifting on the kick.
+At 00:00.000-00:01.400, on each kick her hips circle frame-right and the ribcage follows a half-beat later. The updo sways with the circle and the blue hip ties swing. The camera arcs right with large amplitude at fast speed and pushes in. &lt;Subject 2&gt; bounces once per kick, wings flicking at the top of each bounce.
+At 00:01.400-00:02.900, the circle reverses frame-left on the next kicks. Her chest rolls up through the circle, shoulders loose, and both hands rest on the hip ties, fingers following the sway. Her mouth is open in a laugh toward the lens. The arc and push keep moving.
+At 00:02.900-00:04.400, the hips return frame-right and the chest finishes the roll high. Loose strands cross her cheek on the sway. The camera arrives at an eye-level full-body view, still pushing in with medium amplitude.
+[Shot 2] At 00:04.400, the camera cuts low. The hip circle is already traveling frame-right, and both bare feet stay planted while the knees soften on the kick.
+At 00:04.400-00:06.100, the camera arcs left with large amplitude at fast speed along her hips and thighs. Each kick drops one hip and lifts the other, the ties flicking at the top of the circle. A little sand shifts under the balls of her feet. &lt;Subject 2&gt; bounces at frame-right, wings marking the kick.
+At 00:06.100-00:08.200, the camera rolls counterclockwise and keeps the arc. Her left hip leads a deeper circle toward &lt;Subject 2&gt;, the torso folding with it and the chest already rolling back up. &lt;Subject 2&gt; leans in on the bounce, beak near her shoulder, wings spread.
+[Shot 3] At 00:08.200, the camera cuts to a view just behind &lt;Subject 2&gt;. Her chest is already rising out of that fold, and her right hand is already leaving the hip tie.
+At 00:08.200-00:10.000, the camera pedestals up with large amplitude at fast speed. On the kicks her right hand travels from the hip tie up the side of the ribcage to the collarbone, wrist loose, while the hips keep the circle. The updo lags a beat behind the chest. &lt;Subject 2&gt; turns toward the lens on the bounce, wings wide.
+At 00:10.000-00:11.800, the camera arcs right with large amplitude at fast speed into a hero two-shot and pushes in. Her left hand joins the path and both arms open from the collarbone toward the lens, still riding the hip circle. Her eyes meet the lens, mouth open in the laugh. &lt;Subject 2&gt; faces the lens at frame-left, bouncing on the kick.
+[Shot 4] At 00:11.800, the camera cuts high behind the pair. The open arms and the hip circle are already carrying her into a left turn. The crowd is a semicircle. The net, palms, and ocean of &lt;Subject 3&gt; read past the stage.
+At 00:11.800-00:13.400, the camera tracks that turn with large amplitude at fast speed. Her hips lead on the kick, shoulders and updo follow, and the ties whip after the turn. &lt;Subject 2&gt; bounces through the same turn and lands facing the lens. Her face comes around to the lens before the camera finishes the arc.
+At 00:13.400-00:15.080, the camera pushes in with medium amplitude at fast speed to a close view, &lt;Subject 2&gt;'s headband and one wing remaining at frame-left. The hip circle continues small under the frame. Her right hand, still traveling from the collarbone path, arrives beside her cheek, thumb near the ear and little finger toward the chin. The updo keeps the sway through the last kick.
+
+overall_soundscape:
+Crowd roar and a soft shift of sand under bare feet continue under the stage.
+
+non_diegetic_music:
+Fast club techno. A distorted four-on-the-floor kick, a rolling low bass, closed metallic hi-hats, and a short minor synth stab. The tempo stays fast and the level stays loud from 00:00.000 through 00:15.080. Her hip circle lands on the kick.</textarea>
+              <div style="font-size:11px; color:#9a9a9a;">Detects standard 6-field H3 headers automatically and passes them through verbatim while binding <code>REFS</code> rail photos &amp; voices.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SURFACE 2: REFS -->
+        <div id="sim-refs" class="sim-surface">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:11px; font-weight:700; letter-spacing:0.12em; color:#9a9a9a;">REFERENCE REGISTER · STABLE @TAGS &amp; PER-REF PIXEL BUDGETS</span>
+          </div>
+          <div class="sim-ref-row">
+            <span class="sim-ord">&lt;Pic 1&gt;</span>
+            <input class="sim-input" value="@carolyn" readonly>
+            <select class="sim-select"><option>Subject 1</option><option>setting/prop</option></select>
+            <select class="sim-select"><option>fully preserved</option><option>partially copy</option><option>reference</option></select>
+            <select class="sim-select"><option>full MP</option><option>1.0 MP</option><option>0.5 MP</option></select>
+            <input class="sim-input" value="young woman with long black hair, dark grey crop top, cross necklace">
+          </div>
+          <div class="sim-ref-row">
+            <span class="sim-ord">&lt;Pic 2&gt;</span>
+            <input class="sim-input" value="@street" readonly>
+            <select class="sim-select"><option>setting/prop</option><option>Subject 1</option></select>
+            <select class="sim-select"><option>reference</option><option>fully preserved</option></select>
+            <select class="sim-select"><option>0.5 MP</option><option>1.0 MP</option><option>full MP</option></select>
+            <input class="sim-input" value="busy afternoon shopping street lined with colourful shop windows">
+          </div>
+          <div class="sim-ref-row">
+            <span class="sim-ord">&lt;Pic 3&gt;</span>
+            <input class="sim-input" value="@stall" readonly>
+            <select class="sim-select"><option>setting/prop</option><option>Subject 1</option></select>
+            <select class="sim-select"><option>reference</option><option>fully preserved</option></select>
+            <select class="sim-select"><option>0.5 MP</option><option>1.0 MP</option><option>full MP</option></select>
+            <input class="sim-input" value="warmly lit street food stall with grilled skewers on the counter">
+          </div>
+        </div>
+
+        <!-- SURFACE 3: TIMELINE -->
+        <div id="sim-timeline" class="sim-surface">
+          <div class="sim-forecast" id="sim-forecast-box">
+            ✓ NEXT QUEUE: 0 of 4 hops will re-render — all 4 hops served from lossless FFV1 + safetensors cache.
+          </div>
+          <div id="sim-tl-rows"></div>
+        </div>
+
+        <!-- SURFACE 4: MEDIA -->
+        <div id="sim-media" class="sim-surface">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            <div class="sim-card">
+              <div style="font-size:11px; font-weight:700; color:var(--h3-accent); margin-bottom:4px;">START IMAGE &amp; MASTER AUDIO LOCK</div>
+              <div class="sim-field" style="margin-bottom:6px;">
+                <label>Start Image (Optional Frame 0)</label>
+                <input class="sim-input" value="carolyn_opening_frame.png" readonly>
+              </div>
+              <div class="sim-field">
+                <label>Master Audio File (Continuous Lip-Sync Take)</label>
+                <input class="sim-input" placeholder="(none — each hop generates its own dialogue)" readonly>
+              </div>
+            </div>
+            <div class="sim-card">
+              <div style="font-size:11px; font-weight:700; color:var(--h3-accent); margin-bottom:4px;">REFERENCE CLIPS (1–3) &amp; VOICES (1–3)</div>
+              <div class="sim-field" style="margin-bottom:6px;">
+                <label>Reference Clip 1 (&lt;Video 1&gt;)</label>
+                <input class="sim-input" value="street_walk_driver.mp4  [0.0s – 8.0s · 0.3 MP]" readonly>
+              </div>
+              <div class="sim-field">
+                <label>Voice 1 (&lt;Audio 1&gt;)</label>
+                <input class="sim-input" value="carolyn_voice_ref.wav  [0.0s – 6.2s]" readonly>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SURFACE 5: WRITE -->
+        <div id="sim-write" class="sim-surface">
+          <div class="sim-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-size:11px; font-weight:700; color:var(--h3-accent);">WRITE — LOCAL AI PLAN DRAFTING ASSISTANT (WIP)</span>
+              <span style="font-size:11px; color:#5fbf7a;">● nInfer · Qwen3.8-27B — Ready</span>
+            </div>
+            <textarea class="sim-textarea" id="sim-write-brief">4-hop walking street-food vlog with @carolyn: she introduces the block, admires the shop windows, picks up a grilled skewer at @stall, and takes a bite.</textarea>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <button class="h3e-btn h3e-on" onclick="alert('In ComfyUI, this sends your brief + reference thumbnails to your local LLM, validates the returned JSON against all H3 rules, and populates the Script cards!')">Write plan</button>
+              <span style="font-size:11.5px; color:var(--h3-muted);">Drafts cards + reference descriptions. Always review generated beats before rendering.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- SURFACE 6: SWAP -->
+        <div id="sim-swap" class="sim-surface">
+          <div class="sim-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-size:11px; font-weight:700; color:var(--h3-accent);">GUIDED VIDEO SWAP — STANDALONE ONE-HOP IDENTITY / HEAD SWAP</span>
+              <span style="font-size:11px; color:var(--h3-muted);">Auto-loads Character Swap + Head Swap LoRAs</span>
+            </div>
+            <div style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap;">
+              <button class="h3e-btn h3e-on" id="swmode-replace" onclick="setSwapMode('replace_person', this)">Replace Person (Full Body)</button>
+              <button class="h3e-btn" id="swmode-head" onclick="setSwapMode('head_swap', this)">Head Swap (Keep Body &amp; Clothes)</button>
+              <button class="h3e-btn" id="swmode-face" onclick="setSwapMode('face_only', this)">Face Only</button>
+              <button class="h3e-btn" id="swmode-keep" onclick="setSwapMode('keep_person', this)">Keep Person (Restyle)</button>
+            </div>
+            <div class="sim-axes" style="margin-bottom:8px;">
+              <div class="sim-field">
+                <label>Identity Photo (@tag)</label>
+                <select class="sim-select"><option>@carolyn (Picture 1)</option></select>
+              </div>
+              <div class="sim-field">
+                <label>Wardrobe Override (Optional Free Text)</label>
+                <input class="sim-input" id="sim-swap-wardrobe" value="black leather jacket over a white crop top" oninput="updateSwapPreview()">
+              </div>
+            </div>
+            <div class="sim-field">
+              <label>Compiled Swap Prompt Preview (Written to swap_script, leaving your Shot Plan untouched)</label>
+              <textarea class="sim-textarea" id="sim-swap-preview" readonly style="min-height:68px; font-family:ui-monospace, monospace; font-size:11.5px;"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- SURFACE 7: ⚙ RUN PAGE -->
+        <div id="sim-run" class="sim-surface">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div>
+              <span style="font-weight:700; color:var(--h3-accent);">RUN</span>
+              <span style="font-size:11.5px; color:var(--h3-muted); margin-left:8px;">48 dials · 9 groups (obsolete v1 band-aids removed)</span>
+            </div>
+            <button class="h3e-btn" onclick="simTab('script')">← back to work</button>
+          </div>
+
+          <details class="sim-run-group" open>
+            <summary>output &amp; sampling</summary>
+            <div class="sim-axes" style="margin-top:8px;">
+              <div class="sim-field">
+                <label>resolution</label>
+                <select class="sim-select" id="run-res" onchange="syncDigest()"><option value="768×1344">768p (0.98 MP)</option><option value="576×1024">576p (0.56 MP)</option></select>
+              </div>
+              <div class="sim-field">
+                <label>duration</label>
+                <select class="sim-select" id="run-dur" onchange="syncDigest()"><option value="8">8 s (192f)</option><option value="10">10 s (243f)</option></select>
+              </div>
+              <div class="sim-field">
+                <label>steps</label>
+                <input class="sim-input" id="run-steps" type="number" value="8" onchange="syncDigest()">
+              </div>
+              <div class="sim-field">
+                <label>sampler / scheduler</label>
+                <select class="sim-select" id="run-samp" onchange="syncDigest()"><option value="euler/simple">euler / simple</option><option value="res_multistep/beta">res_multistep / beta</option></select>
+              </div>
+            </div>
+          </details>
+
+          <details class="sim-run-group" open>
+            <summary>join &amp; pin (cleaned — 5 essential controls)</summary>
+            <div class="sim-axes" style="margin-top:8px;">
+              <div class="sim-field">
+                <label>pin mech</label>
+                <select class="sim-select" id="run-pin" onchange="syncDigest()">
+                  <option value="auto">auto</option>
+                  <option value="motion_context">motion_context (Built-In)</option>
+                  <option value="hand_tie" selected>hand_tie (Previs Bridge)</option>
+                </select>
+              </div>
+              <div class="sim-field">
+                <label>ref image size</label>
+                <select class="sim-select"><option>match</option><option>max (2048px)</option></select>
+              </div>
+              <div class="sim-field">
+                <label>audio pin frames</label>
+                <input class="sim-input" type="number" value="24">
+              </div>
+              <div class="sim-field">
+                <label>voice every hop</label>
+                <select class="sim-select"><option>off</option><option>speaking</option><option>on</option></select>
+              </div>
+              <div class="sim-field">
+                <label>last frame guide</label>
+                <select class="sim-select"><option>off</option><option>before_restart</option><option>still</option></select>
+              </div>
+            </div>
+          </details>
+
+          <details class="sim-run-group" open>
+            <summary>refine · realism boost · upsample · soundtrack (audio refine)</summary>
+            <div class="sim-axes" style="margin-top:8px;">
+              <div class="sim-field">
+                <label>hop refine</label>
+                <select class="sim-select"><option>off</option><option selected>full (v2.4)</option><option>pin_only</option></select>
+              </div>
+              <div class="sim-field">
+                <label>realism boost</label>
+                <select class="sim-select"><option>off</option><option>on (2 + 10 steps)</option></select>
+              </div>
+              <div class="sim-field">
+                <label>audio refine (pair w/ boost)</label>
+                <select class="sim-select"><option>off</option><option selected>on (5 steps @ 0.5)</option></select>
+              </div>
+              <div class="sim-field">
+                <label>upsample (h3upscale x2)</label>
+                <select class="sim-select"><option>off</option><option selected>on (2.0 MP)</option></select>
+              </div>
+            </div>
+          </details>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="text-align:center; margin:16px 0 24px;">
+      <div style="font-weight:600; margin-bottom:6px;">Simple Mode (15s · Realism Boost + 2 MP Upsample) example</div>
+      <video controls preload="metadata" width="50%" style="max-width:480px; width:50%; margin:0 auto; border-radius:8px; border:1px solid var(--border); background:#000;">
+        <source src="https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips/resolve/main/docs/img/simple-realism-boost-2mp-00008.mp4" type="video/mp4">
+        <source src="https://media.githubusercontent.com/media/dntpi/ComfyUI-Hand-Tie-Clips/main/docs/img/simple-realism-boost-2mp-00008.mp4" type="video/mp4">
+      </video>
+    </div>
+
+    <h2>Two Ways to Join Shots (<code>pin_mech</code>)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:24%">Mode</th>
+          <th>Status &amp; Best Use Case</th>
+          <th>How It Works &amp; Honest Tradeoffs</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><code>motion_context</code></strong><br><em>(Default — Built-In)</em></td>
+          <td><strong>Stable</strong><br>Continuous relays (~5–6 hops on Turbo, ~7–8 hops on non-Turbo with Refine) &amp; multi-scene <code>restart</code> cuts</td>
+          <td>Built directly into Hand Tie Clips (no external custom node needed; credit to <a href="https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context">NikoDemon80's ComfyUI-H3-Motion-Context</a> for the latent-slice + end-aligned audio timeline concept). Relays the previous hop's sampler AV latent into the next hop with in-latent head inpainting and distribution locking — and resets cleanly on <code>restart</code> cuts.</td>
+        </tr>
+        <tr>
+          <td><strong><code>hand_tie</code></strong><br><em>(Single-Take Previs)</em></td>
+          <td><strong>Public Experimental</strong><br>Continuous one-location walking vlogs &amp; tracking shots</td>
+          <td>Renders one low-res single-take bridge previs first and ties each full-res hop's opening and closing 0.9 s to those clean windows so hops never copy texture from each other.<br><br>
+          <strong>Previs Compiler Model (Recommended in <code>ComfyUI/models/text_encoders/</code>):</strong><br>
+          Drop any <code>qwen3vl_4b*.safetensors</code> or <code>qwen3vl_8b*.safetensors</code> into <code>models/text_encoders/</code> — e.g. <a href="https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors"><code>qwen3vl_4b_fp8_scaled.safetensors</code> (Comfy-Org)</a>, <a href="https://huggingface.co/silveroxides/K2Q/tree/main/qwen3vl_4b"><code>qwen3vl_4b</code> (silveroxides/K2Q)</a>, or <a href="https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors"><code>qwen3vl_8b_int8_convrot.safetensors</code> (Comfy-Org)</a>. It loads at the start of the run to compile your beats into continuous bridge moments and unloads from VRAM before H3 starts.<br><br>
+          <strong>Caveat:</strong> Because every hop must meet its bridge window, beats that ask for a sudden location change, hard camera angle jump, or fast prop action across a join can cause the previs to cut or morph. It works very well when the camera and subject flow continuously in one setting, and may occasionally need a seed re-roll if a beat moves too far.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Built-In Finishing (<code>⚙ RUN</code> Page)</h2>
+
+    <h3>1. Realism Boost + Audio Refine (Built for <code>Simple</code> Mode / 1–2 Hop Hero Clips)</h3>
+    <ul>
+      <li><strong>Using HTC for standard single generations (<code>ref2va</code> / <code>t2va</code>):</strong> You don't need a multi-hop chain to use Hand Tie Clips — switch <strong><code>SCRIPT</code></strong> to <strong><code>Simple</code></strong> mode (<code>chains = 1</code> in <code>⚙ RUN</code>) and paste your standard <strong>6-field MiniMax H3 <code>ref2va</code> / <code>t2va</code> prompt</strong> (<code>subject_definitions:</code>, <code>summary:</code>, <code>detailed_description:</code>, etc.) or plain prose. HTC passes structured H3 prompts straight through untouched while giving you the visual <strong><code>REFS</code></strong> rail, <strong><code>realism_boost</code></strong>, and <strong><code>upsample</code></strong> on a single clip!</li>
+      <li><strong><code>realism_boost: on</code></strong> runs a 2-stage split schedule inside the sampler (at <code>steps = 6</code>: <strong>2 base steps</strong> set composition, then <strong>10 realism LoRA steps</strong> paint skin and lighting with <em>no fresh noise</em>).</li>
+      <li><strong>Important Audio Note:</strong> Because stage 2 adds no noise, the audio stream only gets those first 2 noisy steps and <strong>will sound thin or under-converged on its own</strong>. When using <code>realism_boost</code>, turn on <strong><code>audio_refine: on</code></strong> (under the <strong>Soundtrack</strong> group, <code>4–5</code> steps) — it re-samples the soundtrack cleanly while keeping your finished video 100% frozen.</li>
+    </ul>
+
+    <h3>2. Refine Pass (<code>hop_refine: full</code>) — Honest Limitations</h3>
+    <ul>
+      <li>Runs a gentle low-sigma detail pass per hop (supports wiring a stock 30-step H3 DiT to <code>refine_model</code> while your main wire runs a Turbo model).</li>
+      <li><strong>The honest truth on chain length:</strong> <code>Refine</code> holds back relay degradation and keeps joins clean, pushing continuous <code>motion_context</code> chains to <strong>5–6 clips on Turbo</strong> before very visible texture changes appear, and <strong>7–8 clips on non-Turbo</strong>. Under <code>motion_context</code>, plan to transition to a cut (<code>anchor: "restart"</code>) every 4–5 clips or so to maintain the integrity of your textures (or use <code>pin_mech: hand_tie</code> for continuous single-take sequences).</li>
+    </ul>
+
+    <h3>3. Guided Tiled Upsampler (<code>upsample: on</code>) &amp; Standalone Node</h3>
+    <p>Enlarges the finished film to 1.5–2.0 MP in latent chunks and runs a 2-step tiled redraw. With the <strong><code>h3upscale</code> x2 LoRA</strong>, the redraw is guided by your actual canvas frames at half the output size so it restores real detail instead of inventing texture. Toggling <code>upsample</code> on a cached chain skips hop generation and runs only the upscaler.</p>
+
+    <div class="callout">
+      <strong>Required Files for Upsampling:</strong>
+      <ol style="margin:6px 0 0 0; padding-left:20px;">
+        <li><strong>Latent Upscaler (`ComfyUI/models/latent_upscale_models/`):</strong><br>
+            Download <code>minimax_h3_latent_upscaler_3d_bf16.safetensors</code> from <a href="https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler">LBH-123-AI/Minimax_h3_latent_Upscaler</a> (or <code>h3_upscaler_lms_v0.1.safetensors</code>).</li>
+        <li><strong>Guided Upscale LoRA (`ComfyUI/models/loras/`):</strong><br>
+            Download <code>h3upscale_v2_x2.safetensors</code> from <strong><a href="https://huggingface.co/sandpies/ComfyUI-H3-Video-Upsampler/tree/main/lora">sandpies/ComfyUI-H3-Video-Upsampler (Hugging Face)</a></strong>.</li>
+        <li><strong><code>upsample_dit</code> wire:</strong> When using <code>h3upscale_v2_x2</code>, wire a <strong>plain, unpatched H3 UNETLoader</strong> into <code>upsample_dit</code> (the LoRA was trained on the bare DiT without turbo/realism LoRAs underneath).</li>
+      </ol>
+      <p style="margin:8px 0 0 0; font-size:13px;"><em>Want to upscale any existing video outside a chain? Use the included <strong>H3 Video Upsampler (finished clip)</strong> node (<code>workflows/HandTieClips_Upsample_Video.json</code>) or the standalone repo: <a href="https://github.com/dntpi/ComfyUI-H3-Video-Upsampler">dntpi/ComfyUI-H3-Video-Upsampler</a>.</em></p>
+    </div>
+
+    <h2>Quick Start (60 Seconds)</h2>
+    <pre><code>cd ComfyUI/custom_nodes
+git clone https://github.com/dntpi/ComfyUI-Hand-Tie-Clips.git</code></pre>
+    <ol>
+      <li><strong>Restart ComfyUI</strong> and hard-refresh your browser (<code>Ctrl+Shift+R</code>). Zero pip dependencies.</li>
+      <li>Drag <strong><code>workflows/HandTieClips_Starter.json</code></strong> onto ComfyUI and point the loaders at your MiniMax H3 ref2va checkpoint, text encoder, and VAEs.</li>
+      <li>In <strong>REFS</strong>, drop your character photo onto Row 1 and give it a tag like <code>@maya</code>.</li>
+      <li>In <strong>SCRIPT</strong>, write one beat per shot card and press <strong>Queue</strong>.</li>
+    </ol>
+
+    <h2>Prompting Cheat-Sheet (The 5 Golden Rules)</h2>
+    <p>MiniMax H3 samples at <strong>CFG 1.0 with no negative prompt</strong> — every word you write is <em>added</em> to the scene.</p>
+    <table class="do-dont">
+      <thead>
+        <tr>
+          <th style="width:45%">❌ Don't Write</th>
+          <th>✅ Write Instead</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><em>"She stops talking."</em> (Names talking → keeps her talking)</td>
+          <td><em>"She smiles with her lips closed. The low hum of the refrigerator."</em></td>
+        </tr>
+        <tr>
+          <td><em>"No background music, silent room."</em> (Silence = model invents speech)</td>
+          <td>Always name a specific room tone: <em>"Soft rain on the windowpane, distant traffic hum."</em></td>
+        </tr>
+        <tr>
+          <td>Re-describing hair, face, and clothes on Shots 2, 3, 4</td>
+          <td>Describe <strong>only the new action</strong> on Shots 2+ — the reference rail and join pin carry her look.</td>
+        </tr>
+        <tr>
+          <td>Ending Shot 2 mid-sentence when Shot 3 should be quiet</td>
+          <td>Finish the action/sentence at the <strong>end of Shot 2</strong> so Shot 3 inherits a settled state.</td>
+        </tr>
+        <tr>
+          <td>Leaving the final shot's <code>tail</code> on <code>ongoing</code></td>
+          <td>Set the last shot's <code>tail</code> to <code>settle</code> or <code>hold</code> so the film lands cleanly.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>📖 Full authoring guide: <a href="https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/PROMPTING.md"><strong>PROMPTING.md</strong></a> · Release history: <a href="https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/CHANGELOG.md"><strong>CHANGELOG.md</strong></a> · Credits &amp; Notices: <a href="https://github.com/dntpi/ComfyUI-Hand-Tie-Clips/blob/main/THIRD_PARTY_NOTICES.md"><strong>THIRD_PARTY_NOTICES.md</strong></a></p>
+  </div>
+
+
+
+</div>
+
+<script>
+  const PRESET_CAROLYN_4 = [
+    { id: "intro", dur: "8 s", join: "start", cam: "handheld", frame: "medium", pace: "steady", tail: "ongoing", locked: true, solo: false, dirty: false,
+      beat: "@carolyn walks down @street in the late afternoon sun, holding her phone out. (S1) says, <d>[English] What's up everybody, welcome back, today is all about street food!</d> She grins. Footsteps on pavement, traffic hum." },
+    { id: "shops", dur: "8 s", join: "continuous", cam: "handheld", frame: "close", pace: "steady", tail: "ongoing", locked: false, solo: false, dirty: false,
+      beat: "@carolyn keeps walking past the colorful shop windows. (S1) says, <d>[English] Look at this block, every window is a different color, I love it.</d> She slows beside @stall. Footsteps, distant traffic hum." },
+    { id: "stall", dur: "8 s", join: "continuous", cam: "handheld", frame: "close", pace: "steady", tail: "ongoing", locked: false, solo: false, dirty: false,
+      beat: "@carolyn points to @stall and raises a grilled skewer toward the camera. (S1) says, <d>[English] This is the stall everyone talks about.</d> She grins. A sizzling grill, footsteps." },
+    { id: "taste", dur: "8 s", join: "continuous", cam: "handheld", frame: "close", pace: "slow", tail: "settle", locked: false, solo: false, dirty: false,
+      beat: "@carolyn takes a big bite of the skewer, chews slowly with her lips closed, nods at the camera, then waves the skewer. A sizzling grill and the crunch of the skewer." }
+  ];
+
+  const PRESET_LORADADDY_10 = [
+    {
+        "id": "poolside_hello",
+        "dur": "8 s",
+        "join": "start",
+        "cam": "handheld",
+        "frame": "close",
+        "pace": "steady",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina sits comfortably on the white cushioned teak sun-lounger on the @poolside deck, peering over her thin wire-frame glasses with a slow, sultry smile. @mina says, <d>[English] Hey there... come sit by the water with me for a minute.</d> She tilts her head and gives a soft, playful wink. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "beckon_closer",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "push_in",
+        "frame": "close",
+        "pace": "slow",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina curls her index finger slowly toward the lens, motioning the camera a little closer with a teasing dimpled grin. @mina says, <d>[English] Don't be shy, lean in closer so I can tell you a secret.</d> She rests her chin lightly in her palm. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "htc_tease",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "hold",
+        "frame": "close",
+        "pace": "steady",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina nudges the bridge of her wire-frame glasses up with one finger, her eyes locked intimately on the lens. @mina says, <d>[English] Have you seen what Hand Tie Clips is doing to longform video lately?</d> She arches an eyebrow with a knowing smirk. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "glasses_breather",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "handheld",
+        "frame": "close",
+        "pace": "slow",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina leans back lazily against the white lounger cushion with her lips closed, resting her cheek in her hand while giving the camera a slow, flirtatious wink and a soft pout. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "smooth_joins",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "push_in",
+        "frame": "close",
+        "pace": "steady",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina leans forward slightly on the lounger, her dark wavy bob swaying softly around her shoulders. @mina says, <d>[English] Every single hop stays tied together, smooth and unbroken from start to finish.</d> She smiles warmly into the lens. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "no_drift_whisper",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "hold",
+        "frame": "close",
+        "pace": "steady",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina traces one finger lightly along the edge of her glasses frame with a sultry, expressive gaze. @mina says, <d>[English] Look how my face, my voice, and the light stay locked on you.</d> She gives a slow, confident nod. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "come_closer_again",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "push_in",
+        "frame": "close",
+        "pace": "slow",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina motions the camera in once more with two fingers and flashes a cheeky, dimpled smile. @mina says, <d>[English] Ten shots in a row, and it still feels like one private moment.</d> She tilts her head playfully. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "upscale_flex",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "hold",
+        "frame": "close",
+        "pace": "steady",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina rests her chin on her hand, looking up through her wire-frame glasses with a teasing grin. @mina says, <d>[English] Then the guided upsampler comes in and makes every little detail crystal clear.</d> She winks softly at the camera. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "sunlit_glimpse",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "handheld",
+        "frame": "close",
+        "pace": "slow",
+        "tail": "ongoing",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina relaxes on the cushioned lounger with her lips closed, brushing a strand of dark wavy hair behind her ear and holding a warm, lingering gaze on the lens. Gentle pool water lapping and warm breeze."
+    },
+    {
+        "id": "kiss_goodbye",
+        "dur": "8 s",
+        "join": "continuous",
+        "cam": "pull_back",
+        "frame": "close",
+        "pace": "slow",
+        "tail": "settle",
+        "locked": true,
+        "solo": false,
+        "dirty": false,
+        "beat": "@mina touches her fingertips lightly to her lips and motions a slow, playful wave toward the camera. @mina opens her lips and says, <d>[English] Go try Hand Tie Clips for yourself, darling, I will be waiting right here.</d> She holds a soft closed mouth, sultry smile. Gentle pool water lapping and warm breeze."
+    }
+];
+
+  let SHOTS = JSON.parse(JSON.stringify(PRESET_LORADADDY_10));
+  let activeTag = "@mina";
+
+  function loadPreset(which) {
+    const b10 = document.getElementById("preset-10hop");
+    const b4 = document.getElementById("preset-4hop");
+    if (which === "carolyn4") {
+      SHOTS = JSON.parse(JSON.stringify(PRESET_CAROLYN_4));
+      activeTag = "@carolyn";
+      if (document.getElementById("run-pin")) document.getElementById("run-pin").value = "motion_context";
+      if (b10 && b4) { b4.classList.add("primary"); b10.classList.remove("primary"); }
+    } else {
+      SHOTS = JSON.parse(JSON.stringify(PRESET_LORADADDY_10));
+      activeTag = "@mina";
+      if (document.getElementById("run-pin")) document.getElementById("run-pin").value = "hand_tie";
+      if (b10 && b4) { b10.classList.add("primary"); b4.classList.remove("primary"); }
+    }
+    renderSimScript();
+  }
+
+  const THUMBS_10 = ["data:image/jpeg;base64,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", "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAA+AHQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwC3ZwjzodxbaWXPJ6Z+tZP7RVvZ2r6NLJCf7RfzNlxnAEa7cq3qcsuD2weua7HTdB1I2Vv5lpIsgiTcDgYbaMj868w/aw12K48QaNo0IzJaQNPKR6yEYX8kz+IrnjTdzTmujc8N6vZS22yyu7eW5fbIEWZAwUdTgkE+nGTXT3Wrw2szR7S7L97HQV4F4d8D6vqWkQ6xYzKk8BZ41AIZtuDjNeveAL5NduYxIUa5uIGd8IPlKYDcdNxz+eayrR9knKOpvCLl8RZ8ZyRahoNpLC2Va6SN1I5U+hr3nwTDbaV4M01I1Eca26ysBk8sAxJ/Ovn3WpoZpEgtmRk+1xSOF7PjBBH4Z/GoRezw3DokkoDEqSG6YJ4HbpitsO3Up866mFbSVj3nU/Eduk63aGC5hjUlDGW8wH068Z55x0FfJvixo72XxNeI7Hzddv5EDAdC8Rz65wT+VehtqE0Jmjyyqj7iVy7YxnGaq/DzwdpXi3SdfbU5LpCmt3QUwuFOCsfXINEKE4ybct/IyTtqeJfaooIXkJDFOMA9T6VBputaj58SDULiNY8rGA52x59B+NdJ8bPC2heC9XtdO0K4vp5pUM9x9pkVwuT8oGFHv19qT4R6JDq+pySXMYeBF5J6d61jFU07myTqWSNn4UfErUNPt9S0rWB/aFrNDIEWYb8yFThWz95WPBB9eMUz4cRGSe4kKCOM7DwMKDk8D860PH3h2z0FLDWbOJY4mYxTAcd+D+H9K7L4S+ErfW9FvtQsL4faJGBNq0fC4zwGz7+npWco83wlSi4asvSXTWF5qD3LR+XEq4SMk4zjaDkDk5B445HNVF1+5DB1tgUxuwRwR9aXxIW+1avKrYE2oyQ/gpYf+yYqXQLu1XwjDqUs/lWyyFNuMYQE7mYdW4Gee1cVWTorRGkLT3NO5urC6WC4Z44xJEGCuQCPX9c0Vweo6gubfAGzysJx0XccUVpa+o9j6CW9BPBFfEvxFvpdZ+JWsTXUhVmvTEWb+EKdg/ICvqXVLm5tMuhJA5r578VeDtf8WePL+fTtJaCC4cMbhzthXCjLs/Qdyf616M9NGccPI9S8GWM9jaWtkbtI0mieOBkZiAduQx9+vAIpPhvay6H8UNetrdEmtrdFZ3CfKHkVW2gHoeSeD3FQ/DqzvprS3FzcSSfYGKl4nZN5HtjuOex5rsfDvg7VNN0jVTqV2Jr2ed76IwExsxOMrnOCCFXAPIrmXvJo9CpblVjn9btpP7elljsjElxdediNW2jgk9c1yV1fsj3ISeSLZLv2jcG5HIHGO1eg6XpepS6vBGmyB7hXYszF2CLj5ieOpYCqfxP+Hd29s+taVK3noubmKFiNwH/LQD27j059a6cJBNcm2p52Kly+/vocMuqzSBSd+3B34UYI5wvoea6b4PayltpGtOw2LLq08mPTKpxXnIjvCMfbLnOP+ehrrPhnZvL4X1Uks7LqUqlj1J2JzXVVw7p2uctDFRrNqJ5x8criW5+IF1LJzG0aGJvVeT/MkfhXa/D7w7AfD1ve294i27J5silF3lsc/NjI6Y4Ncj8UrS7n1K1RbZ5QgKhkUluSOD+PSup8EaZrHh/R7e01OdI0vAzwwoSZIhxnepGCMt0+tcFTRHp4drm16ne+KfDcOq6Abia5WG1/s/e0TKrZwu4tuIyOQehFcp+z94il0m+SZ1ePTrqYxHc2cnAy3Tvgn6r71ueNdF1u88DCw0aRJJnBWUBPL3RnHyIO7H+WRVzwP8NXl8PKlx59jfqhXYzKypIuCpIHOM4yMg1MJW1RrXjd8p2HxB8PwwSu0CERXEpukIORvbdv/MuT+NZaTy2ngGbSDaJcQyDYEZDgD2wc9qsazrUOpeC/7KvjdRa/pz8xQxO7rtGOSoxjBIznHGa8+nuJ5YDLIt1LFGu8mWXjGcAYyep4pVoxfUwpKRhavHO08aLE4EUapyp9z/WivUtPtPEaWkYhsQiYyFDKuM+2yirjTjbr9wnKV+n3mvp11Ff6cTLhmjX8xWZ4UaPxJfXMCsYrFGMbIvV8HnPtXO+Grp9Hvv7MmfdBtBtZSciSM9vqP5Y963vh9s07xRqVr0R381PcNz/PNXOopwUkFOm4TcWdlPbab4au1vCIYbVsJMxXOCThW79+Px9q1NYuke3tbiDbNascMRyuD0//AF15B8Qtemjn8R2E0hZEMYRT2y6H+VM+HmuXkzjTrZmkjnBVomb5SO5Pp65HNVRpOtTcr2aKqz9lNLdM7y4WaDXbyXTrqCMCJI/3vVF5bA4PUsc/QVmtrsw1m2sptRuLiWU7tltDuGBnvu9j2rN8eeBL2ILqemTXV3sT/SImlOWI6MoHBGMDHXjvWd4SsGeRLm/mntWDhtyFVKlcgcsDWTqS0UCuSOsp6lTxV4Onj1FrrSrO4itZpCqxSLtKt7D+6e35elXvg1aKvh7xFBcjbJBrFwrA9RhUB/ka7qDUtNtAIl1GF1X5gzz7z68k81wHgHU0m1XxqqyKRcazdyfL0IYjBFd31l1VGEuh5ccIqNSVSKsn0Nuz0x9cnkOlRRrEhwZmHX6U7WPCUOmS2WoXs0ryxSKJWJAAQnDHp0AOfwroPhYvl6AoHLd/rVDxH4nt7s6lZ5KT28cg+hVc5rz51ffVz1qdK0W0dfpNnbxiJoVZ2j+4zc44rIS48zWbmKOUwXAOwybchh6MO4+mD6GuI+HXxBZYobbWZGIwAJ+v/fQ/r+ddb4iEemarb6tbyLPp90NxkQ5CMPU+h9farq0pUnaS0FTqKpszM1vTGnD3B51GzXy7hEOTIoH3h3JA/MfSubTxNpt/qGm2jSyTWGnnz7h9v+tmH3F56gcn8BVbX/Gj2/iKTU7VXNrPMI0lGQrbEAbB6Ht+dQnxX4TuHeSfSLdncljmxUnP+9j+tTOEaVT3eqV0NOVSHveZ3/8Awn2ljgeZ+a/40V5y/iHQFbFvpHyf7MYAFFN4pJ2t+JCwd9b/AIGPYXkeqaeYAStzbvvgZuqOOQPoQf1Ira8La4J9csLp8JMAYZ4852OMHH65Hsa80068mt7uOSLAiY/OueWJ7/h2q/fX76frNrfRgATyLHMo7tnAI/P9TXLTbh7vRnRJJ69Ue2fEHwlDrokvrb/Xuik+jY7H8q5TwRrFjo949mLdbe7UhZBj5vz7iur0LxNJJAiSRkjaFrmvFfhOLWNZXVbG/ksJwm11MAkV+cj+IYrpclKFtmZKLjO+6PVItUWSHzJD+72k7s/LjHOa+edQ1q3h1e9hU7VMm6NR3B/+uK9Q0jw/qGpaLcWLamZJVXHC+SjD3I3GuSuvC0+k3u1TaJcgYMygu+P94gGocoRg1LdmqUnNNbGFbRapcsGEa2sR/inyGP0Xr/KqvhSV9Ie+1DzMxpqs8E7YxuXC/Njtg8/TNdtpuhXBcNJdIx90P+NcFp+Re+KLF8MjX1xn0ypP9M/nWUZ8qugmuZ8rPdPhjcEwTxKeEkbH4nNeceOba5svEmrXCbjFdLJGf9ksuM/TpWz8CtSkltnSXJaOUxE+oAAB/LFdrrmlQXtxcmRQcv3rqpQjUZjVk6cEfO+jXhhcBiVYHGDXtngGyu7yJftryRafIObfOPMPrj+H+v8APiNV0+HQdYVo442V24+UZU/WvQvC+qPIisEAAXFdOIxUuX2bRhRw8b+0udR4k8K2Gv6ENLngSJImEkEkICmNgMAgdOnGPc14F4u8JX/hu6aO4gW7hYZjmiBUn1yAc5HH519BWt7NdQNHC4jmXlXZcjrzxn0rF+Icm7SYMkq0k4hYr6Mp5/AgH8K4abfNZdTrnFct30PDtOt0W0QTRXQb/ZXt/jRW5Y+JJ/IxcwW88oYgyPGMnmipUaSWsSm6rekrH//Z", "data:image/jpeg;base64,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", "data:image/jpeg;base64,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", "data:image/jpeg;base64,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", "data:image/jpeg;base64,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", "data:image/jpeg;base64,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", "data:image/jpeg;base64,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", "data:image/jpeg;base64,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", "data:image/jpeg;base64,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"];
+  let selectedShotIdx = 0;
+  let scriptMode = "shots";
+  function setScriptMode(mode) {
+    scriptMode = mode;
+    const sv = document.getElementById("sim-shots-view");
+    const smv = document.getElementById("sim-simple-view");
+    const bs = document.getElementById("btn-mode-simple");
+    const bsh = document.getElementById("btn-mode-shots");
+    const badd = document.getElementById("btn-add-shot");
+    const b10 = document.getElementById("preset-10hop");
+    const b4 = document.getElementById("preset-4hop");
+    const bsim = document.getElementById("preset-simple");
+    if (mode === "simple") {
+      if (sv) sv.style.display = "none";
+      if (smv) smv.style.display = "block";
+      if (bs) bs.classList.add("h3e-on");
+      if (bsh) bsh.classList.remove("h3e-on");
+      if (badd) badd.style.display = "none";
+      if (bsim) bsim.classList.add("primary");
+      if (b10) b10.classList.remove("primary");
+      if (b4) b4.classList.remove("primary");
+      const subEl = document.getElementById("sim-script-sub");
+      if (subEl) subEl.textContent = "Simple · 1 clip · 15.0s (362f) master · realism_boost + audio_refine + upsample on";
+      document.getElementById("cnt-script").textContent = "1";
+      document.getElementById("sim-digest").textContent =
+        "1024×768 · 15s ×1 (15.1s) · 6 steps (2+10 realism_boost) · audio_refine on · upsample on";
+    } else {
+      if (sv) sv.style.display = "block";
+      if (smv) smv.style.display = "none";
+      if (bs) bs.classList.remove("h3e-on");
+      if (bsh) bsh.classList.add("h3e-on");
+      if (badd) badd.style.display = "inline-flex";
+      if (bsim) bsim.classList.remove("primary");
+      renderSimScript();
+    }
+  }
+
+  function selectShot(i) {
+    selectedShotIdx = Math.max(0, Math.min(SHOTS.length - 1, i));
+    renderSimScript();
+  }
+
+  function removeShot(i) {
+    if (SHOTS.length <= 1) return;
+    SHOTS.splice(i, 1);
+    if (selectedShotIdx >= SHOTS.length) selectedShotIdx = SHOTS.length - 1;
+    renderSimScript();
+  }
+
+  function renderSimScript() {
+    if (selectedShotIdx >= SHOTS.length) selectedShotIdx = Math.max(0, SHOTS.length - 1);
+    const score = document.getElementById("sim-score-strip");
+    const box = document.getElementById("sim-cards-box");
+    const tl = document.getElementById("sim-tl-rows");
+    score.innerHTML = "";
+    box.innerHTML = "";
+    tl.innerHTML = "";
+
+    const durNum = Number(document.getElementById("run-dur")?.value || 8);
+    const totalSec = (SHOTS.length * durNum - (SHOTS.length - 1) * 0.9).toFixed(1);
+    const subEl = document.getElementById("sim-script-sub");
+    if (subEl) subEl.textContent = `${SHOTS.length} shots · ${totalSec}s master`;
+
+    let rerenderList = [];
+    let cachedCount = 0;
+    let chainDirty = false;
+    SHOTS.forEach((s, i) => {
+      if (s.dirty && !s.locked) chainDirty = true;
+      const willRender = s.solo || (!s.locked && (s.dirty || chainDirty));
+      if (willRender) {
+        rerenderList.push(String(i + 1).padStart(2, "0"));
+      } else {
+        cachedCount++;
+      }
+
+      const numStr = String(i + 1).padStart(2, "0");
+      const effDur = i === 0 ? `${durNum.toFixed(1)}s` : `${(durNum - 0.9).toFixed(1)}s`;
+      const thumbSrc = THUMBS_10[i % THUMBS_10.length] || "";
+
+      // Horizontal Filmstrip Poster (.h3e-poster)
+      const poster = document.createElement("div");
+      poster.className = "h3e-poster" + (i === selectedShotIdx ? " h3e-on" : "");
+      poster.onclick = (ev) => {
+        if (ev.target.tagName === "BUTTON") return;
+        selectShot(i);
+      };
+      poster.innerHTML = `
+        <div class="h3e-poster-thumb">
+          ${thumbSrc ? `<img src="${thumbSrc}" alt="Shot ${numStr}">` : `<span style="color:#6a6a6a;font-size:11px;">#${numStr}</span>`}
+        </div>
+        <div class="h3e-poster-no">${numStr}</div>
+        <div class="h3e-poster-meta">${s.frame} · ${effDur}</div>
+        <div class="h3e-poster-beat">${s.beat}</div>
+        <div class="h3e-poster-row">
+          <button class="h3e-mini ${s.solo ? 'h3e-on-solo' : ''}" onclick="toggleSolo(${i})">solo</button>
+          <button class="h3e-mini ${s.locked ? 'h3e-on-lock' : ''}" onclick="toggleLock(${i})">lock</button>
+        </div>
+      `;
+      score.appendChild(poster);
+
+      // Timeline row
+      const trow = document.createElement("div");
+      trow.className = "sim-card" + (s.locked ? " locked" : "");
+      trow.style.display = "flex";
+      trow.style.alignItems = "center";
+      trow.style.justifyContent = "space-between";
+      trow.style.gap = "12px";
+      const statusBadge = s.locked
+        ? `<span style="color:#ffb020; font-weight:700;">🔒 LOCKED (cached)</span>`
+        : (willRender ? `<span style="color:#e8ff47; font-weight:700;">↻ WILL RE-RENDER</span>` : `<span style="color:#5fbf7a; font-weight:700;">✓ CACHED HIT</span>`);
+      trow.innerHTML = `
+        <div>
+          <span class="sim-num">${i + 1}</span>
+          <strong style="margin-left:6px;">${s.id}</strong>
+          <span style="color:#9a9a9a; font-size:11.5px; margin-left:8px;">192f (8.0s) · seed ${5150 + i} · ${i > 0 ? 'seam f' + (170*i) + ' (-0.3/255)' : 'opens chain'}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; font-size:12px;">
+          ${statusBadge}
+          <button class="h3e-btn ${s.locked ? 'h3e-on' : ''}" style="padding:2px 8px; font-size:11px;" onclick="toggleLock(${i})">${s.locked ? 'locked' : 'lock'}</button>
+        </div>
+      `;
+      tl.appendChild(trow);
+    });
+
+    // Render ONLY the currently selected shot card (.h3e-active-card) below the horizontal strip!
+    const sel = SHOTS[selectedShotIdx];
+    if (sel) {
+      const i = selectedShotIdx;
+      const effDur = i === 0 ? `${durNum.toFixed(1)}s` : `${(durNum - 0.9).toFixed(1)}s`;
+      const wc = (sel.beat.trim().match(/\S+/g) || []).length;
+      const card = document.createElement("div");
+      card.className = "h3e-active-card";
+      card.innerHTML = `
+        <div class="sim-card-head" style="margin-bottom:6px;">
+          <span style="color:#6a6a6a; cursor:grab; font-size:13px;" title="Drag to reorder">⋮⋮</span>
+          <span style="color:#9a9a9a; font-size:11px;">▾</span>
+          <span class="sim-num">${i + 1}</span>
+          <span style="color:#9a9a9a; font-size:11.5px; font-variant-numeric:tabular-nums;">${effDur}</span>
+          <span style="color:#9a9a9a; font-size:11.5px; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${sel.beat}</span>
+          <button class="h3e-btn ${sel.solo ? 'h3e-on' : ''}" style="padding:2px 7px; font-size:11px;" onclick="toggleSolo(${i})" title="Solo re-render only this hop">⏵</button>
+          <button class="h3e-btn ${sel.locked ? 'h3e-on' : ''}" style="padding:2px 7px; font-size:11px;" onclick="toggleLock(${i})" title="Lock this hop to its cached render">lock</button>
+          <button class="h3e-btn" style="padding:2px 7px; font-size:11px;" onclick="removeShot(${i})" title="Remove shot">×</button>
+        </div>
+        <textarea class="sim-textarea" style="margin-bottom:4px;" oninput="markDirty(${i}, this.value)">${sel.beat}</textarea>
+        <div style="font-size:11px; color:#6a6a6a; margin-bottom:8px;">${wc} / 35-60 words</div>
+        <div class="sim-axes">
+          ${i > 0 ? `<div class="sim-field"><label>JOIN</label><select class="sim-select" onchange="SHOTS[${i}].join=this.value;markDirty(${i})"><option ${sel.join==='continuous'?'selected':''}>continuous</option><option ${sel.join==='hard_cut'?'selected':''}>hard_cut</option><option ${sel.join==='restart'?'selected':''}>restart</option></select></div>` : ''}
+          <div class="sim-field"><label>CAMERA</label><select class="sim-select" onchange="SHOTS[${i}].cam=this.value;renderSimScript()"><option ${sel.cam==='pan_follow'?'selected':''}>pan_follow</option><option ${sel.cam==='handheld'?'selected':''}>handheld</option><option ${sel.cam==='push_in'?'selected':''}>push_in</option><option ${sel.cam==='pull_back'?'selected':''}>pull_back</option><option ${sel.cam==='orbit'?'selected':''}>orbit</option><option ${sel.cam==='hold'?'selected':''}>hold</option></select></div>
+          <div class="sim-field"><label>FRAMING</label><select class="sim-select" onchange="SHOTS[${i}].frame=this.value;renderSimScript()"><option ${sel.frame==='close'?'selected':''}>close</option><option ${sel.frame==='medium'?'selected':''}>medium</option><option ${sel.frame==='wide'?'selected':''}>wide</option></select></div>
+          <div class="sim-field"><label>PACE</label><select class="sim-select" onchange="SHOTS[${i}].pace=this.value;renderSimScript()"><option ${sel.pace==='steady'?'selected':''}>steady</option><option ${sel.pace==='slow'?'selected':''}>slow</option><option ${sel.pace==='fast'?'selected':''}>fast</option></select></div>
+          <div class="sim-field"><label>TAIL</label><select class="sim-select" onchange="SHOTS[${i}].tail=this.value;renderSimScript()"><option ${sel.tail==='ongoing'?'selected':''}>ongoing</option><option ${sel.tail==='settle'?'selected':''}>settle</option><option ${sel.tail==='hold'?'selected':''}>hold</option></select></div>
+        </div>
+        <div style="font-size:10.5px; color:#8b949e; letter-spacing:0.08em; margin-top:8px; cursor:pointer;" onclick="alert('Opens per-shot overrides: custom duration, seed, steps, @tag refs whitelist, and hand_tie moment / moment_end.')">▸ ADVANCED</div>
+      `;
+      box.appendChild(card);
+    }
+
+    const qline = document.getElementById("sim-queue-line");
+    if (qline) {
+      qline.textContent = rerenderList.length === 0
+        ? `NEXT QUEUE re-renders none · ${cachedCount} cached`
+        : `NEXT QUEUE re-renders ${rerenderList.join(", ")} · ${cachedCount} cached`;
+    }
+    const jbox = document.getElementById("sim-json-box");
+    if (jbox) {
+      jbox.textContent = JSON.stringify({ shots: SHOTS.map(s => ({ id: s.id, duration: s.dur, directives: { join: s.join, camera: s.cam, framing: s.frame, pace: s.pace, tail: s.tail }, beat: s.beat })) }, null, 2);
+    }
+
+    const rerenderCount = rerenderList.length;
+    document.getElementById("cnt-script").textContent = SHOTS.length;
+    document.getElementById("cnt-tl").textContent = `${SHOTS.length - rerenderCount}/${SHOTS.length}`;
+    const fb = document.getElementById("sim-forecast-box");
+    if (rerenderCount === 0) {
+      fb.style.borderColor = "rgba(95,191,122,0.4)";
+      fb.style.color = "#5fbf7a";
+      fb.textContent = `✓ NEXT QUEUE: 0 of ${SHOTS.length} hops will re-render — all ${SHOTS.length} hops served from lossless cache.`;
+    } else {
+      fb.style.borderColor = "rgba(232,255,71,0.45)";
+      fb.style.color = "#e8ff47";
+      fb.textContent = `⚡ NEXT QUEUE: ${rerenderCount} of ${SHOTS.length} hop(s) will re-render (${SHOTS.length - rerenderCount} served from cache).`;
+    }
+    syncDigest();
+  }
+
+  function toggleLock(i) { SHOTS[i].locked = !SHOTS[i].locked; renderSimScript(); }
+  function toggleSolo(i) {
+    const was = SHOTS[i].solo;
+    SHOTS.forEach(s => s.solo = false);
+    SHOTS[i].solo = !was;
+    renderSimScript();
+  }
+  function markDirty(i, val) {
+    if (val !== undefined) SHOTS[i].beat = val;
+    SHOTS[i].dirty = true;
+    renderSimScript();
+  }
+  function addSimShot() {
+    SHOTS.push({
+      id: "shot" + (SHOTS.length + 1), dur: "8 s", join: "continuous", cam: "handheld",
+      frame: "medium", pace: "steady", tail: "settle", locked: false, solo: false, dirty: true,
+      beat: "@carolyn continues down @street and waves to the camera. Footsteps, city ambience."
+    });
+    selectedShotIdx = SHOTS.length - 1;
+    renderSimScript();
+  }
+
+  let currentSwapMode = "replace_person";
+  function setSwapMode(m, btn) {
+    currentSwapMode = m;
+    document.querySelectorAll("#sim-swap .h3e-btn").forEach(b => b.classList.remove("h3e-on"));
+    btn.classList.add("h3e-on");
+    updateSwapPreview();
+  }
+  function updateSwapPreview() {
+    const w = document.getElementById("sim-swap-wardrobe").value.trim() || "her outfit from <Picture 1>";
+    const prefix = currentSwapMode === "head_swap" || currentSwapMode === "face_only" ? "head_swap:" : "body_swap:";
+    document.getElementById("sim-swap-preview").value =
+      `${prefix}\nsubject_definitions:\n<Subject 1> is Carolyn, the person in <Picture 1> (${w}).\n\ndetailed_description:\n[video generation + reference] At 00:00.000, <Subject 1> follows the exact motion, pose, framing, and lighting of the guide timeline in ${w}.`;
+    document.getElementById("cnt-swap").textContent = "ON";
+  }
+
+  function syncDigest() {
+    const res = document.getElementById("run-res")?.value || "768×1344";
+    const dur = Number(document.getElementById("run-dur")?.value || 8);
+    const steps = document.getElementById("run-steps")?.value || "8";
+    const samp = document.getElementById("run-samp")?.value || "euler/simple";
+    const pin = document.getElementById("run-pin")?.value || "motion_context";
+    const total = (SHOTS.length * dur - (SHOTS.length - 1) * 0.9).toFixed(1);
+    document.getElementById("sim-digest").textContent =
+      `${res} · ${dur}s ×${SHOTS.length} (${total}s) · ${steps} steps ${samp} · pin: ${pin} · cache on`;
+  }
+
+  function simTab(id) {
+    document.querySelectorAll(".sim-surface").forEach(s => s.classList.remove("active"));
+    document.querySelectorAll(".h3e-tabs .h3e-btn").forEach(b => {
+      if (b.id !== "sim-pinbtn") b.classList.remove("h3e-on");
+    });
+    document.getElementById("sim-" + id)?.classList.add("active");
+    document.getElementById("tabbtn-" + id)?.classList.add("h3e-on");
+  }
+
+  renderSimScript();
+  updateSwapPreview();
+</script>
+
+
+</body>
+</html>

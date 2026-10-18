@@ -247,13 +247,30 @@ def _spoken_s(text):
 
 
 _SPEECH = re.compile(
-    r"(?:,?\s*(?:and\s+)?)?(?:\(S\d+\)\s*)?\b(?:says|asks|whispers|shouts|replies|adds|mutters|calls|"
-    r"continues|answers|sings)\b[^<.]{0,40}?<d>.*?</d>", re.S)
+    r"(?:,?\s*(?:and\s+)?)?(?:\(S\d+\)\s*)?\b(?:says?|asks?|whispers?|shouts?|replies|reply|adds?|mutters?|calls?|"
+    r"continues?|answers?|sings?)\b[^<.]{0,40}?<d>.*?</d>", re.S)
+_QUOTED_SPEECH = re.compile(
+    r'(\b(?:says?|asks?|whispers?|shouts?|replies|reply|adds?|mutters?|calls?|'
+    r'continues?|answers?|sings?)\b[^<."]{0,20}?)"([^"\n]{2,})"', re.I)
 _WHO_RE = re.compile(r"@[A-Za-z0-9_]+|<Subject \d+>")
 
 
 _TALKING = re.compile(
     r"(?:,\s*|\s+and\s+|\s+)(?:still\s+|keeps\s+)?(?:talking|chatting|speaking|narrating)\b[^,.;]*", re.I)
+
+
+_MOUTH_OPEN_SAY = re.compile(
+    r"(?:\b(?:then|and)\s+)?(?:opens?\s+(?:her|his|their|its)\s+mouth\s+to\s+"
+    r"|(?:(?:her|his|their|its)\s+)?lips\s+part\s+and\s+)"
+    r"(?=(?:says?|asks?|whispers?|shouts?|replies|reply|adds?|mutters?|calls?|continues?|answers?|sings?)\b)",
+    re.I)
+_SPEECH_SENT = re.compile(
+    r"(?:^|(?<=[.!?]\s))(?:Then,\s*)?(?:@[A-Za-z0-9_]+|<Subject \d+>|He|She|They)\s+"
+    r"(?:(?:opens?\s+(?:her|his|their|its)\s+mouth\s+to\s+|(?:her|his|their|its)\s+lips\s+part\s+and\s+))?"
+    r"(?:\(S\d+\)\s*)?(?:says?|asks?|whispers?|shouts?|replies|reply|adds?|mutters?|calls?|"
+    r"continues?|answers?|sings?)\b[^<.\"]{0,40}?(?:<d>.*?</d>|\"[^\"\n]{2,}\")[.!?]?\s*",
+    re.I | re.S,
+)
 
 
 def _no_speech(text):
@@ -263,13 +280,18 @@ def _no_speech(text):
     the previs would then put a voice at the window with no words to say, and
     both hops tied to it would inherit invented speech. A plain plan's lines stay
     inside their own hop (user 2026-10-09: no extra input for hand-tie)."""
-    t = _SPEECH.sub(".", text or "")
+    t = str(text or "")
+    t = _MOUTH_OPEN_SAY.sub("", t)
+    t = _SPEECH_SENT.sub("", t)
+    t = _SPEECH.sub(".", t)
+    t = _QUOTED_SPEECH.sub(".", t)
     t = _D.sub("", t)
     # A talking cue with no words is worse than none: H3 invents the speech in its
     # default language and, in a phone vlog, burns in captions for it (a rejected
     # take of the 9:16 vlog previs, 2026-10-10: Chinese subtitles under "talking into it").
     t = _TALKING.sub("", t)
     t = re.sub(r"\(S\d+\)\s*", "", t)
+    t = re.sub(r"\.\s+then\b", ", then", t, flags=re.I)
     t = re.sub(r"\s*\.\s*\.", ".", t)
     return re.sub(r"\s{2,}", " ", t).strip()
 
@@ -371,18 +393,57 @@ def _trailing_sound(beat):
 _LIPS = re.compile(
     r",?\s*(?:with\s+)?(?:(?:her|his|their|its)\s+)?lips\s+(?:closed|shut|pressed\s+together)"
     r"(?:\s+in\s+a\s+smile)?", re.I)
+_SAY_VERB = re.compile(
+    r"\b(says?|asks?|whispers?|shouts?|replies|reply|adds?|mutters?|calls?|"
+    r"continues?|answers?|sings?)(\b[^<.]{0,20}?<d>)", re.I)
+
+
+def _3p_verb(v):
+    low = v.lower()
+    if low == "say":
+        return "says"
+    if low == "reply":
+        return "replies"
+    if not low.endswith("s"):
+        return v + "s"
+    return v
 
 
 def open_lips(shots):
-    """Shots with closed-lips phrases taken out of every beat that has a line.
-    A quiet hop keeps them (chewing with lips closed is what it should show).
-    Returns copies."""
+    """Shots with closed-lips phrases taken out of every beat that has a line
+    (and untagged double-quoted speech upgraded to `<d>[English] ...</d>`,
+    untimed mouth-opening filler stripped before speech verbs, `(S1)` supplied
+    before speech verbs on single-speaker dialogue sentences so `time_lines`,
+    `_start_carries_voice`, and `refs.speaker_ids` all bind `<Audio 1>` to
+    `<Subject 1> (S1)`, and continuation `framing` directives aligned to the
+    section's opening `framing` so hop prompts never fight the Previs windows).
+    A quiet hop keeps closed-lips phrases. Returns copies."""
     out = []
-    for sh in shots or []:
+    sec_framing = None
+    for idx, sh in enumerate(shots or []):
         s = dict(sh or {})
+        d_raw = dict(s.get("directives") or {})
+        if idx == 0 or str(s.get("anchor") or "") == "restart":
+            sec_framing = d_raw.get("framing")
+        elif sec_framing and d_raw.get("framing") and d_raw.get("framing") != sec_framing:
+            d_raw["framing"] = sec_framing
+            s["directives"] = d_raw
         b = str(s.get("beat") or "")
-        if _D.search(b) and _LIPS.search(b):
-            s["beat"] = re.sub(r"\s+([.,!?])", r"\1", _LIPS.sub("", b))
+        if not _D.search(b) and _QUOTED_SPEECH.search(b):
+            b = _QUOTED_SPEECH.sub(
+                lambda m: f"{m.group(1)}<d>[English] {m.group(2).strip()}</d>", b)
+        if _D.search(b):
+            if _MOUTH_OPEN_SAY.search(b):
+                b = _MOUTH_OPEN_SAY.sub("and ", b)
+                b = re.sub(r"\b(?:Then,\s*)?(@[A-Za-z0-9_]+|<Subject \d+>)\s+and\s+", r"\1 ", b)
+                b = re.sub(r"\band\s+and\s+", "and ", b)
+            tags = set(_WHO_RE.findall(b))
+            if len(tags) == 1 and not _SID.search(b):
+                b = _SAY_VERB.sub(
+                    lambda m: f"(S1) {_3p_verb(m.group(1))}{m.group(2)}", b, count=1)
+            if _LIPS.search(b):
+                b = re.sub(r"\s+([.,!?])", r"\1", _LIPS.sub("", b))
+            s["beat"] = b
         out.append(s)
     return out
 
@@ -718,6 +779,33 @@ def carry_text(moment):
             "in the same continuous shot." % (who.group(0) if who else "The subject"))
 
 
+def chain_previs_text(text, shots, lay, fps=FPS):
+    """Clock a chained section's opening 22-frame window (`00:00.000-00:00.917`) with `carry_text`.
+
+    In a chained previs (`section > 0`), Window 0 (`f0..f21`) is pinned to the
+    previous section's closing window (`W_end`). Starting Beat 0 at `00:00.000`
+    asked H3 to begin a new beat inside the pinned 22-frame handoff window and
+    hard-cut at `f22` (`00:00.917`) the moment the head pin ended (`chain_00127_`).
+    Holding `carry_text` across `00:00.000-00:00.917` and starting Beat 0 at
+    `00:00.917` (`f22`) treats Window 0 identically to Windows 1..N.
+    """
+    s = str(text or "")
+    if not s or not lay:
+        return s
+    ms = moments(shots, sound=False)
+    if ms and _spoken_s(ms[0]) > 0:
+        return s
+    w0_end = _stamp(WINDOW / float(fps))
+    m = re.match(r"^At\s+00:00\.000-(?P<end>\d\d:\d\d\.\d{3}),\s*(?P<rest>.*)$", s, re.S)
+    if not m or m.group("end") <= w0_end:
+        return s
+    carry = carry_text(ms[0] if ms else s)
+    return ("Continuing the same unbroken shot in the same location and lighting: "
+            "At 00:00.000-%s, %s At %s-%s, %s" % (
+                w0_end, carry, w0_end, m.group("end"), m.group("rest")
+            ))
+
+
 _SID = re.compile(r"\(S\d+\)")
 _WHO = re.compile(r"@[A-Za-z0-9_]+|<Subject \d+>")
 CUTOFF = "<|cutoff|>"       # core's tokenizer special token (comfy/text_encoders/minimax.py)
@@ -897,7 +985,8 @@ SEAMFIX_END_TIE = True
 # Gap order (GAP_ORDER, gap_render_order, gap_role) was REMOVED 2026-10-14 (user).
 # Save each hop's guide windows, exactly as AddGuide encodes them (17k+5 crop,
 # lanczos to the hop canvas), as PNGs under output/HANDTIECLIPS_windows/<run>/.
-SAVE_WINDOWS = True
+# Off by default so testing does not accumulate multi-GB PNG folders on disk.
+SAVE_WINDOWS = False
 # v4 (2026-10-14): the per-hop corrections are off. With the previs and the
 # Motion-Context carry the hop already opens on the right level; v3 measured the
 # head tone match growing -2 -> -6 -> -10 /255 hop over hop (a constant darken on
@@ -952,10 +1041,12 @@ def line_budget(hop_frames, fps=FPS):
 
 def _close_s(beat, hop_frames, fps=FPS, start_s=LINE_START_S):
     """When the sentence after a hop's last line should start: the predicted end of
-    the line at LINE_WPS_FAST, never later than CLOSE_MARGIN_S before the tail."""
+    the line at LINE_WPS_FAST for short phrases (<= 5 words) or 2.0 wps for full
+    sentences, never later than CLOSE_MARGIN_S before the tail."""
     words = sum(len(_TAG.sub("", m).split()) for m in _D.findall(beat))
     last = (int(hop_frames) - WINDOW) / float(fps) - CLOSE_MARGIN_S
-    return round(max(start_s + 0.5, min(start_s + words / LINE_WPS_FAST, last)), 1)
+    wps = LINE_WPS_FAST if words <= 5 else 2.0
+    return round(max(start_s + 0.5, min(start_s + words / wps, last)), 1)
 
 
 def time_lines(shots, start_s=LINE_START_S, hop_frames=None, fps=FPS):
@@ -993,8 +1084,11 @@ def time_lines(shots, start_s=LINE_START_S, hop_frames=None, fps=FPS):
             lead = len(tail) - len(tail.lstrip(" .,!?"))
             if end >= 0 and tail[lead:].strip():
                 at = end + 4 + lead
+                rest = b[at:]
+                if rest and rest[0].islower():
+                    rest = rest[0].upper() + rest[1:]
                 s["beat"] = (b[:at].rstrip() + " At %s " % _stamp(_close_s(beat, hop_frames[k], fps, start_s))
-                             + b[at:])
+                             + rest)
         out.append(s)
     return out
 
@@ -1360,6 +1454,141 @@ def audio_cut(out_tail, in_head, sr):
     return out_quiet or 0
 
 
+def calm_hop_audio(wav, sr, has_line=True, head_speaks=False, tail_speaks=False,
+                   overlap_n=WINDOW, fps=FPS):
+    """Suppress guide-window swoosh SFX, closed-mouth head speech leaks, and
+    hallucinated speech gibberish on non-speaking hand-tie hops.
+
+    1. Extracts a vocal-formant-filtered (~1000 Hz low-passed) ambient floor bed
+       from the hop's quietest non-zero span (`target_rms` in `[0.008, 0.015]`).
+    2. On a non-speaking hop (`not has_line and not head_speaks and not tail_speaks`),
+       replaces any speech-level bursts (`> 1.5x target_rms`, such as H3's invented
+       background chatter on silent shots) or dead-zero dropouts with the clean
+       ambient bed so silent hops match the background floor of speaking hops.
+    3. On a speaking hop (`has_line=True`), holds the muted 22-frame head window
+       (`0.0s..0.80s`, where the mouth is pinned closed before `At 00:01.000`) and
+       any spiky/dropout muted tail window (`-0.85s..end`) to the clean ambient bed
+       via a 60 ms cosine crossfade, eliminating seam swoosh/zoom SFX while leaving
+       the spoken body (`0.80s .. -0.85s`) 100% untouched.
+    """
+    import torch  # noqa: PLC0415
+    import torch.nn.functional as F  # noqa: PLC0415
+    if wav is None or not isinstance(wav, torch.Tensor) or int(wav.shape[-1]) < int(sr):
+        return wav
+    orig_shape = wav.shape
+    w2 = wav.float().reshape(-1, orig_shape[-1]).clone()
+    _c, total_s = w2.shape
+    win_n = max(64, int(round(0.050 * sr)))
+    hop_n = max(32, win_n // 2)
+    if total_s < win_n * 6:
+        return wav
+    n_wins = (total_s - win_n) // hop_n + 1
+    rms_t = torch.tensor(
+        [float(w2[:, i * hop_n:i * hop_n + win_n].pow(2).mean().sqrt().item())
+         for i in range(n_wins)],
+        dtype=torch.float32, device=w2.device,
+    )
+    quiet_mask = (rms_t > 0.002) & (rms_t < 0.040)
+    if int(quiet_mask.sum().item()) >= 3:
+        target_rms = float(torch.median(rms_t[quiet_mask]).item())
+    else:
+        nz = rms_t[rms_t > 0.001]
+        target_rms = float(torch.quantile(nz, 0.20).item()) if int(nz.numel()) >= 3 else 0.010
+    target_rms = max(0.008, min(0.015, target_rms))
+
+    span_w = min(max(4, int(round(0.40 / 0.025))), n_wins)
+    best_i, best_r = 0, 1e9
+    for i in range(0, max(1, n_wins - span_w + 1)):
+        r = float(rms_t[i:i + span_w].mean().item())
+        if 0.001 < r < best_r:
+            best_r = r
+            best_i = i
+    amb_start = best_i * hop_n
+    amb_len = min(total_s - amb_start, max(win_n * 4, int(round(0.50 * sr))))
+    amb_tile = w2[:, amb_start:amb_start + amb_len].clone()
+    k_lp = max(3, int(round(sr / 1100.0)) | 1)
+    pad_lp = k_lp // 2
+    amb_lp = F.avg_pool1d(
+        F.pad(amb_tile.unsqueeze(1), (pad_lp, pad_lp), mode="reflect"),
+        kernel_size=k_lp, stride=1,
+    ).squeeze(1)
+    amb_rms = float(amb_lp.pow(2).mean().sqrt().item())
+    if amb_rms > 1e-4:
+        amb_lp = amb_lp * (target_rms / amb_rms)
+    else:
+        g = torch.Generator(device=w2.device)
+        g.manual_seed(1337)
+        noise = torch.randn(amb_tile.shape, generator=g, device=w2.device, dtype=w2.dtype)
+        amb_lp = F.avg_pool1d(
+            F.pad(noise.unsqueeze(1), (pad_lp, pad_lp), mode="reflect"),
+            kernel_size=k_lp, stride=1,
+        ).squeeze(1)
+        n_rms = float(amb_lp.pow(2).mean().sqrt().item())
+        amb_lp = amb_lp * (target_rms / max(n_rms, 1e-6))
+
+    bed = torch.zeros_like(w2)
+    xf = min(win_n, max(16, amb_len // 4))
+    step_len = max(16, amb_len - xf)
+    pos = 0
+    while pos < total_s:
+        take = min(amb_len, total_s - pos)
+        chunk = amb_lp[:, :take].clone()
+        if pos > 0 and xf > 0 and take > xf:
+            t = torch.linspace(0.0, 1.0, xf, device=w2.device).unsqueeze(0)
+            bed[:, pos:pos + xf] = (
+                bed[:, pos:pos + xf] * torch.cos(t * 1.5707963)
+                + chunk[:, :xf] * torch.sin(t * 1.5707963)
+            )
+            bed[:, pos + xf:pos + take] = chunk[:, xf:take]
+        else:
+            bed[:, pos:pos + take] = chunk
+        pos += step_len
+
+    if not has_line and not head_speaks and not tail_speaks:
+        env = torch.ones((total_s,), dtype=torch.float32, device=w2.device)
+        win_edge = min(total_s // 4, int(round((overlap_n / float(fps)) * sr)))
+        if win_edge > 0:
+            env[:win_edge] = 0.0
+            env[total_s - win_edge:] = 0.0
+        for i in range(n_wins):
+            r = float(rms_t[i].item())
+            if r > target_rms * 1.5 or r < 0.004:
+                env[i * hop_n:min(total_s, i * hop_n + win_n)] = 0.0
+        sm = max(3, int(round(0.060 * sr)) | 1)
+        env = F.avg_pool1d(
+            F.pad(env.view(1, 1, -1), (sm // 2, sm // 2), mode="replicate"),
+            kernel_size=sm, stride=1,
+        ).view(1, -1)
+        w2_soft = F.avg_pool1d(
+            F.pad(w2.unsqueeze(1), (pad_lp, pad_lp), mode="reflect"),
+            kernel_size=k_lp, stride=1,
+        ).squeeze(1)
+        w2 = w2_soft * env + bed * (1.0 - env)
+        return w2.reshape(orig_shape).to(dtype=wav.dtype)
+
+    fade_n = max(16, int(round(0.060 * sr)))
+    if not head_speaks:
+        head_n = min(total_s // 4, int(round((overlap_n / float(fps)) * 0.86 * sr)))
+        if head_n > fade_n:
+            t = torch.linspace(0.0, 1.0, fade_n, device=w2.device).unsqueeze(0)
+            w2[:, :head_n - fade_n] = bed[:, :head_n - fade_n]
+            w2[:, head_n - fade_n:head_n] = (
+                bed[:, head_n - fade_n:head_n] * torch.cos(t * 1.5707963)
+                + w2[:, head_n - fade_n:head_n] * torch.sin(t * 1.5707963)
+            )
+    if not tail_speaks:
+        fade_tail = max(16, int(round(0.100 * sr)))
+        tail_n = min(total_s // 3, int(round((overlap_n / float(fps) + 0.30) * sr)))
+        if tail_n > fade_tail:
+            t = torch.linspace(0.0, 1.0, fade_tail, device=w2.device).unsqueeze(0)
+            w2[:, total_s - tail_n:total_s - tail_n + fade_tail] = (
+                w2[:, total_s - tail_n:total_s - tail_n + fade_tail] * torch.cos(t * 1.5707963)
+                + bed[:, total_s - tail_n:total_s - tail_n + fade_tail] * torch.sin(t * 1.5707963)
+            )
+            w2[:, total_s - tail_n + fade_tail:] = bed[:, total_s - tail_n + fade_tail:]
+    return w2.reshape(orig_shape).to(dtype=wav.dtype)
+
+
 def _detail_split(frame, sigma=DETAIL_SIGMA):
     """(base, detail energy) of one [H,W,C] frame: a separable gaussian blur and the
     mean absolute difference from it."""
@@ -1487,15 +1716,19 @@ PREVIS_LAWS_SYSTEM = (
     "You compile N shot beats into N continuous single-take previs bridge moments "
     "for a MiniMax H3 video generator.\n"
     "STRICT LAWS:\n"
-    "1. CONTINUOUS BRIDGE POSTURE ONLY (NO EARLY PAYOFFS): Each previs moment is "
-    "only a ~2.5s blocking/camera bridge. Keep ONLY where the subject is and how "
-    "their body and camera move continuously. Remove discrete mid-shot payoff "
-    "actions (eating, biting, chewing, drinking, picking up or grabbing objects, "
-    "opening doors) so they happen inside the full 8s shot, never early in the previs.\n"
-    "2. ONE UNBROKEN TAKE: Never write camera cuts ('cut to', 'new angle', 'wide shot'), "
-    "time jumps ('later'), or re-establish a location already reached. If beat k "
-    "continues at the same place as beat k-1, write 'is still at ...' or smooth "
-    "continuous motion.\n"
+    "1. CONTINUOUS BRIDGE POSTURE ONLY (NO EARLY PAYOFFS OR NEW PROPS): Each previs "
+    "moment is only a ~2.5s blocking/camera bridge. Keep ONLY where the subject is "
+    "and how their body and camera move continuously. Remove ALL discrete mid-shot "
+    "payoff actions (eating, biting, chewing, licking, drinking, picking up or "
+    "grabbing objects, raising food/drinks) AND remove any newly acquired hand props "
+    "(skewers, cones, cups, food) that were not held in Beat 1, so props are never "
+    "spawned early in the previs.\n"
+    "2. CONTINUOUS FORWARD FLOW (NO STATIONARY TELEPORTS OR BACKGROUND CLUTTER): "
+    "Never write camera cuts ('cut to', 'wide shot'), time jumps ('later'), or "
+    "abruptly switch from walking to 'stands at' / 'waits at' a new landmark (write "
+    "'walks up to' or 'walks past' instead). Drop secondary background people "
+    "('people gathering behind her', 'so he is behind her', 'vendor') so the "
+    "background never warps or locks a crowd into a 22-frame handoff window.\n"
     "3. SILENT MOUTHS: Remove all spoken dialogue (<d>...</d>), speech verbs "
     "('says', 'talking', 'chatting'), and crowd voices ('chatter', 'calling out').\n"
     "4. EXACT FORMAT: Output ONLY numbered lines `1: <one short sentence>`, "
@@ -1505,13 +1738,87 @@ PREVIS_LAWS_SYSTEM = (
 
 _COMPOUND_TAIL = re.compile(
     r"(?:,\s*then\b|\s+then\b|,\s*before\b|\s+before\b|"
-    r",?\s+and\s+(?:takes?|bites?|chews?|eats?|sips?|drinks?|swallows?|grabs?|"
-    r"picks?\s+up|opens?|closes?|pulls?\s+out|raises?|lifts?)\b).*$",
+    r",?\s+and\s+(?:takes?|bites?|chews?|eats?|licks?|sips?|drinks?|swallows?|grabs?|"
+    r"picks?\s+up|opens?|closes?|pulls?\s+out|raises?|lifts?|waves?)\b).*$",
+    re.I,
+)
+
+# Clauses attaching a newly acquired mid-chain prop (", holding the skewer...",
+# "with the mango ice cream cone held up...", "with the cone in her other hand").
+_TRANSIENT_PROP_CLAUSE = re.compile(
+    r"(?:,\s*|\s+)(?:holding|with)\s+(?:the|a|an|her|his|their)\s+"
+    r"(?P<prop>(?:(?!\b(?:with|holding|and|in|on|beside|close|out|up|toward|to|from)\b)[a-z]+[\s-]+){0,2}?"
+    r"(?:skewer|cone|ice\s+cream|cup|mug|glass|bowl|plate|fork|spoon|chopsticks|"
+    r"sandwich|burger|slice|bottle|can|bag|box|ticket|napkin|towel|umbrella|hat|"
+    r"flower|book|pen|key|coin|card|phone|camera|lantern|torch))\b"
+    r"(?:(?!\s+(?:with|and\s+holding)\s+(?:the|a|an|her|his|their)\b)[^,.;])*",
+    re.I,
+)
+
+# Background crowd / secondary-person framing clauses that pin extra people into
+# 22-frame handoff windows ("people gathering at the curb behind her", "so he is behind her").
+_BG_CROWD_CLAUSE = re.compile(
+    r"(?:,\s*|\s+)(?:people\s+(?:gathering|standing|walking|waiting|crowding|passing)[^,.;]*|"
+    r"so\s+(?:he|she|they|it)\s+(?:is|are|stays?)\s+behind\s+(?:her|him|them)|"
+    r"playing\s+(?:guitar|music|drums|violin|sax|accordion)(?:\s+on\s+the\s+corner)?)\b",
+    re.I,
+)
+
+_STATIC_LANDMARK = re.compile(
+    r"(?P<who>@[A-Za-z0-9_]+|<Subject \d+>|She|He|They)\s+"
+    r"(?P<verb>stands?|is\s+standing|waits?|is\s+waiting)\s+"
+    r"(?P<prep>at|beside|by|in\s+front\s+of|next\s+to)\s+"
+    r"(?P<det>the|a|an)\s+"
+    r"(?P<place>[a-z]+(?:\s+(?!on\b|with\b|holding\b|and\b|smiling\b|smiles\b)[a-z]+){0,3})"
+    r"(?:\s+on\s+the\s+same\s+(?:street|road|block|corner))?",
+    re.I,
+)
+
+_STEP_BACK_ANY = re.compile(
+    r"\b(?:steps?\s+back|steps?\s+away|walks?\s+away|backs?\s+away|moves?\s+away)\s+from\s+the\s+(?P<place>[^,.;]+?)(?=[,.;]|$|\s+and\b)",
     re.I,
 )
 
 
-def lead_clause(beat):
+def _strip_transient_props(text, beat0, prev_text="", smooth_motion=True):
+    """Remove held-prop clauses for props that were not present in Shot 1 (`beat0`),
+    drop secondary crowd framing clutter, and smooth static new-place teleports into
+    continuous walking approach.
+
+    Keeps persistent Shot-1 props (e.g. `phone` in a walking vlog) while stripping
+    mid-chain props (`skewer`, `ice cream cone`, `cup`) from the Previs so the
+    single-generate Previs never spawns them hops early or holds two props at once.
+    """
+    b0_low = str(beat0 or "").lower()
+    prev_low = str(prev_text or "").lower()
+
+    def _keep_or_drop(m):
+        prop_words = [w for w in re.findall(r"[a-z]+", m.group("prop").lower()) if len(w) > 2]
+        if prop_words and any(w in b0_low for w in prop_words):
+            return m.group(0)
+        return ""
+
+    out = _TRANSIENT_PROP_CLAUSE.sub(_keep_or_drop, str(text or ""))
+    out = _BG_CROWD_CLAUSE.sub("", out)
+
+    if smooth_motion:
+        def _re_place(a):
+            pl = a.group("place").strip()
+            pl_low = pl.lower()
+            if pl_low and pl_low in prev_low:
+                return "%s continues %s %s %s" % (a.group("who"), a.group("prep"), a.group("det"), pl)
+            if any(w in pl_low for w in ("musician", "vendor", "performer", "busker", "singer", "player")):
+                return "%s walks past %s %s" % (a.group("who"), a.group("det"), pl)
+            return "%s walks up to %s %s" % (a.group("who"), a.group("det"), pl)
+
+        out = _STATIC_LANDMARK.sub(_re_place, out)
+        out = _STEP_BACK_ANY.sub(lambda a: "leans back a little, still at the %s" % a.group("place").strip(), out)
+    out = re.sub(r"\s+([,.;!?])", r"\1", out)
+    out = re.sub(r",\s*\.", ".", out)
+    return re.sub(r"\s{2,}", " ", out).strip()
+
+
+def lead_clause(beat, beat0=None, prev_text="", smooth_motion=False):
     """Extract only the opening posture/motion lead clause of a manual beat.
 
     Used both as the deterministic fallback when no Qwen3-VL 4B/8B text encoder
@@ -1524,6 +1831,10 @@ def lead_clause(beat):
     if not first:
         return ""
     trimmed = _COMPOUND_TAIL.sub("", first).rstrip(" ,;.")
+    if beat0 is not None:
+        trimmed = _strip_transient_props(
+            trimmed, beat0, prev_text=prev_text, smooth_motion=smooth_motion
+        ).rstrip(" ,;.")
     if not trimmed:
         trimmed = first.rstrip(" ,;.")
     return trimmed + "."
@@ -1532,9 +1843,18 @@ def lead_clause(beat):
 def format_previs_llm_prompt(shots):
     """Build the numbered user prompt for the Qwen3-VL previs compiler."""
     lines = []
+    beat0 = _no_speech(str(((shots or [None])[0] or {}).get("beat") or ""))
+    prev_acc = beat0
     for k, sh in enumerate(shots or [], 1):
-        beat = _no_speech(str((sh or {}).get("beat") or ""))
-        lines.append(f"{k}: {beat}")
+        raw_beat = str((sh or {}).get("beat") or "")
+        clean = lead_clause(
+            raw_beat, beat0=beat0 if k > 1 else None,
+            prev_text=prev_acc if k > 1 else "", smooth_motion=(k > 1),
+        )
+        line_txt = clean or _no_speech(raw_beat)
+        lines.append(f"{k}: {line_txt}")
+        if k > 1:
+            prev_acc = prev_acc + " " + line_txt
     return (
         f"Rewrite these {len(lines)} shot beats into {len(lines)} continuous "
         "single-take previs bridge moments following all 4 laws:\n"
@@ -1547,8 +1867,9 @@ def parse_previs_llm_moments(reply, shots):
     `moment` populated for any shot that did not already author one.
 
     Validates each line: preserves the beat's primary `@tag` / `<Subject N>`,
-    strips any stray `<d>` or speech cues, and falls back to `lead_clause` if
-    a line is missing or malformed.
+    strips any stray `<d>`, speech cues, mid-hop payoff tails, and transient
+    props not present in Shot 1, and falls back to `lead_clause` if a line is
+    missing or malformed.
     """
     parsed = {}
     for raw_ln in str(reply or "").splitlines():
@@ -1556,30 +1877,48 @@ def parse_previs_llm_moments(reply, shots):
         if m:
             idx = int(m.group(1)) - 1
             txt = _no_speech(m.group(2)).strip()
-            if txt and not txt.endswith((".", "!")) :
+            if txt and not txt.endswith((".", "!")):
                 txt += "."
             if txt:
                 parsed[idx] = txt
     out = []
+    beat0 = _no_speech(str(((shots or [None])[0] or {}).get("beat") or ""))
+    prev_acc = ""
     for k, sh in enumerate(shots or []):
         s = dict(sh or {})
         if str(s.get("moment") or "").strip():
             out.append(s)
+            prev_acc = prev_acc + " " + str(s.get("moment") or "")
             continue
         beat = str(s.get("beat") or "")
         who = _WHO_RE.search(_no_speech(beat))
         cand = parsed.get(k, "")
-        # Ensure the subject token is preserved and only one concise sentence is kept.
         if cand:
-            cand = _first_sentence(cand)
+            parts = [p.strip().rstrip(".!?") for p in _SENT.split(_no_speech(cand)) if p.strip()]
+            cleaned_parts = []
+            for idx, p in enumerate(parts):
+                p_clean = _COMPOUND_TAIL.sub("", p).rstrip(" ,;.")
+                if k > 0:
+                    p_clean = _strip_transient_props(
+                        p_clean, beat0, prev_text=prev_acc, smooth_motion=True
+                    ).rstrip(" ,;.")
+                if p_clean:
+                    if idx > 0 and p_clean[0].isupper() and not p_clean.startswith(("@", "<")):
+                        p_clean = p_clean[0].lower() + p_clean[1:]
+                    cleaned_parts.append(p_clean)
+            if cleaned_parts:
+                cand = " — ".join(cleaned_parts) + "."
+            else:
+                cand = ""
             if who and who.group(0) not in cand:
                 cand = _PRONOUN.sub(who.group(0), cand, count=1)
                 if who.group(0) not in cand:
                     cand = ""
         if not cand:
-            cand = lead_clause(beat)
+            cand = lead_clause(beat, beat0=beat0 if k > 0 else None, prev_text=prev_acc, smooth_motion=False)
         if cand:
             s["moment"] = cand
+            prev_acc = prev_acc + " " + cand
         out.append(s)
     return out
 

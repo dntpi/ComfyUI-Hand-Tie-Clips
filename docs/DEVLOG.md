@@ -4171,4 +4171,70 @@ restarts in `_apply_skeleton` and `h3_ref_chain.py`; enriched `<rail>` with `ret
 `voice`, `source`, and `desc` alongside `INTENT_INFERENCE_GUIDE`; and attached
 background/wardrobe plates in `_swap_plan` while fixing header ordering in `SWAP_PROMPT.md`.
 
+## 73. Direct Previs-to-Previs Spine, 3 Lossless Previs Speed Optimizations & `pin_mech=hand_tie_mc` (2026-10-17)
+
+- **Direct Previs-to-Previs Chaining (`_ht_previs`, `h3_ref_chain.py`):**
+  When a chained section (`_chain = True`, Section 2, 3, 4…) follows a section
+  that closed with a window (`_lay["closing"] = True`), `_ht_previs` pins
+  `MiniMaxH3AddGuide(frame_idx=0)` directly onto the previous section's closing
+  window $W_{\text{end}}$ (`_prev_w_end`) at native `512p` previs resolution and
+  replaces its keyframe latent with the 17-frame (`5`-token) causal 3D-VAE
+  warm-prefixed encode (`_prev_w_warm[:, :, 5:]`), rather than waiting for or
+  downscaling Hop 5's `768p` rendered tail (`prev_imgs`). Section $s$'s Window 0
+  (`pics[0]` and `warm_pics[0]`) is set to `_prev_w_end.clone()` so the boundary
+  hop tail and the next section's opening hop head share the exact same window
+  tensor. Before decoding Previs $s$ ($s \ge 2$), its opening overlap is locally
+  calibrated in `(mean, std)` against `_ht_pv_lat[_si - 1]` via
+  `_calibrate_overlap_latent(..., _ht.WINDOW)` (tapering to `0%` by the end of
+  the overlap so new scene lighting can evolve freely) and excess high-frequency
+  grain is capped via `blend_video_detail(..., cap_high=True, high_rms_ref=_ht_pv_hi_ref[0])`.
+  `dry_run="previs"` now renders chained multi-section previs runs end-to-end
+  (with `nonlocal prev_imgs` declared inside `_ht_previs`).
+- **3 Lossless Previs Cost/Speed Optimizations (`_ht_previs`, `_decode_av`, `h3_ref_chain.py`):**
+  1. **Batched Qwen 32B Encode (`pre_encode_hop=_hop_ref2va`):** Encodes the
+     section's first hop conditioning (`_ht_pre_ref2va[i]`) while `clip`
+     (Qwen 32B) is already resident in VRAM for the previs before calling
+     `_offload_text_encoder(clip, model)`, eliminating an entire `32B <-> DiT`
+     PCIe VRAM swap (~40 GB) per section.
+  2. **Muted Previs Audio Skip:** Passes `ref_audios=(None if _mute else hop_ref_audios)`
+     into `MiniMaxH3ReferenceToVideo` and `skip_audio=bool(_mute and not previs_only)`
+     into `_decode_av`, skipping unused voice-reference encoding and
+     `audio_vae.decode` on muted previs takes.
+  3. **Previs Reference Token Cap:** Caps `_pv_ref_size` to `"0.50 MP"` when
+     `pv_w * pv_h <= 524288` and `ref_image_size` is `"0.75 MP"` or `"1.0 MP"`.
+- **Separate Third Option `pin_mech="hand_tie_mc"` (`_ht_mc_inpaint_head`, `h3_ref_chain.py`, `hand_tie.py`, `routes.py`, `js/`):**
+  Appended `"hand_tie_mc"` to `pin_mech` (`["auto", "motion_context", "addguide", "hand_tie", "hand_tie_mc"]`),
+  keeping all 105 widget slots unchanged and `hand_tie` (`v2.6`) untouched.
+  Shares Previs and Hop 1 cache keys with `hand_tie` (`hop_payload["ht_mc"] = "v3"`
+  only on Hops 2+ where `_hd` is true) for instant same-seed A/B testing.
+  On Hops 2+, `_ht_mc_inpaint_head` takes Hop $k+1$'s locally `mod5`-calibrated
+  7-step Previs head window (`pos == 0`), unpacks it via `_HTCMotionContext.apply()`
+  into 7 per-step `minimax_keyframes` (`resolved_frame_index = [0, 1, 5, 9, 13, 17, 18]`,
+  100% Generation-1 Previs spatial structure), strips `audio_kf` (`audio_context_length = 0`,
+  `_strip_audio_keyframes`) when `head_speaks=False` (because H3's KL-regularized
+  Audio VAE latents have `std ≈ 1.0` even on room tone and leaked speech/swoosh into
+  `f0..21`), and preserves the Previs tail-window guide keyframe (`pos >= overlap_n`).
+  Paired with `hand_tie.calm_hop_audio` (vocal-formant-filtered `~1000 Hz` ambient
+  bed replacement across muted head/tail windows and non-speaking hops), pure
+  `c_cal` in `_calibrate_ht_latent` (removing the `w_prev = [1.0, 0.5, 0.25]`
+  `tail_v` token mix on `steps 0..2`), universal `(S1)` insertion and section
+  `framing` alignment in `hand_tie.open_lips`, and `2.0` wps post-line pose timing
+  in `hand_tie._close_s`.
+- **3-Phase Non-Overlapping Tiled Upsampler & `chain_00133_.mp4` 10-Hop Benchmark (2026-10-18):**
+  Separated `tiled_upsampler.upsample()` into 3 clean phases (Phase 1: decode/encode
+  all `h3upscale` guide latents on `VideoVAE` once and store in CPU RAM; Phase 2:
+  batch-upscale all 21 chunks via `upscale_chunks_batch` on `LatentUpscaler` once;
+  Phase 3: stage `MiniMaxH3` 32.4 GB DiT once across all 21 chunks without
+  unloading between chunks, running `1x1` whole-chunk tiles in a single
+  `sample_tile` call), plus streamed 30-token + 5-token causal-prefix VAE decode
+  into disk `np.memmap` (`upsample_chain`). Validated on `chain_00133_.mp4`
+  (`10 x 8 s` hops = `71.73 s`, `1280x960 @ 48 fps`, `upsample=1.2 MP` with
+  `h3upscale_v2_x2`) and `chain_00138_ (2).mp4` (`docs/img/hand-tie-10hop-00138.mp4`,
+  `10 x 8 s` hops = `71.73 s`, `1024x768 @ 48 fps`, `@mina` + `@poolside`,
+  `pin_mech="hand_tie"`): Seam 1..9 `MAD = 3.17..8.52 / 255` (`dL = -0.08..-1.30 / 255`,
+  Previs 1→2 `dL = -0.08 / 255`), all 8 speaking hops lip-synced (`0.090..0.144` RMS,
+  `peak = 0.9941` zero clipping) with voice timbre carried end-to-end, and silent
+  breather hops 4 & 9 held at `0.0206` / `0.0247` ambient RMS.
+
+
 

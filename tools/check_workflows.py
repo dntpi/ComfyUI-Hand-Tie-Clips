@@ -25,7 +25,8 @@ from h3p import plan as PL     # noqa: E402
 from h3p import h3_ref_chain as H3   # noqa: E402
 
 CORE = {"UNETLoader", "CLIPLoader", "VAELoader", "CreateVideo", "SaveVideo",
-        "SaveImage", "Note", "MarkdownNote", "PreviewAny", "PreviewImage"}
+        "SaveImage", "Note", "MarkdownNote", "PreviewAny", "PreviewImage",
+        "GetImageSize", "ComfyMathExpression"}
 OURS = {"HandTieClips", "HTCChainPreview", "HTCH3Cache"}
 # Declared dependencies, not accidents: the turbo stack this node is actually
 # run with. Anything outside these three sets is a pack the reader never asked
@@ -34,7 +35,8 @@ DEPS = {"LTX_lora_loader": "ComfyUI-PlagueKind-Nodes",
         "H3AdaLNLoRAFix": "ComfyUI-PlagueKind-Nodes",
         "H3SLAAttention": "ComfyUI-PlagueKind-Nodes",
         "MiniMaxLowVRAMAttention": "ComfyUI-KJNodes (experimental)",
-        "ModelPreviewOverrideKJ": "ComfyUI-KJNodes"}
+        "ModelPreviewOverrideKJ": "ComfyUI-KJNodes",
+        "RTXVideoFrameGeneration": "Nvidia_RTX_Nodes_ComfyUI"}
 # The MODEL wire, in order, from the loader to the chain.
 # H3 Cache is last before the chain: the clone the sampler sees should be the
 # one every other patch has already been applied to.
@@ -174,8 +176,18 @@ def main():
             names = [d.get("lora") for d in json.loads(props) if d.get("on")]
         except ValueError:
             names = []
-        ck("turbo LoRA survives a load (properties.stack_data)",
-           any("turbo" in str(x) for x in names), str(names))
+        # Since 2026-10-18 the Starter loads a DiT with turbo merged in and ships
+        # the stack empty, so turbo may come from either the loader or the stack.
+        dit = next(n for n in nodes if n["type"] == "UNETLoader"
+                   and any(l[1] == n["id"] and byid[l[3]]["type"] == MODEL_PATH[1]
+                           for l in wf["links"]))
+        dit_name = str((dit.get("widgets_values") or [""])[0])
+        ck("turbo survives a load (merged DiT, or properties.stack_data)",
+           "turbo" in dit_name or any("turbo" in str(x) for x in names),
+           "%s | %s" % (dit_name, names))
+        ck("stack widget and properties.stack_data agree",
+           json.loads((lora.get("widgets_values") or ["", "[]"])[1] or "[]")
+           == json.loads(props), "")
         ins = [i["name"] for i in chain["inputs"]]
         dead = [i for i in ins
                 if i.startswith("ref_image_") and i != "ref_image_size"
@@ -289,8 +301,8 @@ def main():
             if n["type"] != "HandTieClips":
                 continue
             size = n.get("size") or [0, 0]
-            ck("the node ships at its designed 4:3 size",
-               [int(size[0]), int(size[1])] == [1200, 900],
+            ck("the node ships at its designed size (NODE_WIDTH x NODE_HEIGHT)",
+               [int(size[0]), int(size[1])] == [1452, 1320],
                "%sx%s" % (size[0], size[1]))
 
         # The on-canvas board, where there is one.

@@ -1230,7 +1230,7 @@ const patch = { server_url: url.value, keep_warm: unload.checked };
         const readBars = () => String(barInput.value || "")
             .split(/[^0-9]+/).map((x) => parseInt(x, 10))
             .filter((n) => Number.isFinite(n) && n > 0);
-        if (String(widgetByName(node, "pin_mech")?.value || "").trim() === "hand_tie") {
+        if (String(widgetByName(node, "pin_mech")?.value || "").trim().startsWith("hand_tie")) {
             b.appendChild(el("div", "h3e-note h3e-note-error",
                 "A music video plays over master_audio_file, which hand-tie "
                 + "does not take. Set pin_mech to auto to lay out an MV."));

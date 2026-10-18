@@ -19,27 +19,39 @@ and should not be read as the state of this release.
   Added `_pin_inpaint_head`, `_calibrate_overlap_latent`, `_bridge_motion_seam`,
   head-internal refine ramp (`0:0, overlap:1`), Hop-1 refine skip (`hop_is_start`),
   and bit-for-bit audio freeze (`freeze_audio=_do_aud`).
-- **`hand_tie` v2.6 (`hand_tie.py`, `h3_ref_chain.py`)** —
+- **`hand_tie` v2.6, Direct Previs-to-Previs Spine & `pin_mech=hand_tie_mc` (`hand_tie.py`, `h3_ref_chain.py`)** —
   `_ht_inpaint_head` aligns only `cond` (`pos == 0`, per-`mod5` phase-calibrated
   to `src_5[:, :, k % 5]`, keeping 100% of the silent-mouth previs window and
   leaving `latent` / `noise_mask` untouched during `SamplerCustomAdvanced`),
   paired with `_calibrate_ht_latent` (`w_prev = [1.0, 0.5, 0.25]`), 17-frame
   (`5`-token) `_vae_prefix` `ViT3DDecoder` warm-up decode in `_decode_av`,
   `deflicker` cross-cut guard (`|b - a| < still * 1.5`), and post-`deflicker`
-  `seam_feather`.
+  `seam_feather`. Chained multi-section previs runs (`Section 2, 3, 4…`) now
+  chain directly from Previs $s-1$'s closing window $W_{\text{end}}$ (with its
+  17f warm prefix, local boundary overlap calibration, and `cap_high` HF clamp,
+  plus batched Qwen 32B previs + first-hop text encoding, muted previs audio
+  skip, and `"0.50 MP"` previs ref cap). Also adds `"hand_tie_mc"` (`v3`) to `pin_mech`
+  as a separate third option (`_ht_mc_inpaint_head`: unpacks the 7-step Previs
+  window into 7 per-step `minimax_keyframes` at `[0, 1, 5, 9, 13, 17, 18]` with
+  muted-head audio keyframe stripping, `hand_tie.calm_hop_audio` vocal-formant-filtered
+  ambient floor locking, universal `(S1)` dialogue tagging, section `framing`
+  alignment, and `2.0` wps post-line pose timing — validated on the 10-hop
+  `71.7 s` `1024×768 @ 48 fps` showcase `docs/img/hand-tie-10hop-00138.mp4`).
 - **Per-hop `audio_refine` pass (`[99..104]`, `h3_ref_chain.py`)** —
   Re-samples the audio branch (`audio_refine`, `audio_refine_denoise`,
   `audio_refine_steps`, `audio_refine_cfg`, `audio_refine_sampler`,
   `audio_refine_scheduler`) while holding the finished video latent 100% frozen
   via `SetLatentNoiseMask` (`zeros` on video, `ones` on audio after pinned head
   frames). Ideal for pairing with `realism_boost` (4–5 steps).
-- **Tiled Upsampler Schedule & VRAM Fix (`tiled_upsampler.py`, `video_upsampler.py`)** —
-  `upsample_chain()` and `HTCVideoUpsampler` now run `start_sigma = 0.0` (using
-  the true `upsample_denoise` schedule fraction on H3's `shift=12` curve:
-  `[0.5714, 0.3871, 0.0]` at `0.1`), `steps = 2`, `overlap_px = 192`,
-  `detail_sigma = 0.0` (keeping 100% of `h3upscale`'s structural redraw),
-  `H3AdaLNLoRAFix(mode="port")`, immediate `_offload_text_encoder(clip, _up_model)`
-  after encoding `_ug.CAPTION`, and `finally:` VRAM cleanup.
+- **3-Phase Tiled Upsampler, Streamed VAE Decode & VRAM Guardrails (`tiled_upsampler.py`, `video_upsampler.py`)** —
+  `upsample()` now executes in 3 non-overlapping phases (1: `VideoVAE` guide
+  prep once -> CPU RAM; 2: `upscale_chunks_batch` on 3D `LatentUpscaler` once ->
+  CPU RAM; 3: `MiniMaxH3` 32.4 GB DiT staged once across all 21 chunks with a
+  single `sample_tile` call per `1x1` chunk), paired with streamed 30-token
+  (`102f`) + 5-token (`17f`) causal-prefix VAE decoding into disk `np.memmap`,
+  automatic `_apply_low_vram_patches` (`MiniMaxLowVRAMAttention(4)`,
+  `MiniMaxChunkFeedForward(2, 4096)`, `H3AdaLNLoRAFix(port)`), and OOM tile
+  backoff.
 - **UI Cleanup, `rides hops` Fix & Vue Nodes 2.0 Compatibility (`js/`)** —
   Hid 14 redundant v1 refine and `join & pin` band-aids (`REFINE_V2_HIDDEN` in
   `js/editor/run_panel.js`), fixed `.h3e-hopbar` (`grid-column: 1 / -1` and

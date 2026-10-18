@@ -835,7 +835,7 @@ ck("run() compiles the hops through open_lips",
    "_ht.open_lips(_ht.quiet_sounds(shots)), hop_frames=_tl_frames," in src)
 
 print("\nsound carry: hop k's sound crosses the join, its picture does not")
-ck("SEAM_SOUND_ONLY and SAVE_WINDOWS are on by default", HT.SEAM_SOUND_ONLY is True and HT.SAVE_WINDOWS is True)
+ck("SEAM_SOUND_ONLY is on and SAVE_WINDOWS is off by default (no disk bloat)", HT.SEAM_SOUND_ONLY is True and HT.SAVE_WINDOWS is False)
 def _grab(name):
     a = src.find("def " + name + "(")
     b = src.find("\ndef ", a + 1)
@@ -1017,6 +1017,21 @@ ck("parse_previs_llm_moments restores @tag on pronoun lines and falls back to le
    and _parsed[1]["moment"] == "@carolyn continues past the shopfronts."
    and _parsed[2]["moment"] == "@carolyn steps back from the stall.",
    [p.get("moment") for p in _parsed])
+_parsed_props = HT.parse_previs_llm_moments(
+    "1: @carolyn walks down the street, holding her phone out.\n"
+    "2: @carolyn stands at the street food stall on the same street and takes a skewer.\n"
+    "3: @carolyn stands beside the street musician playing guitar on the corner, holding the phone out so he is behind her.\n"
+    "4: @carolyn stands at the end of the block, holding the phone close with the cone in her other hand.\n",
+    [{"beat": "@carolyn walks down the street, holding her phone out."},
+     {"beat": "@carolyn stands at the street food stall on the same street and takes a skewer."},
+     {"beat": "@carolyn stands beside the street musician playing guitar on the corner, holding the phone out so he is behind her."},
+     {"beat": "@carolyn stands at the end of the block, holding the phone close with the cone in her other hand."}],
+)
+ck("parse_previs_llm_moments strips mid-chain props (skewer, cone) and crowd clutter while keeping Shot 1 phone and continuous motion",
+   _parsed_props[1]["moment"] == "@carolyn walks up to the street food stall."
+   and _parsed_props[2]["moment"] == "@carolyn walks past the street musician, holding the phone out."
+   and _parsed_props[3]["moment"] == "@carolyn walks up to the end of the block, holding the phone close.",
+   [p.get("moment") for p in _parsed_props])
 
 _sf_m = torch.full((80, 16, 16, 3), 0.40)
 _sf_m[40:] = 0.44  # +10.2 / 255 step at cut=40
@@ -1037,6 +1052,41 @@ ck("hand-tie v2.6: mod5-calibrated 3-step latent handoff + 17f ViT3D warm prefix
    and 'ref_k = src_5[:, :, k % 5:k % 5 + 1]' in src
    and 'out["_vae_prefix"] = src_5' in src
    and 'for _c in ht_cuts:\n                _ht.seam_feather(master_imgs, _c)' in src)
+
+print("\ndirect previs-to-previs spine + 3 lossless previs optimizations + hand_tie_mc (2026-10-17)")
+ck("chained previs pins directly onto previous section's closing window W_end + 17f warm prefix",
+   "nonlocal prev_imgs" in src
+   and "_chain_pin_imgs = _prev_w_end if _prev_w_end is not None else prev_imgs" in src
+   and "pics[0] = _prev_w_end.clone()" in src
+   and "warm_pics[0] = _prev_w_warm.clone()" in src
+   and "_calibrate_overlap_latent(\n                                _ps, _ht_pv_lat[_si - 1], _ht.WINDOW" in src
+   and "cap_high=True, high_rms_ref=_ht_pv_hi_ref[0]" in src)
+ck("previs optimizations: 0.50 MP ref cap, ref_audios=None + skip_audio when muted, and pre_encode_hop batching",
+   '_pv_ref_size = ("0.50 MP"' in src
+   and "ref_audios=(None if _mute else hop_ref_audios)," in src
+   and "skip_audio=bool(_mute and not previs_only)" in src
+   and "_ht_previs(i, pre_encode_hop=_hop_ref2va)" in src
+   and "_ht_pre_ref2va.pop(i)" in src)
+ck("hand_tie and hand_tie_mc route Hops 2+ through _ht_mc_inpaint_head (v3)",
+   '"pin_mech": (["auto", "motion_context", "addguide", "hand_tie", "hand_tie_mc"]' in src
+   and 'ht_mc = (str(pin_mech) in ("hand_tie", "hand_tie_mc")) and not swap' in src
+   and 'hop_payload["ht_mc"] = "v3"' in src
+   and "_ht_mc_inpaint_head(" in src)
+_ch_txt, _ch_lay = HT.compile_previs([{"beat": "@a walks."}, {"beat": "@a stops."}], [192, 192])
+_ch_out = HT.chain_previs_text(_ch_txt, [{"beat": "@a walks."}, {"beat": "@a stops."}], _ch_lay)
+ck("chain_previs_text clocks Window 0 (00:00.000-00:00.917) with carry_text on chained Previs 2+",
+   "At 00:00.000-00:00.917, @a carries on naturally with that motion" in _ch_out
+   and "At 00:00.917-00:02.833, @a walks." in _ch_out, _ch_out)
+_test_wav = torch.ones((1, 2, 16000 * 4), dtype=torch.float32) * 0.010
+_test_wav[:, :, 16000:24000] = 0.180  # simulated hallucinated speech burst on a quiet hop
+_calmed_q = HT.calm_hop_audio(_test_wav, 16000, has_line=False)
+ck("calm_hop_audio suppresses hallucinated speech bursts on non-speaking hops",
+   float(_calmed_q[:, :, 16000:24000].pow(2).mean().sqrt()) < 0.025,
+   float(_calmed_q[:, :, 16000:24000].pow(2).mean().sqrt()))
+ck("locked or replayed sections recover their cached previs via ht_previs_key / window digests",
+   "_sec_has_kept = any(" in src
+   and '"ht_previs_key": ht_previs_keys.get(ht_pos[i][0])' in src
+   and 'hop_store.set_pointer(f"__previs_{_si + 1}", _p_key)' in src)
 
 print("\nall ok" if not FAILS else "\n%d FAILED: %s" % (len(FAILS), FAILS))
 sys.exit(1 if FAILS else 0)

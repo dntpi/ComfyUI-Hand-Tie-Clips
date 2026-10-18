@@ -27,8 +27,10 @@ const NODE_TYPES = new Set(["HandTieClips", "H3RefChain"]);
 // node that cannot be made narrow is worse on a laptop than a node that opens
 // small is on a desktop. The two were the same constant until that was noticed,
 // so raising the default would silently have raised the floor with it.
-const NODE_WIDTH = 1200;
-const NODE_HEIGHT = 900;
+// 1452x1320 since 2026-10-18: the size at which every RUN section shows with no
+// scrolling, taken from the user's own working graph.
+const NODE_WIDTH = 1452;
+const NODE_HEIGHT = 1320;
 const NODE_MIN_WIDTH = 560;
 // Mirrors MODE_PROP in editor/plan_editor.js -- the writer forces Shots mode
 // after a plan lands, and the property is the only part of that it should touch.

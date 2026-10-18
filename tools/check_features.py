@@ -365,10 +365,62 @@ def main():
             ck("hand_tie: " + label, False, "accepted")
         except ValueError as e:
             ck("hand_tie: " + label, needle in str(e), str(e)[:90])
-    ck("hand_tie is the last pin_mech option (appended, never inserted)",
-       H3.HandTieClips.INPUT_TYPES()["required"]["pin_mech"][0][-1] == "hand_tie"
-       if "pin_mech" in H3.HandTieClips.INPUT_TYPES()["required"]
-       else H3.HandTieClips.INPUT_TYPES()["optional"]["pin_mech"][0][-1] == "hand_tie")
+    _pm_opts = (H3.HandTieClips.INPUT_TYPES()["required"]["pin_mech"][0]
+                if "pin_mech" in H3.HandTieClips.INPUT_TYPES()["required"]
+                else H3.HandTieClips.INPUT_TYPES()["optional"]["pin_mech"][0])
+    ck("hand_tie and hand_tie_mc are the last pin_mech options (appended, never inserted)",
+       _pm_opts[-2:] == ["hand_tie", "hand_tie_mc"], _pm_opts)
+    oh_mc, _ = run(shot_plan=json.dumps(ht_plan), pin_mech="hand_tie_mc", duration="8 s")
+    ck("hand_tie_mc: dry run compiles every hop identically to hand_tie",
+       oh_mc[2] == oh[2])
+    # Functional test of _ht_mc_inpaint_head: Previs window unpacked into 7 per-step
+    # Motion-Context keyframes + Hop k end-aligned audio_kf + preserved tail window.
+    import comfy.nested_tensor as _cnt
+    torch.manual_seed(42)
+    _pv_v = torch.randn(1, 16, 57, 4, 4) * 1.3 + 0.25
+    _pv_a = torch.randn(1, 16, 2, 320)
+    _nx_v = torch.zeros(1, 16, 57, 4, 4)
+    _nx_a = torch.zeros(1, 16, 2, 320)
+    _prev_s = {"samples": _cnt.NestedTensor([_pv_v, _pv_a])}
+    _next_l = {"samples": _cnt.NestedTensor([_nx_v, _nx_a])}
+    _w_head = torch.randn(1, 16, 7, 4, 4) * 0.9 - 0.15
+    _w_tail = torch.randn(1, 16, 7, 4, 4)
+    _spk_a = torch.randn(1, 16, 16)
+    _cond_in = [[torch.zeros(1, 4, 8), {
+        "minimax_keyframes": [
+            {"frame_index": 0, "resolved_frame_index": 0, "latent": _w_head, "strength": 1.0},
+            {"frame_index": -22, "resolved_frame_index": 170, "latent": _w_tail, "strength": 1.0},
+            {"frame_index": 0, "resolved_frame_index": 0, "audio_latent": _spk_a, "strength": 1.0},
+        ],
+    }]]
+    _, _cond_mc, _hold_mc, _ = H3._ht_mc_inpaint_head(
+        _next_l, _cond_in, _prev_s, 22, vae=None, audio_ctx=24, head_speaks=False)
+    _kfs_mc = _cond_mc[0][1]["minimax_keyframes"]
+    _vkfs_mc = [k for k in _kfs_mc if "latent" in k]
+    _akfs_mc = [k for k in _kfs_mc if "audio_latent" in k]
+    ck("hand_tie_mc: unpacks 7 per-step head keyframes [0,1,5,9,13,17,18] + keeps tail at 170",
+       _hold_mc == 7
+       and [k["resolved_frame_index"] for k in _vkfs_mc] == [170, 0, 1, 5, 9, 13, 17, 18]
+       and torch.equal(_vkfs_mc[0]["latent"], _w_tail),
+       [k["resolved_frame_index"] for k in _vkfs_mc])
+    # Verify spatial picture of unpacked keyframes comes 100% from _w_head (not _pv_v)
+    _step0_out = _vkfs_mc[1]["latent"].float()
+    _step0_ref = _w_head[:, :, 0:1].float()
+    _s0_n = (_step0_out - _step0_out.mean(dim=(2, 3, 4), keepdim=True)) / _step0_out.std(dim=(2, 3, 4), keepdim=True)
+    _r0_n = (_step0_ref - _step0_ref.mean(dim=(2, 3, 4), keepdim=True)) / _step0_ref.std(dim=(2, 3, 4), keepdim=True)
+    ck("hand_tie_mc: unpacked keyframes keep 100% Previs spatial structure (calibrated to Hop k)",
+       float((_s0_n - _r0_n).abs().max()) < 1e-4
+       and float((_step0_out.mean(dim=(2, 3, 4)) - _pv_v[:, :, -12:-11].mean(dim=(2, 3, 4))).abs().max()) < 1e-4)
+    ck("hand_tie_mc: strips audio_kf when head_speaks=False so closed-mouth head window never speaks or swooshes",
+       len(_akfs_mc) == 0,
+       f"len={len(_akfs_mc)}")
+    _, _cond_spk, _, _ = H3._ht_mc_inpaint_head(
+        _next_l, _cond_in, _prev_s, 22, vae=None, audio_ctx=24, head_speaks=True)
+    _akfs_spk = [k for k in _cond_spk[0][1]["minimax_keyframes"] if "audio_latent" in k]
+    ck("hand_tie_mc: preserves Previs spoken audio keyframe when head_speaks=True",
+       len(_akfs_spk) == 1
+       and _akfs_spk[0]["resolved_frame_index"] == 0
+       and torch.equal(_akfs_spk[0]["audio_latent"], _spk_a))
     try:
         run(dry_run="previs")
         ck("dry_run=previs is refused without pin_mech=hand_tie", False, "accepted")
@@ -528,6 +580,129 @@ def main():
        "counted on every shot" in ref_err(
            *([(f"a{i}", None) for i in range(6)]
              + [(f"b{i}", [3]) for i in range(4)])))
+
+    # End-to-end mocked non-dry-run test of pin_mech=hand_tie_mc (catches any
+    # UnboundLocalError or shape mismatch inside _ht_previs / _hop_ref2va /
+    # _ht_mc_inpaint_head / _calibrate_ht_latent / _decode_av).
+    def _steps_for_f(nf):
+        return 2 + ((int(nf) - 5) // 17) * 5
+
+    class _MockRef2VA:
+        @staticmethod
+        def execute(clip, vae, audio_vae, prompt, width, height, length,
+                    ref_image_size="match", ref_images=None, ref_videos=None,
+                    ref_video_audios=None, ref_audios=None):
+            vt = _steps_for_f(length)
+            lh, lw = 4, 4
+            at = int(round(int(length) * 5.0 / 3.0))
+            v = torch.randn(1, 16, vt, lh, lw) * 0.2 + 0.1
+            a = torch.randn(1, 16, 2, at) * 0.1
+            cond = [[torch.zeros(1, 4, 8), {"minimax_keyframes": [], "_len": int(length)}]]
+            lat = {"samples": _cnt.NestedTensor([v, a]), "_len": int(length)}
+            return (cond, lat)
+
+    class _MockAddGuide:
+        @staticmethod
+        def execute(positive, latent, frame_idx, vae, audio_vae, image, audio,
+                    strength=1.0):
+            v = H3._stream_5d(H3._latents.from_dict(latent)[0])
+            lh, lw = int(v.shape[3]), int(v.shape[4])
+            tot_f = int(latent.get("_len", 192))
+            r_idx = int(frame_idx) if int(frame_idx) >= 0 else tot_f + int(frame_idx)
+            kfs = list(positive[0][1].get("minimax_keyframes") or ())
+            kfs.append({
+                "frame_index": int(frame_idx),
+                "resolved_frame_index": r_idx,
+                "latent": torch.randn(1, 16, 7, lh, lw) * 0.2 + 0.1,
+                "strength": float(strength),
+            })
+            if audio is not None:
+                kfs.append({
+                    "frame_index": int(frame_idx),
+                    "resolved_frame_index": r_idx,
+                    "audio_latent": torch.randn(1, 16, 2, 37) * 0.1,
+                    "strength": float(strength),
+                })
+            out_c = [[positive[0][0], dict(positive[0][1], minimax_keyframes=kfs)]]
+            return (out_c,)
+
+    class _MockPass:
+        @staticmethod
+        def execute(**kw):
+            if "latent_image" in kw:
+                return (kw["latent_image"], kw["latent_image"])
+            if "steps" in kw:
+                return (torch.linspace(1.0, 0.0, int(kw["steps"]) + 1),)
+            return (object(),)
+
+    class _MockVAE:
+        def encode(self, imgs):
+            nf = int(imgs.shape[0])
+            vt = _steps_for_f(nf)
+            return torch.randn(1, 16, vt, 4, 4) * 0.2 + 0.1
+
+    def _mock_decode_av(video_vae, audio_vae, latent, skip_audio=False):
+        v = H3._stream_5d(H3._latents.from_dict(latent)[0])
+        vt = int(v.shape[2])
+        fpt = (1, 4, 4, 4, 4)
+        nf = sum(fpt[k % 5] for k in range(vt))
+        imgs = torch.full((nf, 64, 64, 3), 0.45)
+        sr = 44100
+        ns = max(1, int(round(nf / 24.0 * sr)))
+        wav = torch.zeros((1, 2, ns)) if skip_audio else torch.randn((1, 2, ns)) * 0.01
+        return imgs, {"waveform": wav, "sample_rate": sr}
+
+    H3.MiniMaxH3ReferenceToVideo = _MockRef2VA
+    H3.MiniMaxH3AddGuide = _MockAddGuide
+    for _mname in ("MiniMaxH3SigmaShift", "BasicScheduler", "KSamplerSelect",
+                   "BasicGuider", "RandomNoise", "SamplerCustomAdvanced"):
+        setattr(H3, _mname, _MockPass)
+    _orig_decode_av = H3._decode_av
+    _orig_offload = H3._offload_text_encoder
+    _orig_qwen_pv = H3._ht_qwen_previs_moments
+    _orig_fp = H3._model_fingerprint
+    _orig_enc_lock = H3._encode_locked_slice
+    _orig_canvas = H3._canvas
+    _orig_pv_canvas = H3._ht.previs_canvas
+    H3._decode_av = _mock_decode_av
+    H3._offload_text_encoder = lambda *a, **k: None
+    H3._ht_qwen_previs_moments = lambda s, *a, **k: s
+    H3._model_fingerprint = lambda *a, **k: "mock_fp"
+    H3._encode_locked_slice = lambda av, w, s0, s1, n_tok: torch.zeros(1, 16, 2, int(n_tok))
+    H3._canvas = lambda *a, **k: (64, 64)
+    H3._ht.previs_canvas = lambda *a, **k: (64, 64)
+    try:
+        _mc_plan = {"shots": [
+            {"beat": "She walks down the street.", "duration": "8 s"},
+            {"beat": "She passes a stall.", "duration": "8 s"},
+        ]}
+        _mc_out, _mc_log = run(
+            vae=_MockVAE(), shot_plan=json.dumps(_mc_plan),
+            pin_mech="hand_tie_mc", duration="8 s", resolution="512p (0.44 MP)",
+            aspect="9:16 portrait", dry_run="off", cache_hops="off",
+            hop_refine="off", ht_seam_fix="off", contact_sheet="off")
+        ck("hand_tie_mc live render executes _ht_previs + _hop_ref2va + _ht_mc_inpaint_head end-to-end",
+           int(_mc_out[0].shape[0]) == 362
+           and "via Previs-driven Motion-Context (7 per-step keyframes + ambient audio tail)" in _mc_log,
+           f"frames={int(_mc_out[0].shape[0])}")
+        _mc7_plan = {"shots": [{"beat": f"Beat {k + 1} walks.", "duration": "8 s"} for k in range(7)]}
+        _mc7_out, _mc7_log = run(
+            vae=_MockVAE(), shot_plan=json.dumps(_mc7_plan),
+            pin_mech="hand_tie_mc", duration="8 s", resolution="512p (0.44 MP)",
+            aspect="9:16 portrait", dry_run="off", cache_hops="off",
+            hop_refine="off", ht_seam_fix="off", contact_sheet="off")
+        ck("hand_tie_mc 7-hop 2-section chained live render executes Previs 1 -> Previs 2 spine end-to-end",
+           int(_mc7_out[0].shape[0]) == 1212
+           and "hand-tie previs 2: rendering" in _mc7_log,
+           f"frames={int(_mc7_out[0].shape[0])}")
+    finally:
+        H3._decode_av = _orig_decode_av
+        H3._offload_text_encoder = _orig_offload
+        H3._ht_qwen_previs_moments = _orig_qwen_pv
+        H3._model_fingerprint = _orig_fp
+        H3._encode_locked_slice = _orig_enc_lock
+        H3._canvas = _orig_canvas
+        H3._ht.previs_canvas = _orig_pv_canvas
 
     print()
     if FAIL:

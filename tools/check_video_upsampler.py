@@ -180,6 +180,30 @@ def run_checks(V, tu, ug):
         folder_paths.get_full_path_or_raise = saved_fp
 
 
+def streamed_decode_checks(V, tu):
+    print("streamed decode")
+
+    def fake_decode(z):
+        # Causal-ish: each token's frames see 3 tokens back and 1 ahead.
+        t = int(z.shape[2])
+        frames = []
+        for k in range(t):
+            v = float(z[0, 0, max(0, k - 3):k + 2, 0, 0].sum())
+            frames += [v] * tu.FRAME_PER_TOKEN[k % 5]
+        return torch.tensor(frames).view(1, -1, 1, 1, 1).expand(1, -1, 2, 3, 3).clone()
+
+    for tv, n in ((80, tu.frames_in(80)), (97, tu.frames_in(97) - 9), (31, 100)):
+        vid = torch.randn(1, 4, tv, 1, 1)
+        full = fake_decode(vid).reshape(-1, 2, 3, 3)[:n]
+        got = V.decode_streamed(fake_decode, vid, n)
+        ck(f"{tv} tokens, {n} frames: streamed == full decode",
+           got.shape == full.shape and torch.equal(got, full.float()),
+           f"{tuple(got.shape)} vs {tuple(full.shape)}")
+    src = open(os.path.join(HERE, "video_upsampler.py"), encoding="utf-8").read()
+    ck("run() decodes streamed, as upsample_chain",
+       "decode_streamed(vae.decode, out[\"samples\"].tensors[0], n)" in src)
+
+
 def workflow_checks(pack, V):
     print("shipped workflow")
     w = json.load(open(WORKFLOW, encoding="utf-8"))
@@ -249,6 +273,7 @@ def main():
     helper_checks(V)
     budget_checks(tu)
     run_checks(V, tu, ug)
+    streamed_decode_checks(V, tu)
     workflow_checks(pack, V)
     chain_budget_checks(sys.modules["htcpack.h3_ref_chain"], tu)
     print("\nall video upsampler checks passed" if not FAIL else f"\n{len(FAIL)} FAILED: {FAIL}")

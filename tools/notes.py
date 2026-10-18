@@ -1,21 +1,19 @@
 """The instruction board that ships on the Starter workflow's canvas.
 
-One source for six `MarkdownNote` cards laid out to the left of the loaders.
-`build_notes.py` writes them into `workflows/HandTieClips_Starter.json`.
+One `MarkdownNote`, START HERE, to the left of the loaders.
+`build_notes.py` writes it into `workflows/HandTieClips_Starter.json`.
 
-Why on the canvas at all: the craft lives in `PROMPTING.md`, `prompt_pack/` and
-the editor's Templates panel, and all three require leaving the graph. The rules
-that decide whether a first render works are needed at the moment beats are being
-written, which is on the canvas.
+Why on the canvas at all: the rules that decide whether a first render works,
+and the files and packs the graph loads, are needed before the first queue,
+which is on the canvas. `PROMPTING.md` stays the long-form authority.
 
-This is a condensation, not a copy. `PROMPTING.md` stays the long-form authority
-and every card says so; what is here is the part needed to get a first render
-right. Keep the cards short enough to read at a glance -- a wall of text on the
-canvas is the same as no text on the canvas.
+Through 2026-10-17 the board was seven cards in two columns. From 2026-10-18
+the Starter is the user's working graph and ships one card that links every
+model file and node pack. The other six cards' text is kept below (RULES
+through AUTHOR) but is not on the canvas; put a key back in CARDS to ship one.
 
-Layout: two columns of three at x=-960 and x=-480, 440 wide, so the board ends at
-x=-40 and the loaders (which start at x=0) are untouched. Reading order is down
-column A, then down column B.
+Layout: the card is 640 wide at x=-708, so it ends at x=-68 and the loaders
+(which start at x=0) are untouched.
 """
 
 YELLOW = ("#432", "#653")     # what the existing Note uses
@@ -24,73 +22,66 @@ GREEN = ("#232", "#353")      # ComfyUI's green -- card 1 only, so the entry
 
 GROUP = {
     "id": 1,
-    "title": "READ ME -- writing for this node",
-    "bounding": [-990, -465, 980, 3200],
+    "title": "READ ME",
+    "bounding": [-728, 268, 680, 1480],
     "color": "#3f789e",
     "font_size": 24,
 }
 
 # `extra.ds` is restored on load rather than fitted, so without this the board
 # sits off-screen to the left and is never found. Screen = (world + offset) *
-# scale, so an offset of 500 puts world x=-500 at the left edge: column B, the
-# loaders and the left of the chain node all in view at once.
-DS = {"scale": 0.8264462809917354, "offset": [500, -281.1386834420914]}
+# scale, so an offset of 748 puts world x=-748 at the left edge: the card and
+# the loaders in view at once.
+DS = {"scale": 0.75, "offset": [748, -228]}
 
 
 START_HERE = """\
-## Start here
+## Hand Tie Clips -- start here
 
-Two hops of 5 s, joined into one 10 s clip.
+Write one shot per hop on **SCRIPT**; the node renders them in turn and joins each hop to the last.
 
-### Requires
+**Links** -- [GitHub](https://github.com/dntpi/ComfyUI-Hand-Tie-Clips) · [HuggingFace](https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips) · the full writing guide is `PROMPTING.md` in the pack folder.
 
-The MODEL wire is a turbo stack, not a bare loader:
+**Before you queue**
+- **steps 8-10.** Turbo is built into the wuli DiT, so the LoRA loader ships empty; add style LoRAs there.
+- **cache_hops on** -- retakes, render_from and the **TIMELINE** tab need it.
+- Judge joins at **8 s** hops or longer.
 
-```
-UNETLoader
-  -> LoRA Loader Stack          (turbo LoRA)
-  -> H3 AdaLN LoRA Fix
-  -> MiniMax H3 Low VRAM Attention
-  -> H3 SLA Attention
-  -> Model Preview Override
-  -> this node
-```
+**Models** -- the files this graph loads, and the folder each goes in.
 
-| pack | nodes |
+| loader | file | folder |
+|---|---|---|
+| DiT | [`wuli_h3_turbo_8step_v1_..._int8_convrot_hq`](https://huggingface.co/sandpies/Wuli-MiniMax-H3-Turbo-ComfyUI/blob/main/8step-hybrid/wuli_h3_turbo_8step_v1_F2_flbase_ref2va-b25-49-full_gatedwuli_flashgen050_int8_convrot_hq.safetensors) | `diffusion_models` |
+| Refine / upsample DiT | [`minimax_h3_ref2va_int8_convrot`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors) | `diffusion_models` |
+| Text encoder | [`qwen3vl_32b_minimax_h3_int8_convrot`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors) | `text_encoders` |
+| Video VAE | [`minimax_h3_lynnreal_light_vae_int8_convrot`](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/minimax_h3_lynnreal_light_vae_int8_convrot.safetensors) (or the stock [`minimax_h3_video_vae_fp16`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/vae/minimax_h3_video_vae_fp16.safetensors)) | `vae` |
+| Audio VAE | [`minimax_h3_audio_vae_fp32`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/vae/minimax_h3_audio_vae_fp32.safetensors) | `vae` |
+| Live preview | [`taeh3`](https://huggingface.co/Kijai/MiniMax-H3-TAE/blob/main/vae_approx/taeh3.safetensors) | `vae_approx` |
+| `upsample_model` | [`minimax_h3_latent_upscaler_3d_conv_v1_bf16`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/blob/main/minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors) -- save as `minimax_h3_latent_upscaler_3d_bf16.safetensors` | `latent_upscale_models` |
+| `upsample_lora` (optional) | [`h3upscale_v2_x2`](https://huggingface.co/sandpies/ComfyUI-H3-Video-Upsampler/blob/main/lora/h3upscale_v2_x2.safetensors) | `loras` |
+
+**Custom node packs** -- install from ComfyUI Manager or clone into `custom_nodes`.
+
+| pack | nodes here |
 |---|---|
-| **ComfyUI-PlagueKind-Nodes** | LoRA Loader Stack, AdaLN Fix, SLA Attention |
-| **ComfyUI-KJNodes** | Low VRAM Attention (experimental), Model Preview Override |
+| [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes) | LoRA Loader Stack, H3 AdaLN LoRA Fix, H3 SLA Attention |
+| [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) | MiniMax H3 Low VRAM Attention, Model Preview Override |
+| [ComfyUI_Nvidia_VFX_Nodes](https://github.com/Comfy-Org/ComfyUI_Nvidia_VFX_Nodes) | RTX Video Frame Generation (RTX GPU, installs `nvidia-vfx`) |
 
-Also on disk: the **turbo LoRA** named in the loader, and `taeh3.safetensors`
-for the live preview (or set `tiny_vae` to `none`).
+Everything else is core ComfyUI or this pack.
 
-**CLIP goes to this node from the LoRA loader, not from the encoder.** That is
-what makes the text half of every LoRA land. Do not rewire it back.
+- **The second Load Diffusion Model** feeds `refine_model` and `upsample_dit`: refine and upsample re-draw on a clean DiT for the cleanest results. It is not loaded while both are off.
+- **Frame generation:** RTX Video Frame Generation doubles the clip to 48 fps and CreateVideo follows it. Bypass it (Ctrl+B) for 24 fps; nothing else to change.
 
-`steps` is **7**, which only works with the turbo LoRA. Missing a pack? Its
-nodes load as red boxes -- delete them, wire the loader straight into `model`
-and the encoder into `clip`, and raise `steps` to 20 or so.
+**The MODEL chain stays drawn:** loader → H3 SLA Attention → LoRA loader → H3 AdaLN LoRA Fix → Low VRAM Attention → Model Preview Override → H3 Cache (ships bypassed) → this node. CLIP comes from the LoRA loader, not the encoder. Missing a pack? Delete its red node and wire around it.
 
-1. Point the four **loaders** at your H3 files.
-2. Queue.
-3. Read the **SHOTS** cards on the node.
+**Writing**
+- One shot per hop. Later shots say only what happens next.
+- Name what you want, never what you don't -- the prompt only adds.
+- Put `@tags` in the action where you want that reference used.
+- Dialogue: one line per sentence -- `@kelly says, 'Coffee's on me,' and slides a cup over.` Give the listener a closed-mouth action.
 
-**Shot 1 is the whole opening. Every later shot is only the new beat.** The node
-writes the identity lock, the live-frame citation and the join itself -- so
-re-describing the face, the clothes or the room after shot 1 competes with the
-frame pin instead of reinforcing it.
-
-This plan ships with **no references on purpose**, so it runs before you have
-supplied any pictures.
-
-### Adding pictures
-
-- Open **REFERENCES**, add a row, drop a photo on its thumbnail. Files land in
-  `ComfyUI/input/h3_refs`. There is no Load Image node to wire.
-- Give the row a `@tag`, and group photos of the same person under one subject.
-- Write the tag into the beat: `@hero_face stands at the counter in @kitchen`.
-
-The long-form guide is `PROMPTING.md` in the pack folder.\
+**Realism boost** (optional, RUN tab) -- put these in `models/loras`: [`minimax_h3_lms_v1.0_r64`](https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/blob/main/loras/minimax_h3_lms_v1.0_r64.safetensors) (0.5) and [`h3-realism-people-t2v-i2v-r2v`](https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA/blob/main/h3-realism-people-t2v-i2v-r2v.safetensors) (1.0). The recipe is 6 base steps (2 + 10).\
 """
 
 
@@ -445,12 +436,6 @@ Settings that are deliberate, not defaults:
 
 
 CARDS = [
-    # key, title, pos, size, colour
-    ("start", "START HERE", [-960, -400], [440, 940], GREEN, START_HERE),
-    ("rules", "The rules", [-960, 600], [440, 760], YELLOW, RULES),
-    ("refs", "References and @tags", [-960, 1420], [440, 640], YELLOW, REFERENCES),
-    ("directives", "Directives", [-480, -400], [440, 640], YELLOW, DIRECTIVES),
-    ("trouble", "When it goes wrong", [-480, 280], [440, 900], YELLOW, TROUBLE),
-    ("check", "Check before you render", [-480, 1220], [440, 800], GREEN, CHECK),
-    ("author", "Let a model write it", [-480, 2060], [440, 620], YELLOW, AUTHOR),
+    # key, title, pos, size, colour, text
+    ("start", "START HERE", [-708, 328], [640, 1400], YELLOW, START_HERE),
 ]

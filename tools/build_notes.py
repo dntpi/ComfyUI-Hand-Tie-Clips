@@ -1,9 +1,10 @@
 """Write the instruction board into the Starter workflow, in place.
 
 Idempotent: cards are identified by `properties.htc_card`, so re-running
-replaces the board rather than stacking a second copy beside it. Operates on the
-shipped `.json` itself rather than rebuilding from a private source workflow, so
-anyone with the pack can run it.
+replaces the board rather than stacking a second copy beside it. A card keeps
+the node id it already has, so re-running does not churn the graph. Operates
+on the shipped `.json` itself rather than rebuilding from a private source
+workflow, so anyone with the pack can run it.
 
 It also strips `widgets_values_named` from every node. Both shipped workflows
 carried a stale copy inherited from the dev workflow they were cloned out of --
@@ -30,7 +31,6 @@ WF = os.path.join(HERE, "workflows", "HandTieClips_Starter.json")
 # workflows, so the strip runs over both.
 ALSO_STRIP = [os.path.join(HERE, "workflows", "HandTieClips_Showcase.json")]
 MARKER = "htc_card"
-FIRST_ID = 20
 
 
 def strip_named(path):
@@ -66,7 +66,9 @@ def main():
         shutil.copyfile(WF, bak)
 
     # Out with the old board, and with the single legacy `Note` whose text the
-    # cards now carry between them.
+    # cards now carry between them. Remember each card's id first.
+    old_ids = {(n.get("properties") or {}).get(MARKER): n["id"]
+               for n in wf["nodes"] if MARKER in (n.get("properties") or {})}
     before = len(wf["nodes"])
     wf["nodes"] = [n for n in wf["nodes"]
                    if MARKER not in (n.get("properties") or {})
@@ -74,10 +76,16 @@ def main():
     dropped = before - len(wf["nodes"])
 
     order = max((n.get("order", 0) for n in wf["nodes"]), default=0)
-    for i, (key, title, pos, size, colour, text) in enumerate(notes.CARDS):
+    next_id = max([wf["last_node_id"]] + [n["id"] for n in wf["nodes"]]) + 1
+    taken = {n["id"] for n in wf["nodes"]}
+    for key, title, pos, size, colour, text in notes.CARDS:
         order += 1
+        nid = old_ids.get(key)
+        if nid is None or nid in taken:
+            nid, next_id = next_id, next_id + 1
+        taken.add(nid)
         wf["nodes"].append({
-            "id": FIRST_ID + i,
+            "id": nid,
             "type": "MarkdownNote",
             "pos": list(pos),
             "size": list(size),
@@ -88,14 +96,14 @@ def main():
             "outputs": [],
             "title": title,
             "properties": {MARKER: key},
-            "widgets_values": [text],
+            "widgets_values": [text + "\n"],
             "color": colour[0],
             "bgcolor": colour[1],
         })
 
     wf["groups"] = [dict(notes.GROUP)]
     wf["extra"]["ds"] = dict(notes.DS)
-    wf["last_node_id"] = max(wf["last_node_id"], FIRST_ID + len(notes.CARDS) - 1)
+    wf["last_node_id"] = max([wf["last_node_id"]] + [n["id"] for n in wf["nodes"]])
 
     stripped = 0
     for n in wf["nodes"]:

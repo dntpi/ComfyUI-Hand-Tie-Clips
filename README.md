@@ -125,7 +125,7 @@ MiniMax H3 samples at **CFG 1.0 with no negative prompt** — every word you wri
 | Ending Shot 2 mid-sentence when Shot 3 should be quiet | Finish the action/sentence at the **end of Shot 2** so Shot 3 inherits a settled state. |
 | Leaving the final shot's `tail` on `ongoing` | Set the last shot's `tail` to `settle` or `hold` so the film lands cleanly. |
 
-Full authoring guide: **[PROMPTING.md](PROMPTING.md)** · Release history: **[CHANGELOG.md](CHANGELOG.md)** · Internals: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Credits & Notices: **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**
+Full authoring guide: **[PROMPTING.md](PROMPTING.md)** · Release history: **[CHANGELOG.md](CHANGELOG.md)** · Credits & Notices: **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**
 
 <details>
 <summary>Included Nodes (Category: "Hand Tie Clips")</summary>

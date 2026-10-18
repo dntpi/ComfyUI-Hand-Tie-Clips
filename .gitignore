@@ -51,3 +51,4 @@ tools/head_probe.py
 tools/
 docs/DEVLOG.md
 docs/LEVER_AUDIT.md
+docs/ARCHITECTURE.md

@@ -5,7 +5,7 @@ pack — the published package excludes them. Engineering detail lives in
 `docs/DEVLOG.md`. `docs/HANDOVER_*.md` and `BETA_NOTES.md` are historical
 and should not be read as the state of this release.
 
-## Unreleased — 2026-10-17
+## 3.0.0 — 2026-10-18
 
 ### Built-In `_HTCMotionContext`, Refine v2.4, `hand_tie` v2.6 & `audio_refine`
 

@@ -12,7 +12,7 @@ import { createVideoSwap } from "./editor/video_swap.js";
 import { createMediaStrip, MEDIA_WIDGETS } from "./editor/media_strip.js";
 import { createTimeline } from "./editor/timeline.js";
 
-const VERSION = "v2.2.0";
+const VERSION = "v3.0.0";
 /* Both ids. The pack registers the pre-rename id as a deprecated subclass so
  * workflows saved before 2026-08-29 still load. If this check knew only the
  * new id those nodes would come up with NO editor at all, which looks exactly

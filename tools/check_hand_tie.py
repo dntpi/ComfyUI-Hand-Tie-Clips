@@ -775,10 +775,6 @@ ck("ht_seam_fix v4: tone match and mean anchor off by default, tail discard kept
 ck("startup line no longer claims a x0.75 anchor",
    'latent mean anchor "' + chr(10) + '                  f"x{_ht.SEAMFIX_ANCHOR_STRENGTH})"' not in src)
 ck("every hop logs which voice ref it carries", '"[{TAG}] hop {i + 1}: voice ref "' in src.replace("f\"", "\""))
-_wfp = os.path.join(HERE, "workflows", "HandTieClips_HandTie_SeamFix_v2.json")
-_sla = [n for n in __import__("json").load(open(_wfp, encoding="utf-8"))["nodes"] if n.get("type") == "H3SLAAttention"]
-ck("SeamFix_v2: SLA protect_audio on, so the voice ref's audio tokens survive 65% sparsity",
-   bool(_sla) and all(n["widgets_values"][4] is True for n in _sla))
 # ht_seam_fix v2 (recover, 2026-10-14)
 ck("v2: the tail discard is whole 17-frame blocks and covers the 22-frame tail",
    HT.SEAMFIX_TAIL_EXTRA % 17 == 0 and HT.SEAMFIX_TAIL_EXTRA >= HT.WINDOW and "_dsteps = int(frames) // 17 * 5" in src

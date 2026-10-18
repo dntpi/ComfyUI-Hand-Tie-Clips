@@ -39,7 +39,7 @@ OUT = (sys.argv[1] if len(sys.argv) > 1
        else os.path.join(os.path.expanduser("~"), "Desktop", "ComfyUI-H3-Video-Upsampler"))
 LORA_DIR = os.path.join(COMFY, "models", "loras", "h3upscale", "v2_x2")
 LORA = "h3upscale_v2_x2.safetensors"
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 GH = "https://github.com/dntpi/ComfyUI-H3-Video-Upsampler"
 HF = "https://huggingface.co/sandpies/ComfyUI-H3-Video-Upsampler"
 HTC_GH = "https://github.com/dntpi/ComfyUI-Hand-Tie-Clips"

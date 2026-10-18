@@ -409,9 +409,27 @@ def _3p_verb(v):
     return v
 
 
+def _clean_dialogue_pauses(beat):
+    """Replace mid-line ellipses (`...`, `…`) and dashes (`—`, `–`, `--`) inside
+    `<d>...</d>` with a comma (`, `), and trailing ellipses before `</d>` with a
+    period (`.`). In H3's audio branch, an ellipsis inside `<d>...</d>` leaves an
+    unaligned phoneme gap that the DiT fills with gibberish syllables."""
+    def _fix_span(m):
+        inner = m.group(1)
+        # Mid-line ellipsis or dash between words -> ", "
+        inner = re.sub(r",?\s*(?:\.{2,}|…|—|–|--)\s*(?=[A-Za-z0-9'\"])", ", ", inner)
+        # Trailing ellipsis or dash before <|cutoff|> -> strip
+        inner = re.sub(r",?\s*(?:\.{2,}|…|—|–|--)\s*(?=<\|cutoff\|>)", "", inner)
+        # Trailing ellipsis or dash at end of line -> "."
+        inner = re.sub(r",?\s*(?:\.{2,}|…|—|–|--)\s*$", ".", inner)
+        return f"<d>{inner}</d>"
+    return re.sub(r"<d>(.*?)</d>", _fix_span, str(beat or ""), flags=re.S)
+
+
 def open_lips(shots):
     """Shots with closed-lips phrases taken out of every beat that has a line
     (and untagged double-quoted speech upgraded to `<d>[English] ...</d>`,
+    mid-line `...`/`—` pauses inside `<d>...</d>` normalized to `, `,
     untimed mouth-opening filler stripped before speech verbs, `(S1)` supplied
     before speech verbs on single-speaker dialogue sentences so `time_lines`,
     `_start_carries_voice`, and `refs.speaker_ids` all bind `<Audio 1>` to
@@ -433,6 +451,7 @@ def open_lips(shots):
             b = _QUOTED_SPEECH.sub(
                 lambda m: f"{m.group(1)}<d>[English] {m.group(2).strip()}</d>", b)
         if _D.search(b):
+            b = _clean_dialogue_pauses(b)
             if _MOUTH_OPEN_SAY.search(b):
                 b = _MOUTH_OPEN_SAY.sub("and ", b)
                 b = re.sub(r"\b(?:Then,\s*)?(@[A-Za-z0-9_]+|<Subject \d+>)\s+and\s+", r"\1 ", b)
@@ -1729,8 +1748,10 @@ PREVIS_LAWS_SYSTEM = (
     "'walks up to' or 'walks past' instead). Drop secondary background people "
     "('people gathering behind her', 'so he is behind her', 'vendor') so the "
     "background never warps or locks a crowd into a 22-frame handoff window.\n"
-    "3. SILENT MOUTHS: Remove all spoken dialogue (<d>...</d>), speech verbs "
-    "('says', 'talking', 'chatting'), and crowd voices ('chatter', 'calling out').\n"
+    "3. SILENT MOUTHS & CLEAN PUNCTUATION: Remove all spoken dialogue (<d>...</d>), "
+    "speech verbs ('says', 'talking', 'chatting'), and crowd voices ('chatter', "
+    "'calling out'). Never use ellipses ('...' or '…') or dashes ('—' / '--'); use "
+    "only commas (',') and periods ('.').\n"
     "4. EXACT FORMAT: Output ONLY numbered lines `1: <one short sentence>`, "
     "`2: <one short sentence>`, ... up to N. Keep every `@tag` or `<Subject N>` "
     "token exactly as written in the input."

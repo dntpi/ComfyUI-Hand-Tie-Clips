@@ -1087,6 +1087,9 @@ ck("locked or replayed sections recover their cached previs via ht_previs_key / 
    "_sec_has_kept = any(" in src
    and '"ht_previs_key": ht_previs_keys.get(ht_pos[i][0])' in src
    and 'hop_store.set_pointer(f"__previs_{_si + 1}", _p_key)' in src)
+_ell_out = HT.open_lips([{"beat": "@mina says, <d>[English] Go try it, darling... I will be waiting right here.</d> She smiles."}])[0]["beat"]
+ck("open_lips replaces mid-line '...' inside <d>...</d> with ', ' (chain_00138 hop 10 gibberish fix)",
+   "<d>[English] Go try it, darling, I will be waiting right here.</d>" in _ell_out, _ell_out)
 
 print("\nall ok" if not FAILS else "\n%d FAILED: %s" % (len(FAILS), FAILS))
 sys.exit(1 if FAILS else 0)

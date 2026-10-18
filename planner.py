@@ -903,6 +903,10 @@ def hand_tie_rules(duration=None):
         "Speaking and eating in one hop plays the line over the eating.",
         "5. Open each hop on an action and its sound, then the line. Do not name "
         "talking as an action (\"talking into the phone\"): the line is the talking.",
+        "6. Never use ellipses (\"...\" or \"…\") or dashes (\"—\" / \"--\") to "
+        "connect parts of a dialogue line: H3 fills ellipsis pauses with gibberish "
+        "syllables. Always connect dialogue clauses with a simple comma (\",\") or "
+        "period (\".\").",
     ])
 
 

@@ -457,7 +457,10 @@ barely started.'
 ```
 
 Single quotes survive copy-paste; escaped double quotes are the most common
-cause of a rejected plan.
+cause of a rejected plan. Never use ellipses (`...` or `…`) or dashes (`—` /
+`--`) inside a spoken line — H3's audio branch fills ellipsis pauses with
+invented gibberish syllables. Connect clauses inside a spoken line with a
+comma (`,`) or period (`.`).
 
 On a talking hop the line count **is** a floor as well as a ceiling. A long
 speech in a short hop is truncated mid-word, and that truncation is then pinned

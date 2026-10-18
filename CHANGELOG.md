@@ -13,8 +13,10 @@ and should not be read as the state of this release.
   `pin_mech=motion_context` (and `auto`) now runs natively in-house on ComfyUI
   Core's `minimax_keyframes` contract with zero external custom-node dependency
   (credit to [NikoDemon80's ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
-  for the latent-slice + end-aligned audio timeline concept). Supports unlimited
-  chain length (30+ hops tested across continuous relays and `restart` cuts).
+  for the latent-slice + end-aligned audio timeline concept). With `hop_refine: full`,
+  continuous relays hold for ~5–6 clips on Turbo before visible texture changes
+  and ~7–8 clips on non-Turbo (with `anchor="restart"` resetting cleanly at
+  scene cuts).
 - **Refine v2.4 & Motion-Context Join Locks (`h3_ref_chain.py`, `refine_blend.py`)** —
   Added `_pin_inpaint_head`, `_calibrate_overlap_latent`, `_bridge_motion_seam`,
   head-internal refine ramp (`0:0, overlap:1`), Hop-1 refine skip (`hop_is_start`),

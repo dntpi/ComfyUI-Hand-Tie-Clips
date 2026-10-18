@@ -35,7 +35,7 @@ tags:
 
 | Tab / Surface | What It Does |
 |---|---|
-| **🎬 SCRIPT** (`Simple` & `Shots`) | Write one card per hop (5 s – 15 s each) with camera, framing, pace, and join controls — or switch to **Simple** mode for a single prompt box split by `---`. |
+| **🎬 SCRIPT** (`Simple` & `Shots`) | Switch to **`Simple`** mode (`chains = 1`) for standard single-clip generations with a single prompt box (the ideal workflow for **`realism_boost: on`** + **`audio_refine: on`**) — or switch to **`Shots`** mode to author per-hop cards (5 s – 15 s each) with camera, framing, pace, and join controls. |
 | **🖼️ REFS** (`@tags` & `RefMod`) | Drop up to 9 character/setting stills straight onto the node. Assign stable `@tags`, subject numbers, per-photo megapixel caps, per-hop schedules (`rides hops`), and per-character voice clips without wiring `Load Image` chains. |
 | **🎞️ TIMELINE** (Retake Board) | Scrub every rendered hop, inspect the exact join frames, **lock** the shots you want to keep, or click `⏵` on Shot 3 to re-roll *only* Shot 3 while Shots 1–2 load from the lossless cache. |
 | **🎵 MEDIA** (Clips, Voices & Lip-Sync) | Load a starting frame, up to 3 reference videos, 3 voice timbre clips, a background music bed (with auto-ducking), or a **Master Audio File** that locks lip-sync across the entire film. |
@@ -55,8 +55,9 @@ tags:
 
 ## Built-In Finishing (`⚙ RUN` Page)
 
-### 1. Realism Boost + Audio Refine (Pair Them Together)
-- **`realism_boost: on`** runs a 2-stage split schedule inside each hop (at `steps = 6`: **2 base steps** set composition, then **10 realism LoRA steps** paint skin and lighting with *no fresh noise*).
+### 1. Realism Boost + Audio Refine (Built for `Simple` Mode / 1–2 Hop Hero Clips)
+- **Using HTC for standard single generations:** You don't need a multi-hop chain to use Hand Tie Clips — switch **`SCRIPT`** to **`Simple`** mode (`chains = 1` in `⚙ RUN`) to use the visual **`REFS`** rail, **`realism_boost`**, and **`upsample`** on a single clip. That single-clip workflow is what **`realism_boost: on`** is built for!
+- **`realism_boost: on`** runs a 2-stage split schedule inside the sampler (at `steps = 6`: **2 base steps** set composition, then **10 realism LoRA steps** paint skin and lighting with *no fresh noise*).
 - **Important Audio Note:** Because stage 2 adds no noise, the audio stream only gets those first 2 noisy steps and **will sound thin or under-converged on its own**. When using `realism_boost`, turn on **`audio_refine: on`** (under the **Soundtrack** group, `4–5` steps) — it re-samples the soundtrack cleanly while keeping your finished video 100% frozen.
 
 ### 2. Refine Pass (`hop_refine: full`) — Honest Limitations

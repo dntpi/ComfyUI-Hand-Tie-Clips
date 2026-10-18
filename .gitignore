@@ -44,3 +44,10 @@ SPACE_BUNNY_FINDINGS.md
 workflows/HandTieClips_HandTie_Vlog10_*.json
 tools/head_probe.py
 .serena/
+
+# Development only, kept local since 3.0.0 (2026-10-18): the checker suite and
+# pack builders, and the engineering history. Nothing here runs when the node
+# loads, and the public repo is the node.
+tools/
+docs/DEVLOG.md
+docs/LEVER_AUDIT.md

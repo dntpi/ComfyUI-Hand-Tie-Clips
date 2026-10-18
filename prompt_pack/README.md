@@ -90,23 +90,9 @@ Small local models (7B-8B) hold the JSON schema fine but drift on the prose
 rules — they will write negations. Read the plan before queueing; a beat that
 says "she stops talking" costs you a render.
 
-`SCHEMA.json`, `EXAMPLE_6_HOP.md` and `SYSTEM_PROMPT.md` are **generated**, not
-written:
-
-```
-python tools/gen_schema.py           # regenerate the schema from the node
-python tools/gen_schema.py --check   # exit 1 if it is out of date
-python tools/gen_example.py          # regenerate the example from the workflow
-# re-strip the preamble:
-tail -n +14 prompt_pack/AUTHORING_PROMPT.md > prompt_pack/SYSTEM_PROMPT.md
-```
-
-Both read the installed node and the shipped workflow, so they cannot describe a
-vocabulary or a plan that does not exist. Run `gen_schema.py` with ComfyUI's
-interpreter — importing the node pulls in torch. Re-run both after changing
-`directives.VOCAB`, `refs.RETENTION`, the shot fields, or the duration table;
-`gen_schema.py` asserts against `plan._SHOT_KEYS`, `refs.REF_FIELDS` and
-`refs.SUBJECT_FIELDS` and will fail loudly rather than emit a stale schema.
+`SCHEMA.json`, `EXAMPLE_6_HOP.md` and `SYSTEM_PROMPT.md` are generated from the
+node and the shipped workflow, so they cannot describe a vocabulary or a plan
+that does not exist.
 
 The node validates every plan it is handed, so a model that gets this wrong is
 caught rather than obeyed. Errors name the shot or the reference they came from

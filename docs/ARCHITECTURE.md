@@ -12,8 +12,8 @@ are inside one module, and each section here is pointed at from the matching
 section there. Everything below was moved verbatim; where it disagrees with
 `CLAUDE.md`, `CLAUDE.md` is the brief and this is the detail behind it.
 
-Dated measurement records live in [`DEVLOG.md`](DEVLOG.md), which is history
-rather than instruction.
+Dated measurement records are kept in the development history, outside the
+published repo.
 
 ## Releasing
 

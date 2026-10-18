@@ -1,8 +1,7 @@
 # Changelog
 
 User-facing. The files named here are in the repository, not in the installed
-pack — the published package excludes them. Engineering detail lives in
-`docs/DEVLOG.md`.
+pack — the published package excludes them.
 
 ## 3.0.0 — 2026-10-18
 

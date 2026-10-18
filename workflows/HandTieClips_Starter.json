@@ -2354,12 +2354,12 @@
       "id": 41,
       "type": "MarkdownNote",
       "pos": [
-        -588.9497202107041,
+        -708,
         328.9125981623701
       ],
       "size": [
-        520,
-        960
+        640,
+        1180
       ],
       "flags": {},
       "order": 4,
@@ -2371,7 +2371,7 @@
         "htc_card": "start"
       },
       "widgets_values": [
-        "## Hand Tie Clips -- start here\n\nWrite one shot per hop on **SCRIPT**; the node renders them in turn and joins each hop to the last.\n\n**Links** -- [GitHub](https://github.com/dntpi/ComfyUI-Hand-Tie-Clips) \u00b7 [HuggingFace](https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips) \u00b7 the full writing guide is `PROMPTING.md` in the pack folder.\n\n**Before you queue**\n- **steps 8-10.** Turbo is built into the wuli DiT, so the LoRA loader ships empty; add style LoRAs there.\n- **cache_hops on** -- retakes, render_from and the **TIMELINE** tab need it.\n- Judge joins at **8 s** hops or longer.\n\n**Models**\n- **DiT:** [`wuli_h3_turbo_8step_v1_F2_flbase_ref2va-b25-49-full_gatedwuli_flashgen050_int8_convrot_hq`](https://huggingface.co/sandpies/Wuli-MiniMax-H3-Turbo-ComfyUI/blob/main/8step-hybrid/wuli_h3_turbo_8step_v1_F2_flbase_ref2va-b25-49-full_gatedwuli_flashgen050_int8_convrot_hq.safetensors) in `models/diffusion_models`.\n- **The second Load Diffusion Model** (plain `minimax_h3_ref2va`) feeds `refine_model` and `upsample_dit`: refine and upsample re-draw on a clean DiT for the cleanest results. It is not loaded while both are off.\n- **Frame generation:** RTX Video Frame Generation doubles the clip to 48 fps and CreateVideo follows it. Bypass it (Ctrl+B) for 24 fps; nothing else to change.\n\n**The MODEL chain stays drawn:** loader \u2192 H3 SLA Attention \u2192 LoRA loader \u2192 H3 AdaLN LoRA Fix \u2192 Low VRAM Attention \u2192 Model Preview Override \u2192 H3 Cache (ships bypassed) \u2192 this node. CLIP comes from the LoRA loader, not the encoder. Missing a pack? Delete its red node and wire around it.\n\n**Writing**\n- One shot per hop. Later shots say only what happens next.\n- Name what you want, never what you don't -- the prompt only adds.\n- Put `@tags` in the action where you want that reference used.\n- Dialogue: one line per sentence -- `@kelly says, 'Coffee's on me,' and slides a cup over.` Give the listener a closed-mouth action.\n\n**Realism boost** (optional, RUN tab) -- put these in `models/loras`: [`minimax_h3_lms_v1.0_r64`](https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/blob/main/loras/minimax_h3_lms_v1.0_r64.safetensors) (0.5) and [`h3-realism-people-t2v-i2v-r2v`](https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA/blob/main/h3-realism-people-t2v-i2v-r2v.safetensors) (1.0). The recipe is 6 base steps (2 + 10).\n"
+        "## Hand Tie Clips -- start here\n\nWrite one shot per hop on **SCRIPT**; the node renders them in turn and joins each hop to the last.\n\n**Links** -- [GitHub](https://github.com/dntpi/ComfyUI-Hand-Tie-Clips) \u00b7 [HuggingFace](https://huggingface.co/sandpies/ComfyUI-Hand-Tie-Clips) \u00b7 the full writing guide is `PROMPTING.md` in the pack folder.\n\n**Before you queue**\n- **steps 8-10.** Turbo is built into the wuli DiT, so the LoRA loader ships empty; add style LoRAs there.\n- **cache_hops on** -- retakes, render_from and the **TIMELINE** tab need it.\n- Judge joins at **8 s** hops or longer.\n\n**Models** -- the files this graph loads, and the folder each goes in.\n\n| loader | file | folder |\n|---|---|---|\n| DiT | [`wuli_h3_turbo_8step_v1_..._int8_convrot_hq`](https://huggingface.co/sandpies/Wuli-MiniMax-H3-Turbo-ComfyUI/blob/main/8step-hybrid/wuli_h3_turbo_8step_v1_F2_flbase_ref2va-b25-49-full_gatedwuli_flashgen050_int8_convrot_hq.safetensors) | `diffusion_models` |\n| Refine / upsample DiT | [`minimax_h3_ref2va_int8_convrot`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors) | `diffusion_models` |\n| Text encoder | [`qwen3vl_32b_minimax_h3_int8_convrot`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors) | `text_encoders` |\n| Video VAE | [`minimax_h3_lynnreal_light_vae_int8_convrot`](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/minimax_h3_lynnreal_light_vae_int8_convrot.safetensors) (or the stock [`minimax_h3_video_vae_fp16`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/vae/minimax_h3_video_vae_fp16.safetensors)) | `vae` |\n| Audio VAE | [`minimax_h3_audio_vae_fp32`](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/vae/minimax_h3_audio_vae_fp32.safetensors) | `vae` |\n| Live preview | [`taeh3`](https://huggingface.co/Kijai/MiniMax-H3-TAE/blob/main/vae_approx/taeh3.safetensors) | `vae_approx` |\n| `upsample_model` | [`minimax_h3_latent_upscaler_3d_conv_v1_bf16`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/blob/main/minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors) -- save as `minimax_h3_latent_upscaler_3d_bf16.safetensors` | `latent_upscale_models` |\n| `upsample_lora` (optional) | [`h3upscale_v2_x2`](https://huggingface.co/sandpies/ComfyUI-H3-Video-Upsampler/blob/main/lora/h3upscale_v2_x2.safetensors) | `loras` |\n\n- **The second Load Diffusion Model** feeds `refine_model` and `upsample_dit`: refine and upsample re-draw on a clean DiT for the cleanest results. It is not loaded while both are off.\n- **Frame generation:** RTX Video Frame Generation doubles the clip to 48 fps and CreateVideo follows it. Bypass it (Ctrl+B) for 24 fps; nothing else to change.\n\n**The MODEL chain stays drawn:** loader \u2192 H3 SLA Attention \u2192 LoRA loader \u2192 H3 AdaLN LoRA Fix \u2192 Low VRAM Attention \u2192 Model Preview Override \u2192 H3 Cache (ships bypassed) \u2192 this node. CLIP comes from the LoRA loader, not the encoder. Missing a pack? Delete its red node and wire around it.\n\n**Writing**\n- One shot per hop. Later shots say only what happens next.\n- Name what you want, never what you don't -- the prompt only adds.\n- Put `@tags` in the action where you want that reference used.\n- Dialogue: one line per sentence -- `@kelly says, 'Coffee's on me,' and slides a cup over.` Give the listener a closed-mouth action.\n\n**Realism boost** (optional, RUN tab) -- put these in `models/loras`: [`minimax_h3_lms_v1.0_r64`](https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/blob/main/loras/minimax_h3_lms_v1.0_r64.safetensors) (0.5) and [`h3-realism-people-t2v-i2v-r2v`](https://huggingface.co/fal/MiniMax-H3-Realism-People-LoRA/blob/main/h3-realism-people-t2v-i2v-r2v.safetensors) (1.0). The recipe is 6 base steps (2 + 10).\n"
       ],
       "color": "#432",
       "bgcolor": "#653"
@@ -2907,10 +2907,10 @@
       "id": 1,
       "title": "READ ME",
       "bounding": [
-        -608.9497202107041,
+        -728,
         268.91259816237005,
-        560,
-        1040
+        680,
+        1260
       ],
       "color": "#3f789e",
       "flags": {}

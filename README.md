@@ -61,7 +61,7 @@ tags:
 
 ### 2. Refine Pass (`hop_refine: full`) — Honest Limitations
 - Runs a gentle low-sigma detail pass per hop (supports wiring a stock 30-step H3 DiT to `refine_model` while your main wire runs a Turbo model).
-- **The honest truth on chain length:** `Refine` holds back relay degradation and keeps joins clean, pushing continuous `motion_context` chains to **5–6 clips on Turbo** before very visible texture changes appear, and **7–8 clips on non-Turbo**. Treat Refine as extending your usable relay runway (or pair with `anchor: "restart"` cuts / `pin_mech: hand_tie` for longer sequences), not making a 4-step turbo LoRA infinite.
+- **The honest truth on chain length:** `Refine` holds back relay degradation and keeps joins clean, pushing continuous `motion_context` chains to **5–6 clips on Turbo** before very visible texture changes appear, and **7–8 clips on non-Turbo**. Under `motion_context`, plan to transition to a cut (`anchor: "restart"`) every 4–5 clips or so to maintain the integrity of your textures (or use `pin_mech: hand_tie` for continuous single-take sequences).
 
 ### 3. Guided Tiled Upsampler (`upsample: on`) & Standalone Node
 Enlarges the finished film to 1.5–2.0 MP in latent chunks and runs a 2-step tiled redraw. With the **`h3upscale` x2 LoRA**, the redraw is guided by your actual canvas frames at half the output size so it restores real detail instead of inventing texture. Toggling `upsample` on a cached chain skips hop generation and runs only the upscaler.

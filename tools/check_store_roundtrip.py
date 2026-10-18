@@ -82,7 +82,7 @@ def main():
     with open(os.path.join(HERE, "h3_ref_chain.py"), encoding="utf-8") as fh:
         src = fh.read()
     p_put = src.find("hop_store.put(_p_key,")
-    p_win = src.find("pics.append(_p_imgs[w:w + _ht.WINDOW]")
+    p_win = src.find("pics.append(_p_imgs[w")   # w, later w_eff
     p_as = src.find("_p_imgs, _p_wav = _store.as_stored(_p_imgs, _p_wav)", p_put)
     ck("run(): the previs goes on as stored, before its windows are cut",
        -1 not in (p_put, p_win, p_as) and p_put < p_as < p_win)

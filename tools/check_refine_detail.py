@@ -197,15 +197,25 @@ def main():
        and float(vm[:, :, 6:].min()) == 1.0
        and float(am.min()) == 1.0)
 
-    # Simulate an over-cooked hop (+12% std, +0.08 mean) and calibrate it back:
-    cooked_v = prev_v * 1.12 + 0.08
-    cooked_lat = {"samples": nt.NestedTensor((cooked_v, prev_a.clone()))}
-    cal_lat = H3._calibrate_overlap_latent(cooked_lat, prev_lat, 22, hop_no=2)
+    # Simulate an over-cooked hop (+12% std, +0.08 mean) and calibrate it back.
+    # The reference is the mod5-aligned window (prev[-12:-7] against cur[5:10]),
+    # not prev[-5:], so the latent here is stationary in time: every 5-step
+    # window has the same statistics and any of them is a fair yardstick.
+    stat_v = torch.randn((1, 24, 1, 16, 16), dtype=torch.float32).expand(1, 24, 57, 16, 16).clone()
+    stat_v += 0.01 * torch.randn_like(stat_v)
+    stat_lat = {"samples": nt.NestedTensor((stat_v, prev_a.clone()))}
+    st_cooked_v = stat_v * 1.12 + 0.08
+    st_cooked_lat = {"samples": nt.NestedTensor((st_cooked_v, prev_a.clone()))}
+    cal_lat = H3._calibrate_overlap_latent(st_cooked_lat, stat_lat, 22, hop_no=2)
     cv, _ = list(cal_lat["samples"].unbind())[:2]
     ck("_calibrate_overlap_latent restores exact 7-step causal prefix and locks opening mean/std",
-       torch.equal(cv[:, :, :7], prev_v[:, :, -7:])
-       and abs(float(cv[:, :, 7:12].mean() - prev_v[:, :, -5:].mean())) < 1e-4
-       and abs(float(cv[:, :, 7:12].std() / prev_v[:, :, -5:].std()) - 1.0) < 0.02)
+       torch.equal(cv[:, :, :7], stat_v[:, :, -7:])
+       and abs(float(cv[:, :, 7:12].mean() - stat_v[:, :, -5:].mean())) < 1e-3
+       and abs(float(cv[:, :, 7:12].std() / stat_v[:, :, -5:].std()) - 1.0) < 0.02
+       and abs(float(cv[:, :, -5:].std() / st_cooked_v[:, :, -5:].std()) - 1.0) < 1e-4)
+
+    cooked_v = prev_v * 1.12 + 0.08
+    cooked_lat = {"samples": nt.NestedTensor((cooked_v, prev_a.clone()))}
 
     # Head-internal refine ramp (`head_steps=7`, `detail_sigma=2.0`) makes step 7 already w=1.0:
     keys_auto = rb.parse(rb.resolve("auto", 22))

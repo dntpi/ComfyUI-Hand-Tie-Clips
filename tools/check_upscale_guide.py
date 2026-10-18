@@ -15,7 +15,7 @@ checked here:
   as before;
 * core's PackedLayout, patched, builds a chunk-start pin and the guide side by
   side, and the guide's rows sit where they sit with the guide alone; when the
-  fork's packing.py is on disk (HTC_FORK_PACKING or the scratchpad copy) the
+  fork's packing.py is on disk (set HTC_FORK_PACKING to its path) the
   guide-only layout is compared with the trainer's row for row;
 * `upsample()` hands every tile of every chunk the caption conditioning, the
   pin (chunks after the first) and a guide of the tile's shape, sizes the
@@ -40,8 +40,6 @@ sys.path.insert(0, COMFY)
 FAIL = []
 FORK_PACKING = [
     os.environ.get("HTC_FORK_PACKING", ""),
-    r"C:\Users\User\AppData\Local\Temp\claude\D--ComfyUI-custom-nodes-ComfyUI-Hand-Tie-Clips"
-    r"\f5e24d67-7518-4f24-94b9-4a8f3d2e046b\scratchpad\fork\packing.py",
 ]
 V2_LORA = os.path.join(COMFY, "models", "loras", "h3upscale", "v2_x2",
                        "h3upscale_v2_x2.safetensors")
